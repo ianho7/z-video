@@ -17,6 +17,20 @@ export struct CollectionUiItem {
     has_cover: bool,
 }
 
+export struct EpisodeUiItem {
+    episode_id: string,
+    episode_number: int,
+    title: string,
+    duration: string,
+    is_selected: bool,
+}
+
+export struct SeasonUiItem {
+    season_number: int,
+    title: string,
+    episodes: [EpisodeUiItem],
+}
+
 export component AppWindow inherits Window {
     title: app_title;
     min_width: 900px;
@@ -27,7 +41,7 @@ export component AppWindow inherits Window {
 
     // View state
     in-out property <bool> is_logged_in: false;
-    in-out property <string> current_view: "library"; // "library" | "player"
+    in-out property <string> current_view: "library"; // "library" | "detail" | "player"
 
     // Login Form State
     in-out property <string> server_url_input: "192.168.1.100";
@@ -53,6 +67,23 @@ export component AppWindow inherits Window {
     in-out property <bool> library_loading: false;
     in-out property <string> library_error: "";
     in-out property <int> collection_count: 0;
+
+    // Collection detail state
+    in-out property <string> detail_collection_id: "";
+    in-out property <string> detail_title: "";
+    in-out property <string> detail_release_year: "";
+    in-out property <string> detail_video_type: "";
+    in-out property <string> detail_score: "";
+    in-out property <string> detail_storyline: "";
+    in-out property <image> detail_cover_image;
+    in-out property <image> detail_background_image;
+    in-out property <bool> detail_has_cover: false;
+    in-out property <bool> detail_has_background: false;
+    in-out property <bool> detail_is_movie: false;
+    in-out property <[SeasonUiItem]> detail_seasons: [];
+    in-out property <string> selected_episode_id: "";
+    in-out property <bool> detail_loading: false;
+    in-out property <string> detail_error: "";
 
     // App & Player Diagnostic Info
     in-out property <string> app_title: "z-video — 极空间影视客户端";
@@ -81,6 +112,9 @@ export component AppWindow inherits Window {
     callback collection_clicked(string);
     callback refresh_library_clicked();
     callback switch_view(string);
+    callback detail_back_clicked();
+    callback episode_selected(string);
+    callback play_episode_clicked(string);
 
     // Player Callbacks
     callback play_clicked();
@@ -745,7 +779,277 @@ export component AppWindow inherits Window {
         }
 
         // ==========================================
-        // 2B. PLAYER PROBE VIEW
+        // 2B. COLLECTION DETAIL VIEW
+        // ==========================================
+        VerticalLayout {
+            visible: root.current_view == "detail";
+            spacing: 12px;
+            vertical_stretch: 1;
+
+            Rectangle {
+                height: 44px;
+                background: #191c22;
+                border_radius: 6px;
+
+                HorizontalLayout {
+                    padding_left: 12px;
+                    padding_right: 12px;
+                    spacing: 12px;
+
+                    Button {
+                        text: "← 返回片库";
+                        clicked => {
+                            root.detail_back_clicked();
+                        }
+                    }
+
+                    Text {
+                        text: root.detail_title != "" ? root.detail_title : "影视详情";
+                        color: #ffffff;
+                        font_size: 15px;
+                        font_weight: 700;
+                        vertical_alignment: center;
+                        horizontal_stretch: 1;
+                    }
+
+                    Text {
+                        text: root.detail_loading ? "正在加载详情..." : root.detail_video_type;
+                        color: #90a4ae;
+                        font_size: 12px;
+                        vertical_alignment: center;
+                    }
+                }
+            }
+
+            if root.detail_loading: Rectangle {
+                vertical_stretch: 1;
+                background: #16191f;
+                border_radius: 6px;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 8px;
+                    Text {
+                        text: "正在从极空间加载影视详情与选集...";
+                        color: #64b5f6;
+                        font_size: 15px;
+                        horizontal_alignment: center;
+                    }
+                    Text {
+                        text: "网络请求在后台执行，界面仍可操作";
+                        color: #78909c;
+                        font_size: 12px;
+                        horizontal_alignment: center;
+                    }
+                }
+            }
+
+            if !root.detail_loading && root.detail_error != "": Rectangle {
+                vertical_stretch: 1;
+                background: #381a1d;
+                border_color: #e53935;
+                border_width: 1px;
+                border_radius: 6px;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 10px;
+                    Text {
+                        text: "⚠ " + root.detail_error;
+                        color: #ffcdd2;
+                        font_size: 14px;
+                        horizontal_alignment: center;
+                        wrap: word-wrap;
+                    }
+                    Button {
+                        text: "返回片库";
+                        clicked => {
+                            root.detail_back_clicked();
+                        }
+                    }
+                }
+            }
+
+            if !root.detail_loading && root.detail_error == "": ScrollView {
+                vertical_stretch: 1;
+
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 14px;
+
+                    Rectangle {
+                        min_height: 230px;
+                        background: #1c2027;
+                        border_radius: 8px;
+                        clip: true;
+
+                        if root.detail_has_background: Image {
+                            source: root.detail_background_image;
+                            width: 100%;
+                            height: 100%;
+                            image_fit: cover;
+                            opacity: 0.22;
+                        }
+
+                        HorizontalLayout {
+                            padding: 16px;
+                            spacing: 18px;
+
+                            Rectangle {
+                                width: 138px;
+                                height: 196px;
+                                background: #252b36;
+                                border_radius: 6px;
+                                clip: true;
+
+                                if root.detail_has_cover: Image {
+                                    source: root.detail_cover_image;
+                                    width: 100%;
+                                    height: 100%;
+                                    image_fit: cover;
+                                }
+
+                                if !root.detail_has_cover: VerticalLayout {
+                                    alignment: center;
+                                    Text {
+                                        text: "🎬";
+                                        font_size: 32px;
+                                        horizontal_alignment: center;
+                                    }
+                                }
+                            }
+
+                            VerticalLayout {
+                                spacing: 8px;
+                                vertical_stretch: 1;
+                                horizontal_stretch: 1;
+
+                                Text {
+                                    text: root.detail_title;
+                                    color: #ffffff;
+                                    font_size: 24px;
+                                    font_weight: 700;
+                                    overflow: elide;
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 12px;
+                                    Text {
+                                        text: "上映年份: " + (root.detail_release_year != "" ? root.detail_release_year : "未知");
+                                        color: #b0bec5;
+                                        font_size: 12px;
+                                    }
+                                    Text {
+                                        text: "类型: " + (root.detail_video_type != "" ? root.detail_video_type : "影视");
+                                        color: #b0bec5;
+                                        font_size: 12px;
+                                    }
+                                    if root.detail_score != "": Text {
+                                        text: "★ " + root.detail_score;
+                                        color: #ffb300;
+                                        font_size: 12px;
+                                        font_weight: 700;
+                                    }
+                                }
+
+                                Text {
+                                    text: root.detail_storyline != "" ? root.detail_storyline : "暂无剧情简介";
+                                    color: #cfd8dc;
+                                    font_size: 13px;
+                                    wrap: word-wrap;
+                                    vertical_stretch: 1;
+                                }
+
+                                HorizontalLayout {
+                                    alignment: space_between;
+                                    Text {
+                                        text: root.detail_is_movie ? "电影 · 单集" : "剧集 · 可按季选集";
+                                        color: #64b5f6;
+                                        font_size: 12px;
+                                    }
+                                    Button {
+                                        text: root.detail_is_movie ? "播放正片" : "播放选中集";
+                                        primary: true;
+                                        clicked => {
+                                            root.play_episode_clicked(root.selected_episode_id);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: root.detail_is_movie ? "播放入口" : "选集";
+                        color: #eceff1;
+                        font_size: 15px;
+                        font_weight: 700;
+                    }
+
+                    for season in root.detail_seasons: Rectangle {
+                        background: #1c2027;
+                        border_radius: 8px;
+                        border_color: #2a3340;
+                        border_width: 1px;
+
+                        VerticalLayout {
+                            padding: 12px;
+                            spacing: 8px;
+                            Text {
+                                text: season.title;
+                                color: #ffffff;
+                                font_size: 14px;
+                                font_weight: 700;
+                            }
+
+                            for episode in season.episodes: Rectangle {
+                                height: 42px;
+                                background: episode.is_selected ? #174b73 : #252b36;
+                                border_color: episode.is_selected ? #42a5f5 : transparent;
+                                border_width: 1px;
+                                border_radius: 5px;
+
+                                HorizontalLayout {
+                                    padding_left: 10px;
+                                    padding_right: 10px;
+                                    spacing: 10px;
+                                    Text {
+                                        text: episode.episode_number > 0 ? "第" + episode.episode_number + "集" : "正片";
+                                        color: episode.is_selected ? #ffffff : #cfd8dc;
+                                        font_size: 12px;
+                                        font_weight: 700;
+                                        vertical_alignment: center;
+                                    }
+                                    Text {
+                                        text: episode.title;
+                                        color: #eceff1;
+                                        font_size: 12px;
+                                        vertical_alignment: center;
+                                        horizontal_stretch: 1;
+                                        overflow: elide;
+                                    }
+                                    if episode.duration != "": Text {
+                                        text: episode.duration;
+                                        color: #90a4ae;
+                                        font_size: 11px;
+                                        vertical_alignment: center;
+                                    }
+                                }
+
+                                TouchArea {
+                                    clicked => {
+                                        root.episode_selected(episode.episode_id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ==========================================
+        // 2C. PLAYER PROBE VIEW
         // ==========================================
         VerticalLayout {
             visible: root.current_view == "player";
