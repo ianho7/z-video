@@ -12,7 +12,9 @@ use crate::nas::auth::AuthError;
 use crate::nas::client::{HttpNasClient, NasClient};
 use crate::nas::models::{CollectionDetail, CollectionItem, Episode, NasError};
 use crate::nas::session::NasSession;
-use crate::player::state::{PlaybackState, PlayerEvent};
+use crate::player::state::{
+    PlaybackControlState, PlaybackProgress, PlaybackState, PlayerError, PlayerEvent,
+};
 use crate::player::traits::Player;
 use crate::playback::PlaybackSession;
 use crate::storage::credentials::{
@@ -34,6 +36,7 @@ pub struct AppCoordinator {
     detail_request_generation: Arc<AtomicU64>,
     playback_request_generation: Arc<AtomicU64>,
     playback_session: Arc<Mutex<Option<PlaybackSession>>>,
+    playback_controls: Arc<Mutex<PlaybackControlState>>,
     #[cfg(windows)]
     video_surface: Arc<Mutex<Option<Win32VideoSurface>>>,
     timer: slint::Timer,
@@ -57,7 +60,7 @@ impl AppCoordinator {
         let ui = AppWindow::new()?;
 
         let engine_label = if is_native {
-            "libmpv 2.6 (Direct3D 11 / HWDEC)"
+            "libmpv 2.6 (D3D11 / hwdec=auto-safe; runtime unverified)"
         } else {
             "MockPlayer (Fallback / Verification)"
         };
@@ -81,6 +84,7 @@ impl AppCoordinator {
             detail_request_generation: Arc::new(AtomicU64::new(0)),
             playback_request_generation: Arc::new(AtomicU64::new(0)),
             playback_session: Arc::new(Mutex::new(None)),
+            playback_controls: Arc::new(Mutex::new(PlaybackControlState::default())),
             #[cfg(windows)]
             video_surface,
             timer: slint::Timer::default(),
@@ -983,6 +987,7 @@ impl AppCoordinator {
     fn setup_player_events(&self) {
         let ui_weak = self.ui.as_weak();
         let playback_session = Arc::clone(&self.playback_session);
+        let playback_controls = Arc::clone(&self.playback_controls);
 
         self.player.add_event_listener(Box::new(move |event| {
             let ui_weak = ui_weak.clone();
@@ -1013,18 +1018,22 @@ impl AppCoordinator {
                             }
                         }
                         PlayerEvent::ProgressChanged(prog) => {
-                            ui.set_progress_value(prog.position_secs as f32);
                             if prog.duration_secs > 0.0 {
                                 ui.set_duration_value(prog.duration_secs as f32);
                             }
-                            ui.set_time_label(prog.formatted_time().into());
+                            if playback_controls.lock().unwrap().accepts_progress_event() {
+                                ui.set_progress_value(prog.position_secs as f32);
+                                ui.set_time_label(prog.formatted_time().into());
+                            }
                         }
                         PlayerEvent::MediaLoaded { path, duration_secs } => {
+                            playback_controls.lock().unwrap().cancel_seek();
                             ui.set_media_path(path.into());
                             ui.set_duration_value(duration_secs as f32);
                             ui.set_status_message("媒体已成功载入并在原生窗口渲染。".into());
                         }
                         PlayerEvent::PlaybackFinished => {
+                            playback_controls.lock().unwrap().cancel_seek();
                             ui.set_status_message("视频播放完毕。".into());
                         }
                         PlayerEvent::Error(err) => {
@@ -1069,20 +1078,60 @@ impl AppCoordinator {
             }
         });
 
+        let controls = Arc::clone(&self.playback_controls);
+        let ui_weak = self.ui.as_weak();
+        self.ui.on_fullscreen_clicked(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let is_fullscreen = controls.lock().unwrap().toggle_fullscreen();
+            ui.set_full_screen(is_fullscreen);
+            ui.set_status_message(if is_fullscreen {
+                "已进入全屏模式。视频表面和控制层会随窗口尺寸更新。"
+            } else {
+                "已退出全屏模式。"
+            }.into());
+        });
+
+        let controls = Arc::clone(&self.playback_controls);
+        let ui_weak = self.ui.as_weak();
+        self.ui.on_seek_preview(move |target| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let duration = ui.get_duration_value() as f64;
+            let mut controls = controls.lock().unwrap();
+            controls.preview_seek(target as f64, duration);
+            let target = controls.seek_target_secs().unwrap_or(0.0);
+            drop(controls);
+            ui.set_progress_value(target as f32);
+            ui.set_time_label(PlaybackProgress::new(target, duration).formatted_time().into());
+        });
+
         let player = Arc::clone(&self.player);
+        let controls = Arc::clone(&self.playback_controls);
+        let ui_weak = self.ui.as_weak();
         self.ui.on_seek_relative(move |offset| {
-            let cur = player.progress().position_secs;
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let cur = ui.get_progress_value() as f64;
+            let duration = ui.get_duration_value() as f64;
             let target = (cur + offset as f64).max(0.0);
             info!("UI: seek relative by {}, target: {}", offset, target);
-            if let Err(e) = player.seek(target) {
-                warn!("seek error: {}", e);
+            match request_seek(&player, &controls, target, duration) {
+                Ok(target) => {
+                    ui.set_progress_value(target as f32);
+                    ui.set_time_label(PlaybackProgress::new(target, duration).formatted_time().into());
+                }
+                Err(e) => {
+                    warn!("seek error: {}", e);
+                }
             }
         });
 
         let player = Arc::clone(&self.player);
+        let controls = Arc::clone(&self.playback_controls);
+        let ui_weak = self.ui.as_weak();
         self.ui.on_seek_absolute(move |target| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let duration = ui.get_duration_value() as f64;
             info!("UI: seek absolute to {}", target);
-            if let Err(e) = player.seek(target as f64) {
+            if let Err(e) = request_seek(&player, &controls, target as f64, duration) {
                 warn!("seek error: {}", e);
             }
         });
@@ -1189,6 +1238,34 @@ fn fetch_detail_image(
         Err(err) => {
             warn!("Failed to fetch detail image: {}", err);
             None
+        }
+    }
+}
+
+fn request_seek(
+    player: &Arc<dyn Player>,
+    controls: &Arc<Mutex<PlaybackControlState>>,
+    position_secs: f64,
+    duration_secs: f64,
+) -> Result<f64, PlayerError> {
+    let (generation, target) = {
+        let mut controls = controls.lock().unwrap();
+        let generation = controls.preview_seek(position_secs, duration_secs);
+        let target = controls.seek_target_secs().unwrap_or(0.0);
+        (generation, target)
+    };
+
+    match player.seek(target) {
+        Ok(()) => {
+            let controls = Arc::clone(controls);
+            slint::Timer::single_shot(Duration::from_millis(150), move || {
+                controls.lock().unwrap().finish_seek(generation);
+            });
+            Ok(target)
+        }
+        Err(err) => {
+            controls.lock().unwrap().finish_seek(generation);
+            Err(err)
         }
     }
 }

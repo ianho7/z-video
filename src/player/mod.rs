@@ -6,7 +6,7 @@ pub mod traits;
 
 pub use mock::MockPlayer;
 pub use mpv_backend::MpvPlayer;
-pub use state::{PlaybackProgress, PlaybackState, PlayerError, PlayerEvent};
+pub use state::{PlaybackControlState, PlaybackProgress, PlaybackState, PlayerError, PlayerEvent};
 pub use traits::{Player, PlayerEventListener};
 
 use std::sync::Arc;

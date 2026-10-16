@@ -89,7 +89,7 @@ export component AppWindow inherits Window {
 
     // App & Player Diagnostic Info
     in-out property <string> app_title: "z-video — 极空间影视客户端";
-    in-out property <string> engine_name: "libmpv 2.6 (Direct3D 11 / HWDEC)";
+    in-out property <string> engine_name: "libmpv 2.6 (D3D11 / hwdec=auto-safe; runtime unverified)";
     in-out property <string> playback_status: "Idle";
     in-out property <string> media_path: "未载入测试视频";
     in-out property <string> time_label: "00:00 / 00:00";
@@ -123,9 +123,25 @@ export component AppWindow inherits Window {
     callback pause_clicked();
     callback toggle_pause_clicked();
     callback stop_clicked();
+    callback seek_preview(float);
     callback seek_relative(float);
     callback seek_absolute(float);
+    callback fullscreen_clicked();
     callback load_sample_clicked();
+
+    property <bool> osd_visible: true;
+    osd_hide_timer := Timer {
+        interval: 3s;
+        running: root.current_view == "player" && root.osd_visible;
+        triggered => {
+            root.osd_visible = false;
+        }
+    }
+
+    function show_osd() {
+        root.osd_visible = true;
+        osd_hide_timer.restart();
+    }
 
     // ==========================================
     // 1. LOGIN VIEW (Visible when !is_logged_in)
@@ -1070,13 +1086,25 @@ export component AppWindow inherits Window {
         // ==========================================
         // 2C. PLAYER PROBE VIEW
         // ==========================================
-        VerticalLayout {
+        player_focus := FocusScope {
             visible: root.current_view == "player";
-            spacing: 12px;
+            width: parent.width;
+            height: parent.height;
             vertical_stretch: 1;
+            horizontal_stretch: 1;
+            focus-on-click: true;
+
+            KeyBinding {
+                keys: @keys(Space);
+                activated => {
+                    root.show_osd();
+                    root.toggle_pause_clicked();
+                }
+            }
 
             video_container := Rectangle {
-                vertical_stretch: 1;
+                width: parent.width;
+                height: parent.height;
                 background: #000000;
                 border_radius: 6px;
                 clip: true;
@@ -1098,97 +1126,143 @@ export component AppWindow inherits Window {
                         horizontal_alignment: center;
                     }
                 }
-            }
 
-            // Bottom: Media Info & Control Dock
-            Rectangle {
-                height: 128px;
-                background: #1c2026;
-                border_radius: 8px;
-
-                VerticalLayout {
-                    padding: 12px;
-                    spacing: 8px;
-
-                    HorizontalLayout {
-                        alignment: space_between;
-
-                        Text {
-                            text: "媒体: " + root.media_path;
-                            color: #90a4ae;
-                            font_size: 12px;
-                            overflow: elide;
+                video_input := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    pointer-event(event) => {
+                        if event.kind == PointerEventKind.move || event.kind == PointerEventKind.down || event.kind == PointerEventKind.up {
+                            root.show_osd();
                         }
+                    }
+                    clicked => {
+                        root.show_osd();
+                    }
+                }
 
-                        Text {
-                            text: root.status_message;
-                            color: #b0bec5;
-                            font_size: 12px;
+                osd_panel := Rectangle {
+                    x: 0px;
+                    y: parent.height - self.height;
+                    width: parent.width;
+                    height: 128px;
+                    enabled: root.osd_visible;
+                    background: #11161dcc;
+                    opacity: root.osd_visible ? 1.0 : 0.0;
+                    animate opacity { duration: 250ms; }
+
+                    osd_input := TouchArea {
+                        enabled: root.osd_visible;
+                        width: parent.width;
+                        height: parent.height;
+                        pointer-event(event) => {
+                            root.show_osd();
                         }
                     }
 
-                    HorizontalLayout {
-                        spacing: 12px;
-                        alignment: center;
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 6px;
 
-                        Slider {
-                            horizontal_stretch: 1;
-                            minimum: 0.0;
-                            maximum: root.duration_value > 0.0 ? root.duration_value : 100.0;
-                            value: root.progress_value;
-                            changed(val) => {
-                                root.seek_absolute(val);
+                        HorizontalLayout {
+                            alignment: space_between;
+
+                            Text {
+                                text: "媒体: " + root.media_path;
+                                color: #cfd8dc;
+                                font_size: 12px;
+                                overflow: elide;
+                                horizontal_stretch: 1;
+                            }
+
+                            Text {
+                                text: root.status_message;
+                                color: #b0bec5;
+                                font_size: 12px;
+                                overflow: elide;
                             }
                         }
 
-                        Text {
-                            text: root.time_label;
-                            color: #ffffff;
-                            font_size: 13px;
-                            font_weight: 600;
-                            vertical_alignment: center;
-                            min_width: 100px;
-                            horizontal_alignment: right;
-                        }
-                    }
+                        HorizontalLayout {
+                            spacing: 12px;
+                            alignment: center;
 
-                    HorizontalLayout {
-                        spacing: 12px;
-                        alignment: center;
+                            Slider {
+                                horizontal_stretch: 1;
+                                minimum: 0.0;
+                                maximum: root.duration_value > 0.0 ? root.duration_value : 100.0;
+                                value: root.progress_value;
+                                changed(val) => {
+                                    root.show_osd();
+                                    root.seek_preview(val);
+                                }
+                                released(val) => {
+                                    root.show_osd();
+                                    root.seek_absolute(val);
+                                }
+                            }
 
-                        Button {
-                            text: "载入样本视频 (assets/test_video.mp4)";
-                            primary: true;
-                            clicked => {
-                                root.load_sample_clicked();
+                            Text {
+                                text: root.time_label;
+                                color: #ffffff;
+                                font_size: 13px;
+                                font_weight: 600;
+                                vertical_alignment: center;
+                                min_width: 100px;
+                                horizontal_alignment: right;
                             }
                         }
 
-                        Button {
-                            text: root.is_playing ? "暂停 (Pause)" : "播放 (Play)";
-                            clicked => {
-                                root.toggle_pause_clicked();
-                            }
-                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: center;
 
-                        Button {
-                            text: "停止 (Stop)";
-                            clicked => {
-                                root.stop_clicked();
+                            Button {
+                                text: "载入样本视频 (assets/test_video.mp4)";
+                                primary: true;
+                                clicked => {
+                                    root.show_osd();
+                                    root.load_sample_clicked();
+                                }
                             }
-                        }
 
-                        Button {
-                            text: "快退 -5s";
-                            clicked => {
-                                root.seek_relative(-5.0);
+                            Button {
+                                text: root.is_playing ? "暂停 (Pause)" : "播放 (Play)";
+                                clicked => {
+                                    root.show_osd();
+                                    root.toggle_pause_clicked();
+                                }
                             }
-                        }
 
-                        Button {
-                            text: "快进 +5s";
-                            clicked => {
-                                root.seek_relative(5.0);
+                            Button {
+                                text: "停止 (Stop)";
+                                clicked => {
+                                    root.show_osd();
+                                    root.stop_clicked();
+                                }
+                            }
+
+                            Button {
+                                text: "快退 -5s";
+                                clicked => {
+                                    root.show_osd();
+                                    root.seek_relative(-5.0);
+                                }
+                            }
+
+                            Button {
+                                text: "快进 +5s";
+                                clicked => {
+                                    root.show_osd();
+                                    root.seek_relative(5.0);
+                                }
+                            }
+
+                            Button {
+                                text: root.full-screen ? "退出全屏" : "全屏";
+                                clicked => {
+                                    root.show_osd();
+                                    root.fullscreen_clicked();
+                                }
                             }
                         }
                     }

@@ -15,7 +15,7 @@ pub use nas::{
     NasSession, Season,
 };
 pub use player::{
-    create_player_probe, MockPlayer, MpvPlayer, PlaybackProgress, PlaybackState, Player,
+    create_player_probe, MockPlayer, MpvPlayer, PlaybackControlState, PlaybackProgress, PlaybackState, Player,
     PlayerError, PlayerEvent,
 };
 pub use playback::{PlaybackSession, PlaybackStream};

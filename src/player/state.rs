@@ -44,6 +44,86 @@ impl PlaybackProgress {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlaybackControlState {
+    seek_generation: u64,
+    seek_in_progress: bool,
+    seek_target_secs: Option<f64>,
+    fullscreen: bool,
+}
+
+impl Default for PlaybackControlState {
+    fn default() -> Self {
+        Self {
+            seek_generation: 0,
+            seek_in_progress: false,
+            seek_target_secs: None,
+            fullscreen: false,
+        }
+    }
+}
+
+impl PlaybackControlState {
+    pub fn preview_seek(&mut self, position_secs: f64, duration_secs: f64) -> u64 {
+        self.seek_generation = self.seek_generation.wrapping_add(1);
+        self.seek_in_progress = true;
+
+        let position_secs = clamp_seek_position(position_secs, duration_secs);
+        self.seek_target_secs = Some(position_secs);
+        self.seek_generation
+    }
+
+    pub fn seek_target_secs(&self) -> Option<f64> {
+        self.seek_target_secs
+    }
+
+    pub fn is_seek_in_progress(&self) -> bool {
+        self.seek_in_progress
+    }
+
+    pub fn accepts_progress_event(&self) -> bool {
+        !self.seek_in_progress
+    }
+
+    pub fn finish_seek(&mut self, generation: u64) -> bool {
+        if self.seek_in_progress && self.seek_generation == generation {
+            self.seek_in_progress = false;
+            self.seek_target_secs = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn cancel_seek(&mut self) {
+        self.seek_in_progress = false;
+        self.seek_target_secs = None;
+    }
+
+    pub fn toggle_fullscreen(&mut self) -> bool {
+        self.fullscreen = !self.fullscreen;
+        self.fullscreen
+    }
+
+    pub fn is_fullscreen(&self) -> bool {
+        self.fullscreen
+    }
+}
+
+fn clamp_seek_position(position_secs: f64, duration_secs: f64) -> f64 {
+    let position_secs = if position_secs.is_finite() {
+        position_secs.max(0.0)
+    } else {
+        0.0
+    };
+
+    if duration_secs.is_finite() && duration_secs > 0.0 {
+        position_secs.min(duration_secs)
+    } else {
+        position_secs
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlayerEvent {
     StateChanged(PlaybackState),
