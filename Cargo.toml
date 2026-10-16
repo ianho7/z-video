@@ -18,6 +18,7 @@ base64 = "0.22"
 ureq = { version = "2.10", features = ["json"] }
 keyring = "3.6"
 rand = "0.8"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [

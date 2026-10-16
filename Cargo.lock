@@ -6096,6 +6096,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "env_logger",
+ "image",
  "keyring",
  "libloading",
  "log",

@@ -1,17 +1,20 @@
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use log::{error, info, warn};
 use raw_window_handle::HasWindowHandle;
-use slint::ComponentHandle;
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
+use crate::media::image_cache::{decode_to_slint_image, ImageCache};
 use crate::nas::auth::AuthError;
 use crate::nas::client::{HttpNasClient, NasClient};
+use crate::nas::models::{CollectionItem, NasError};
 use crate::nas::session::NasSession;
 use crate::player::state::{PlaybackState, PlayerEvent};
 use crate::player::traits::Player;
 use crate::storage::credentials::{
-    KeyringCredentialStore, CredentialStore, SavedCredentials,
+    CredentialStore, KeyringCredentialStore, SavedCredentials,
 };
 #[cfg(windows)]
 use crate::platform::Win32VideoSurface;
@@ -24,6 +27,7 @@ pub struct AppCoordinator {
     nas_client: Arc<dyn NasClient>,
     session: Arc<NasSession>,
     credential_store: Arc<dyn CredentialStore>,
+    image_cache: ImageCache,
     #[cfg(windows)]
     video_surface: Arc<Mutex<Option<Win32VideoSurface>>>,
     timer: slint::Timer,
@@ -57,6 +61,7 @@ impl AppCoordinator {
         let video_surface: Arc<Mutex<Option<Win32VideoSurface>>> = Arc::new(Mutex::new(None));
 
         let session = Arc::new(NasSession::default());
+        let image_cache = ImageCache::default();
 
         let coordinator = Self {
             ui,
@@ -64,6 +69,7 @@ impl AppCoordinator {
             nas_client,
             session,
             credential_store,
+            image_cache,
             #[cfg(windows)]
             video_surface,
             timer: slint::Timer::default(),
@@ -71,6 +77,7 @@ impl AppCoordinator {
 
         coordinator.autoload_credentials();
         coordinator.setup_auth_callbacks();
+        coordinator.setup_library_callbacks();
         coordinator.setup_player_events();
         coordinator.setup_ui_callbacks();
         coordinator.setup_lifecycle();
@@ -86,8 +93,11 @@ impl AppCoordinator {
         Arc::clone(&self.session)
     }
 
+    pub fn image_cache(&self) -> &ImageCache {
+        &self.image_cache
+    }
+
     /// Synchronously performs login and updates session & UI state.
-    /// Useful for programmatic coordination and integration tests.
     pub fn perform_login(
         &self,
         server_url: &str,
@@ -102,6 +112,11 @@ impl AppCoordinator {
         let res = self.nas_client.login(server_url, username, password, sms_proof);
         self.ui.set_login_loading(false);
         self.apply_login_result(server_url, username, password, remember, &res);
+
+        if res.is_ok() {
+            let _ = self.load_classifications_sync();
+        }
+
         res
     }
 
@@ -112,6 +127,8 @@ impl AppCoordinator {
 
         self.ui.set_is_logged_in(false);
         self.ui.set_login_status_hint("已安全退出会话。可重新输入凭据登录。".into());
+        self.ui.set_classifications(ModelRc::new(VecModel::default()));
+        self.ui.set_collections(ModelRc::new(VecModel::default()));
 
         #[cfg(windows)]
         if let Some(surface) = self.video_surface.lock().unwrap().as_ref() {
@@ -161,7 +178,8 @@ impl AppCoordinator {
                 self.ui.set_show_sms_field(false);
                 self.ui.set_login_error_message("".into());
                 self.ui.set_is_logged_in(true);
-                self.ui.set_status_message("局域网鉴权成功，已建立安全会话。".into());
+                self.ui.set_current_view("library".into());
+                self.ui.set_status_message("局域网鉴权成功，正在拉取极影视片库...".into());
             }
             Err(err) => {
                 warn!("NAS login error: {}", err);
@@ -202,6 +220,316 @@ impl AppCoordinator {
         }
     }
 
+    /// Synchronously loads classifications from the NAS client into UI state.
+    pub fn load_classifications_sync(&self) -> Result<(), NasError> {
+        self.ui.set_library_loading(true);
+        self.ui.set_library_error("".into());
+
+        let res = self.nas_client.get_classifications(&self.session);
+        match res {
+            Ok(cats) => {
+                let first_id = cats.first().map(|c| c.id.clone()).unwrap_or_default();
+                let first_name = cats.first().map(|c| c.name.clone()).unwrap_or_else(|| "全部".to_string());
+
+                let ui_items: Vec<ClassificationUiItem> = cats
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, c)| ClassificationUiItem {
+                        id: c.id.clone().into(),
+                        name: c.name.clone().into(),
+                        count: c.count as i32,
+                        is_selected: idx == 0,
+                    })
+                    .collect();
+
+                let model = Rc::new(VecModel::from(ui_items));
+                self.ui.set_classifications(ModelRc::from(model));
+                self.ui.set_selected_classification_id(first_id.clone().into());
+                self.ui.set_selected_classification_name(first_name.into());
+
+                if !first_id.is_empty() {
+                    self.load_collections_sync(&first_id)?;
+                } else {
+                    self.ui.set_library_loading(false);
+                }
+                Ok(())
+            }
+            Err(err) => {
+                self.ui.set_library_loading(false);
+                self.ui.set_library_error(err.user_recovery_hint().into());
+                Err(err)
+            }
+        }
+    }
+
+    /// Synchronously loads collections for a specific classification into UI state.
+    pub fn load_collections_sync(&self, classification_id: &str) -> Result<(), NasError> {
+        self.ui.set_library_loading(true);
+        self.ui.set_library_error("".into());
+
+        let res = self.nas_client.get_collections(&self.session, classification_id, 1, 50);
+        self.ui.set_library_loading(false);
+
+        match res {
+            Ok(page) => {
+                let count = page.list.len();
+                self.ui.set_collection_count(count as i32);
+
+                let ui_items: Vec<CollectionUiItem> = page
+                    .list
+                    .iter()
+                    .map(|item| {
+                        let decoded = if !item.cover.is_empty() {
+                            self.image_cache
+                                .get(&item.cover)
+                                .and_then(|bytes| decode_to_slint_image(&bytes).ok())
+                        } else {
+                            None
+                        };
+                        let has_cover = decoded.is_some();
+                        let cover_image = decoded.unwrap_or_default();
+
+                        CollectionUiItem {
+                            collection_id: item.collection_id.clone().into(),
+                            title: item.title.clone().into(),
+                            release_year: item.release_year.clone().into(),
+                            video_type: item.display_type().to_string().into(),
+                            score: item.display_score().into(),
+                            cover_image,
+                            has_cover,
+                        }
+                    })
+                    .collect();
+
+                let model = Rc::new(VecModel::from(ui_items));
+                self.ui.set_collections(ModelRc::from(model));
+                self.ui.set_status_message(format!("片库已就绪，已加载 {} 部影片", count).into());
+
+                // Trigger background poster fetching for items without cover in cache
+                self.spawn_poster_fetching(page.list);
+
+                Ok(())
+            }
+            Err(err) => {
+                self.ui.set_library_error(err.user_recovery_hint().into());
+                Err(err)
+            }
+        }
+    }
+
+    /// Spawns background threads to asynchronously fetch missing poster images.
+    fn spawn_poster_fetching(&self, items: Vec<CollectionItem>) {
+        let nas_client = Arc::clone(&self.nas_client);
+        let session = Arc::clone(&self.session);
+        let image_cache = self.image_cache.clone();
+        let ui_weak = self.ui.as_weak();
+
+        std::thread::spawn(move || {
+            for item in items {
+                if item.cover.is_empty() || image_cache.contains(&item.cover) {
+                    continue;
+                }
+
+                let cover_path = item.cover.clone();
+                match nas_client.fetch_image(&session, &cover_path) {
+                    Ok(raw_bytes) => {
+                        image_cache.insert(cover_path.clone(), raw_bytes.clone());
+
+                        let cid = item.collection_id.clone();
+                        let ui_weak = ui_weak.clone();
+
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_weak.upgrade() {
+                                if let Ok(slint_img) = decode_to_slint_image(&raw_bytes) {
+                                    let model = ui.get_collections();
+                                    for i in 0..model.row_count() {
+                                        if let Some(mut row) = model.row_data(i) {
+                                            if row.collection_id.as_str() == cid {
+                                                row.cover_image = slint_img;
+                                                row.has_cover = true;
+                                                model.set_row_data(i, row);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        warn!("Failed to fetch cover image {}: {}", cover_path, e);
+                    }
+                }
+            }
+        });
+    }
+
+    /// Sets up library interaction callbacks: classification selection, refresh, collection clicks.
+    fn setup_library_callbacks(&self) {
+        let ui_weak = self.ui.as_weak();
+        let nas_client = Arc::clone(&self.nas_client);
+        let session = Arc::clone(&self.session);
+        let image_cache = self.image_cache.clone();
+
+        self.ui.on_select_classification(move |class_id_slint| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let target_id = class_id_slint.to_string();
+
+            let cat_model = ui.get_classifications();
+            let count = cat_model.row_count();
+            let mut target_name = "全部影片".to_string();
+
+            for i in 0..count {
+                if let Some(mut item) = cat_model.row_data(i) {
+                    let is_sel = item.id.as_str() == target_id;
+                    item.is_selected = is_sel;
+                    if is_sel {
+                        target_name = item.name.to_string();
+                    }
+                    cat_model.set_row_data(i, item);
+                }
+            }
+
+            ui.set_selected_classification_id(target_id.clone().into());
+            ui.set_selected_classification_name(target_name.into());
+            ui.set_library_loading(true);
+            ui.set_library_error("".into());
+
+            let client_for_thread = Arc::clone(&nas_client);
+            let session_for_thread = Arc::clone(&session);
+            let image_cache_for_thread = image_cache.clone();
+            let ui_weak_bg = ui_weak.clone();
+
+            std::thread::spawn(move || {
+                let res = client_for_thread.get_collections(&session_for_thread, &target_id, 1, 50);
+
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(ui) = ui_weak_bg.upgrade() else { return };
+                    ui.set_library_loading(false);
+
+                    match res {
+                        Ok(page) => {
+                            let total = page.list.len();
+                            ui.set_collection_count(total as i32);
+
+                            let ui_items: Vec<CollectionUiItem> = page
+                                .list
+                                .iter()
+                                .map(|col| {
+                                    let decoded = if !col.cover.is_empty() {
+                                        image_cache_for_thread
+                                            .get(&col.cover)
+                                            .and_then(|bytes| decode_to_slint_image(&bytes).ok())
+                                    } else {
+                                        None
+                                    };
+                                    let has_cover = decoded.is_some();
+                                    let cover_image = decoded.unwrap_or_default();
+
+                                    CollectionUiItem {
+                                        collection_id: col.collection_id.clone().into(),
+                                        title: col.title.clone().into(),
+                                        release_year: col.release_year.clone().into(),
+                                        video_type: col.display_type().to_string().into(),
+                                        score: col.display_score().into(),
+                                        cover_image,
+                                        has_cover,
+                                    }
+                                })
+                                .collect();
+
+                            let model = Rc::new(VecModel::from(ui_items));
+                            ui.set_collections(ModelRc::from(model));
+                            ui.set_status_message(format!("分类切换完成，加载 {} 部影视作品", total).into());
+                        }
+                        Err(err) => {
+                            ui.set_library_error(err.user_recovery_hint().into());
+                        }
+                    }
+                });
+            });
+        });
+
+        let ui_weak = self.ui.as_weak();
+        let nas_client = Arc::clone(&self.nas_client);
+        let session = Arc::clone(&self.session);
+
+        self.ui.on_refresh_library_clicked(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let sel_id = ui.get_selected_classification_id().to_string();
+            ui.set_library_loading(true);
+            ui.set_library_error("".into());
+
+            let client_for_thread = Arc::clone(&nas_client);
+            let session_for_thread = Arc::clone(&session);
+            let ui_weak_bg = ui_weak.clone();
+
+            std::thread::spawn(move || {
+                let cat_res = client_for_thread.get_classifications(&session_for_thread);
+                let col_res = if !sel_id.is_empty() {
+                    client_for_thread.get_collections(&session_for_thread, &sel_id, 1, 50)
+                } else {
+                    Ok(crate::nas::models::CollectionPage::default())
+                };
+
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(ui) = ui_weak_bg.upgrade() else { return };
+                    ui.set_library_loading(false);
+
+                    if let Ok(cats) = cat_res {
+                        let ui_cats: Vec<ClassificationUiItem> = cats
+                            .iter()
+                            .map(|c| ClassificationUiItem {
+                                id: c.id.clone().into(),
+                                name: c.name.clone().into(),
+                                count: c.count as i32,
+                                is_selected: c.id == sel_id,
+                            })
+                            .collect();
+                        ui.set_classifications(ModelRc::from(Rc::new(VecModel::from(ui_cats))));
+                    }
+
+                    match col_res {
+                        Ok(page) => {
+                            let ui_cols: Vec<CollectionUiItem> = page
+                                .list
+                                .iter()
+                                .map(|c| CollectionUiItem {
+                                    collection_id: c.collection_id.clone().into(),
+                                    title: c.title.clone().into(),
+                                    release_year: c.release_year.clone().into(),
+                                    video_type: c.display_type().to_string().into(),
+                                    score: c.display_score().into(),
+                                    cover_image: slint::Image::default(),
+                                    has_cover: false,
+                                })
+                                .collect();
+                            ui.set_collections(ModelRc::from(Rc::new(VecModel::from(ui_cols))));
+                            ui.set_status_message("片库已刷新完成。".into());
+                        }
+                        Err(err) => {
+                            ui.set_library_error(err.user_recovery_hint().into());
+                        }
+                    }
+                });
+            });
+        });
+
+        let ui_weak = self.ui.as_weak();
+        self.ui.on_collection_clicked(move |col_id| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            info!("User clicked collection card: {}", col_id);
+            ui.set_status_message(format!("已选择影视集合 (ID: {})，准备进入详情及选集", col_id).into());
+        });
+
+        let ui_weak = self.ui.as_weak();
+        self.ui.on_switch_view(move |view_name| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            info!("Switching workspace view to: {}", view_name);
+            ui.set_current_view(view_name);
+        });
+    }
+
     /// Sets up authentication and session management callbacks.
     fn setup_auth_callbacks(&self) {
         let ui_weak = self.ui.as_weak();
@@ -232,7 +560,6 @@ impl AppCoordinator {
             let credential_store = Arc::clone(&credential_store);
             let ui_weak_bg = ui_weak.clone();
 
-            // Run network authentication in a dedicated background worker thread to keep Slint UI responsive
             std::thread::spawn(move || {
                 let login_result = nas_client.login(
                     &server_url,
@@ -279,7 +606,10 @@ impl AppCoordinator {
                             ui.set_show_sms_field(false);
                             ui.set_login_error_message("".into());
                             ui.set_is_logged_in(true);
-                            ui.set_status_message("局域网鉴权成功，已建立安全会话。".into());
+                            ui.set_current_view("library".into());
+                            ui.set_status_message("局域网鉴权成功，正在拉取极影视片库...".into());
+
+                            ui.invoke_refresh_library_clicked();
                         }
                         Err(err) => {
                             warn!("NAS login error: {}", err);
@@ -312,6 +642,8 @@ impl AppCoordinator {
 
             ui.set_is_logged_in(false);
             ui.set_login_status_hint("已安全退出会话。可重新输入凭据登录。".into());
+            ui.set_classifications(ModelRc::new(VecModel::default()));
+            ui.set_collections(ModelRc::new(VecModel::default()));
 
             #[cfg(windows)]
             if let Some(surface) = surface_mutex.lock().unwrap().as_ref() {
@@ -453,15 +785,15 @@ impl AppCoordinator {
                 #[cfg(windows)]
                 {
                     let is_logged_in = ui.get_is_logged_in();
+                    let current_view = ui.get_current_view();
                     let scale = ui.window().scale_factor();
                     let area_x = (ui.get_video_area_x() * scale) as i32;
                     let area_y = (ui.get_video_area_y() * scale) as i32;
                     let area_w = (ui.get_video_area_width() * scale) as i32;
                     let area_h = (ui.get_video_area_height() * scale) as i32;
 
-                    if is_logged_in {
+                    if is_logged_in && current_view == "player" {
                         if !surface_initialized && area_w > 10 && area_h > 10 {
-                            // Attempt to obtain native HWND and mount child video surface
                             let window_handle_holder = ui.window().window_handle();
                             let rwh_res = window_handle_holder.window_handle();
                             if let Ok(handle) = rwh_res {
@@ -488,13 +820,11 @@ impl AppCoordinator {
                                 }
                             }
                         } else if surface_initialized {
-                            // Synchronize surface geometry with Slint layout
                             if let Some(surface) = surface_mutex.lock().unwrap().as_ref() {
                                 surface.set_bounds(area_x, area_y, area_w, area_h);
                             }
                         }
                     } else if surface_initialized {
-                        // Move surface out of view when on login screen
                         if let Some(surface) = surface_mutex.lock().unwrap().as_ref() {
                             surface.set_bounds(-9999, -9999, 0, 0);
                         }
