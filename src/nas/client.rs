@@ -3,7 +3,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use log::info;
 use serde::Deserialize;
 
-use crate::nas::auth::{ApiResponse, AuthError, LoginResponseData, NasPubKeyData};
+use crate::nas::auth::{sanitize_log_message, ApiResponse, AuthError, LoginResponseData, NasPubKeyData};
 use crate::nas::crypto::{encrypt_credential, parse_public_key};
 use crate::nas::models::{
     ClassificationItem, CollectionDetail, CollectionItem, CollectionPage, Episode, NasError, Season,
@@ -135,13 +135,13 @@ impl NasClient for HttpNasClient {
     fn fetch_public_key(&self, base_url: &str) -> Result<NasPubKeyData, AuthError> {
         let normalized_base = normalize_lan_url(base_url)?;
         let url = format!("{}/key/pub?signme=1", normalized_base);
-        info!("Fetching NAS public key from: {}", url);
+        info!("Fetching NAS public key from: {}", sanitize_log_message(&url));
 
         let resp = self
             .agent
             .get(&url)
             .call()
-            .map_err(|e| AuthError::Network(format!("连接 /key/pub 失败: {}", e)))?;
+            .map_err(|_| AuthError::Network("连接 /key/pub 失败".to_string()))?;
 
         let status = resp.status();
         if status != 200 {
@@ -189,7 +189,10 @@ impl NasClient for HttpNasClient {
         // 3. Compose URL with cache buster
         let drnd = Self::generate_drnd();
         let login_url = format!("{}/auth/login?&drnd={}", normalized_base, drnd);
-        info!("Submitting credentials to: {}/auth/login", normalized_base);
+        info!(
+            "Submitting credentials to: {}/auth/login",
+            sanitize_log_message(&normalized_base)
+        );
 
         // 4. Form payload
         let mut form_params: Vec<(&str, &str)> = vec![
@@ -213,7 +216,7 @@ impl NasClient for HttpNasClient {
             .post(&login_url)
             .set("Content-Type", "application/x-www-form-urlencoded")
             .send_form(&form_params)
-            .map_err(|e| AuthError::Network(format!("请求 /auth/login 失败: {}", e)))?;
+            .map_err(|_| AuthError::Network("请求 /auth/login 失败".to_string()))?;
 
         let status = resp.status();
         if status != 200 {
@@ -261,9 +264,12 @@ impl NasClient for HttpNasClient {
             .set("token", &token)
             .set("Cookie", &format!("token={}", token))
             .send_json(serde_json::json!({}))
-            .map_err(|e| NasError::Network(format!("获取分类列表失败: {}", e)))?;
+            .map_err(|_| NasError::Network("获取分类列表失败".to_string()))?;
 
         let status = resp.status();
+        if status == 401 || status == 403 {
+            return Err(NasError::Unauthorized);
+        }
         if status != 200 {
             return Err(NasError::Http {
                 status,
@@ -311,9 +317,12 @@ impl NasClient for HttpNasClient {
             .set("token", &token)
             .set("Cookie", &format!("token={}", token))
             .send_json(payload)
-            .map_err(|e| NasError::Network(format!("获取影视列表失败: {}", e)))?;
+            .map_err(|_| NasError::Network("获取影视列表失败".to_string()))?;
 
         let status = resp.status();
+        if status == 401 || status == 403 {
+            return Err(NasError::Unauthorized);
+        }
         if status != 200 {
             return Err(NasError::Http {
                 status,
@@ -356,9 +365,12 @@ impl NasClient for HttpNasClient {
             .set("token", &token)
             .set("Cookie", &format!("token={}", token))
             .send_json(payload)
-            .map_err(|e| NasError::Network(format!("获取影视详情失败: {}", e)))?;
+            .map_err(|_| NasError::Network("获取影视详情失败".to_string()))?;
 
         let status = resp.status();
+        if status == 401 || status == 403 {
+            return Err(NasError::Unauthorized);
+        }
         if status != 200 {
             return Err(NasError::Http {
                 status,
@@ -433,6 +445,9 @@ impl NasClient for HttpNasClient {
             .map_err(|_| NasError::Network("获取播放地址请求失败".to_string()))?;
 
         let status = response.status();
+        if status == 401 || status == 403 {
+            return Err(NasError::Unauthorized);
+        }
         if status != 200 {
             return Err(NasError::Http {
                 status,
@@ -485,13 +500,23 @@ impl NasClient for HttpNasClient {
 
         let resp = req
             .call()
-            .map_err(|e| NasError::Network(format!("下载图片失败: {}", e)))?;
+            .map_err(|_| NasError::Network("下载图片失败".to_string()))?;
+
+        if resp.status() == 401 || resp.status() == 403 {
+            return Err(NasError::Unauthorized);
+        }
+        if resp.status() != 200 {
+            return Err(NasError::Http {
+                status: resp.status(),
+                message: "图片服务返回异常".to_string(),
+            });
+        }
 
         let mut bytes = Vec::new();
         use std::io::Read;
         resp.into_reader()
             .read_to_end(&mut bytes)
-            .map_err(|e| NasError::Network(format!("读取图片流失败: {}", e)))?;
+            .map_err(|_| NasError::Network("读取图片流失败".to_string()))?;
 
         Ok(bytes)
     }

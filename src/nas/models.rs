@@ -2,7 +2,7 @@ use serde::{de::Error as _, Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::nas::auth::AuthError;
+use crate::nas::auth::{sanitize_log_message, AuthError};
 
 /// Classification category item returned by `POST /zvideo/classification/list`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -447,18 +447,28 @@ impl NasError {
     pub fn user_recovery_hint(&self) -> String {
         match self {
             NasError::Unauthorized => "登录凭据已过期或失效，请退出并重新登录。".to_string(),
-            NasError::Network(msg) => format!("无法连接 NAS 片库服务: {}", msg),
+            NasError::Network(msg) => {
+                format!("无法连接 NAS 片库服务: {}", sanitize_log_message(msg))
+            }
             NasError::Http { status, message } => {
-                format!("HTTP 请求失败 ({})，请核对 NAS 状态: {}", status, message)
+                format!(
+                    "HTTP 请求失败 ({})，请核对 NAS 状态: {}",
+                    status,
+                    sanitize_log_message(message)
+                )
             }
             NasError::Business { code, message } => {
-                format!("片库服务提示 ({})：{}", code, message)
+                format!("片库服务提示 ({})：{}", code, sanitize_log_message(message))
             }
             NasError::MalformedResponse(msg) => {
-                format!("片库数据返回格式异常: {}", msg)
+                format!("片库数据返回格式异常: {}", sanitize_log_message(msg))
             }
             NasError::Auth(auth_err) => auth_err.user_recovery_hint(),
         }
+    }
+
+    pub fn requires_reauthentication(&self) -> bool {
+        matches!(self, NasError::Unauthorized | NasError::Auth(_))
     }
 }
 

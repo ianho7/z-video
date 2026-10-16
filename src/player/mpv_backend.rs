@@ -287,7 +287,7 @@ impl MpvPlayer {
 
 impl Player for MpvPlayer {
     fn load_media(&self, path: &str) -> Result<(), PlayerError> {
-        info!("Loading media: {}", path);
+        info!("Loading media stream");
         let mut inner = self.state.lock().unwrap();
         inner.current_media = Some(path.to_string());
         inner.progress.position_secs = 0.0;

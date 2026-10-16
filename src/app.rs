@@ -7,7 +7,8 @@ use log::{error, info, warn};
 use raw_window_handle::HasWindowHandle;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
-use crate::media::image_cache::{decode_to_slint_image, ImageCache};
+use crate::media::image_cache::{decode_to_slint_image, ImageCache, ImageRequestGate};
+use crate::nas::auth::sanitize_log_message;
 use crate::nas::auth::AuthError;
 use crate::nas::client::{HttpNasClient, NasClient};
 use crate::nas::models::{CollectionDetail, CollectionItem, Episode, NasError};
@@ -32,6 +33,7 @@ pub struct AppCoordinator {
     session: Arc<NasSession>,
     credential_store: Arc<dyn CredentialStore>,
     image_cache: ImageCache,
+    image_request_gate: ImageRequestGate,
     detail_state: Arc<Mutex<Option<CollectionDetail>>>,
     detail_request_generation: Arc<AtomicU64>,
     playback_request_generation: Arc<AtomicU64>,
@@ -70,7 +72,11 @@ impl AppCoordinator {
         let video_surface: Arc<Mutex<Option<Win32VideoSurface>>> = Arc::new(Mutex::new(None));
 
         let session = Arc::new(NasSession::default());
-        let image_cache = ImageCache::default();
+        let image_cache = ImageCache::with_disk_cache(
+            default_image_cache_dir(),
+            100,
+            64 * 1024 * 1024,
+        );
         let detail_state = Arc::new(Mutex::new(None));
 
         let coordinator = Self {
@@ -80,6 +86,7 @@ impl AppCoordinator {
             session,
             credential_store,
             image_cache,
+            image_request_gate: ImageRequestGate::new(),
             detail_state,
             detail_request_generation: Arc::new(AtomicU64::new(0)),
             playback_request_generation: Arc::new(AtomicU64::new(0)),
@@ -145,6 +152,7 @@ impl AppCoordinator {
         self.session.clear();
         self.detail_request_generation.fetch_add(1, Ordering::SeqCst);
         self.playback_request_generation.fetch_add(1, Ordering::SeqCst);
+        self.image_request_gate.cancel();
         *self.detail_state.lock().unwrap() = None;
         *self.playback_session.lock().unwrap() = None;
 
@@ -154,6 +162,7 @@ impl AppCoordinator {
         self.ui.set_collections(ModelRc::new(VecModel::default()));
         self.ui.set_playback_loading(false);
         self.ui.set_playback_error("".into());
+        self.ui.set_requires_relogin(false);
 
         #[cfg(windows)]
         if let Some(surface) = self.video_surface.lock().unwrap().as_ref() {
@@ -207,9 +216,10 @@ impl AppCoordinator {
                 self.ui.set_status_message("局域网鉴权成功，正在拉取极影视片库...".into());
             }
             Err(err) => {
-                warn!("NAS login error: {}", err);
+                warn!("NAS login error: {}", sanitize_log_message(&err.to_string()));
                 let recovery_hint = err.user_recovery_hint();
                 self.ui.set_login_error_message(recovery_hint.into());
+                self.ui.set_requires_relogin(false);
 
                 if let AuthError::MfaRequired { .. } = err {
                     self.ui.set_show_sms_field(true);
@@ -249,6 +259,7 @@ impl AppCoordinator {
     pub fn load_classifications_sync(&self) -> Result<(), NasError> {
         self.ui.set_library_loading(true);
         self.ui.set_library_error("".into());
+        self.ui.set_requires_relogin(false);
 
         let res = self.nas_client.get_classifications(&self.session);
         match res {
@@ -282,6 +293,7 @@ impl AppCoordinator {
             Err(err) => {
                 self.ui.set_library_loading(false);
                 self.ui.set_library_error(err.user_recovery_hint().into());
+                self.ui.set_requires_relogin(err.requires_reauthentication());
                 Err(err)
             }
         }
@@ -289,14 +301,19 @@ impl AppCoordinator {
 
     /// Synchronously loads collections for a specific classification into UI state.
     pub fn load_collections_sync(&self, classification_id: &str) -> Result<(), NasError> {
+        let request_id = self.image_request_gate.begin();
         self.ui.set_library_loading(true);
         self.ui.set_library_error("".into());
+        self.ui.set_requires_relogin(false);
 
         let res = self.nas_client.get_collections(&self.session, classification_id, 1, 50);
         self.ui.set_library_loading(false);
 
         match res {
             Ok(page) => {
+                if !self.image_request_gate.is_current(request_id) {
+                    return Ok(());
+                }
                 let count = page.list.len();
                 self.ui.set_collection_count(count as i32);
 
@@ -331,12 +348,21 @@ impl AppCoordinator {
                 self.ui.set_status_message(format!("片库已就绪，已加载 {} 部影片", count).into());
 
                 // Trigger background poster fetching for items without cover in cache
-                self.spawn_poster_fetching(page.list);
+                Self::spawn_poster_fetching(
+                    self.ui.as_weak(),
+                    Arc::clone(&self.nas_client),
+                    Arc::clone(&self.session),
+                    self.image_cache.clone(),
+                    self.image_request_gate.clone(),
+                    request_id,
+                    page.list,
+                );
 
                 Ok(())
             }
             Err(err) => {
                 self.ui.set_library_error(err.user_recovery_hint().into());
+                self.ui.set_requires_relogin(err.requires_reauthentication());
                 Err(err)
             }
         }
@@ -347,6 +373,7 @@ impl AppCoordinator {
         nas_client: Arc<dyn NasClient>,
         session: Arc<NasSession>,
         image_cache: ImageCache,
+        image_request_gate: ImageRequestGate,
         detail_state: Arc<Mutex<Option<CollectionDetail>>>,
         detail_request_generation: Arc<AtomicU64>,
         playback_request_generation: Arc<AtomicU64>,
@@ -355,6 +382,7 @@ impl AppCoordinator {
         classification_id: String,
     ) {
         let request_generation = detail_request_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let image_request_id = image_request_gate.begin();
         playback_request_generation.fetch_add(1, Ordering::SeqCst);
         *detail_state.lock().unwrap() = None;
         *playback_session.lock().unwrap() = None;
@@ -385,6 +413,7 @@ impl AppCoordinator {
         let ui_weak_bg = ui_weak.clone();
         let detail_state_bg = Arc::clone(&detail_state);
         let detail_request_generation_bg = Arc::clone(&detail_request_generation);
+        let image_request_gate_bg = image_request_gate.clone();
         std::thread::spawn(move || {
             let detail_result = nas_client.get_collection_detail(
                 &session,
@@ -396,8 +425,22 @@ impl AppCoordinator {
             // the event loop. `slint::Image` is created below on the UI thread.
             let (cover_bytes, background_bytes) = if let Ok(detail) = &detail_result {
                 (
-                    fetch_detail_image(&nas_client, &session, &image_cache, &detail.cover),
-                    fetch_detail_image(&nas_client, &session, &image_cache, &detail.background),
+                    fetch_detail_image(
+                        &nas_client,
+                        &session,
+                        &image_cache,
+                        &image_request_gate_bg,
+                        image_request_id,
+                        &detail.cover,
+                    ),
+                    fetch_detail_image(
+                        &nas_client,
+                        &session,
+                        &image_cache,
+                        &image_request_gate_bg,
+                        image_request_id,
+                        &detail.background,
+                    ),
                 )
             } else {
                 (None, None)
@@ -406,6 +449,7 @@ impl AppCoordinator {
             let _ = slint::invoke_from_event_loop(move || {
                 let Some(ui) = ui_weak_bg.upgrade() else { return };
                 if detail_request_generation_bg.load(Ordering::SeqCst) != request_generation
+                    || !image_request_gate_bg.is_current(image_request_id)
                     || ui.get_current_view() != "detail"
                     || ui.get_detail_collection_id().as_str() != request_id
                 {
@@ -426,6 +470,7 @@ impl AppCoordinator {
                     Err(err) => {
                         *detail_state_bg.lock().unwrap() = None;
                         ui.set_detail_error(err.user_recovery_hint().into());
+                        ui.set_requires_relogin(err.requires_reauthentication());
                         ui.set_status_message("影视详情加载失败，请返回片库后重试。".into());
                     }
                 }
@@ -551,14 +596,20 @@ impl AppCoordinator {
     }
 
     /// Spawns background threads to asynchronously fetch missing poster images.
-    fn spawn_poster_fetching(&self, items: Vec<CollectionItem>) {
-        let nas_client = Arc::clone(&self.nas_client);
-        let session = Arc::clone(&self.session);
-        let image_cache = self.image_cache.clone();
-        let ui_weak = self.ui.as_weak();
-
+    fn spawn_poster_fetching(
+        ui_weak: slint::Weak<AppWindow>,
+        nas_client: Arc<dyn NasClient>,
+        session: Arc<NasSession>,
+        image_cache: ImageCache,
+        image_request_gate: ImageRequestGate,
+        request_id: u64,
+        items: Vec<CollectionItem>,
+    ) {
         std::thread::spawn(move || {
             for item in items {
+                if !image_request_gate.is_current(request_id) {
+                    return;
+                }
                 if item.cover.is_empty() || image_cache.contains(&item.cover) {
                     continue;
                 }
@@ -566,14 +617,24 @@ impl AppCoordinator {
                 let cover_path = item.cover.clone();
                 match nas_client.fetch_image(&session, &cover_path) {
                     Ok(raw_bytes) => {
+                        if !image_request_gate.is_current(request_id) {
+                            return;
+                        }
                         image_cache.insert(cover_path.clone(), raw_bytes.clone());
 
                         let cid = item.collection_id.clone();
                         let ui_weak = ui_weak.clone();
+                        let image_request_gate = image_request_gate.clone();
 
                         let _ = slint::invoke_from_event_loop(move || {
+                            if !image_request_gate.is_current(request_id) {
+                                return;
+                            }
                             if let Some(ui) = ui_weak.upgrade() {
                                 if let Ok(slint_img) = decode_to_slint_image(&raw_bytes) {
+                                    if !image_request_gate.is_current(request_id) {
+                                        return;
+                                    }
                                     let model = ui.get_collections();
                                     for i in 0..model.row_count() {
                                         if let Some(mut row) = model.row_data(i) {
@@ -590,7 +651,24 @@ impl AppCoordinator {
                         });
                     }
                     Err(e) => {
-                        warn!("Failed to fetch cover image {}: {}", cover_path, e);
+                        warn!(
+                            "Failed to fetch cover image: {}",
+                            sanitize_log_message(&e.to_string())
+                        );
+                        if e.requires_reauthentication() {
+                            let ui_weak = ui_weak.clone();
+                            let image_request_gate = image_request_gate.clone();
+                            let hint = e.user_recovery_hint();
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if !image_request_gate.is_current(request_id) {
+                                    return;
+                                }
+                                if let Some(ui) = ui_weak.upgrade() {
+                                    ui.set_library_error(hint.into());
+                                    ui.set_requires_relogin(true);
+                                }
+                            });
+                        }
                     }
                 }
             }
@@ -603,6 +681,7 @@ impl AppCoordinator {
         let nas_client = Arc::clone(&self.nas_client);
         let session = Arc::clone(&self.session);
         let image_cache = self.image_cache.clone();
+        let image_request_gate = self.image_request_gate.clone();
 
         self.ui.on_select_classification(move |class_id_slint| {
             let Some(ui) = ui_weak.upgrade() else { return };
@@ -627,10 +706,15 @@ impl AppCoordinator {
             ui.set_selected_classification_name(target_name.into());
             ui.set_library_loading(true);
             ui.set_library_error("".into());
+            ui.set_requires_relogin(false);
+            let request_id = image_request_gate.begin();
 
             let client_for_thread = Arc::clone(&nas_client);
             let session_for_thread = Arc::clone(&session);
             let image_cache_for_thread = image_cache.clone();
+            let image_request_gate_for_thread = image_request_gate.clone();
+            let nas_client_for_posters = Arc::clone(&nas_client);
+            let session_for_posters = Arc::clone(&session);
             let ui_weak_bg = ui_weak.clone();
 
             std::thread::spawn(move || {
@@ -638,6 +722,9 @@ impl AppCoordinator {
 
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = ui_weak_bg.upgrade() else { return };
+                    if !image_request_gate_for_thread.is_current(request_id) {
+                        return;
+                    }
                     ui.set_library_loading(false);
 
                     match res {
@@ -674,9 +761,19 @@ impl AppCoordinator {
                             let model = Rc::new(VecModel::from(ui_items));
                             ui.set_collections(ModelRc::from(model));
                             ui.set_status_message(format!("分类切换完成，加载 {} 部影视作品", total).into());
+                            AppCoordinator::spawn_poster_fetching(
+                                ui.as_weak(),
+                                nas_client_for_posters,
+                                session_for_posters,
+                                image_cache_for_thread.clone(),
+                                image_request_gate_for_thread.clone(),
+                                request_id,
+                                page.list,
+                            );
                         }
                         Err(err) => {
                             ui.set_library_error(err.user_recovery_hint().into());
+                            ui.set_requires_relogin(err.requires_reauthentication());
                         }
                     }
                 });
@@ -686,15 +783,21 @@ impl AppCoordinator {
         let ui_weak = self.ui.as_weak();
         let nas_client = Arc::clone(&self.nas_client);
         let session = Arc::clone(&self.session);
+        let image_cache = self.image_cache.clone();
+        let image_request_gate = self.image_request_gate.clone();
 
         self.ui.on_refresh_library_clicked(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
             let sel_id = ui.get_selected_classification_id().to_string();
             ui.set_library_loading(true);
             ui.set_library_error("".into());
+            ui.set_requires_relogin(false);
+            let request_id = image_request_gate.begin();
 
             let client_for_thread = Arc::clone(&nas_client);
             let session_for_thread = Arc::clone(&session);
+            let image_cache_for_thread = image_cache.clone();
+            let image_request_gate_for_thread = image_request_gate.clone();
             let ui_weak_bg = ui_weak.clone();
 
             std::thread::spawn(move || {
@@ -707,6 +810,9 @@ impl AppCoordinator {
 
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = ui_weak_bg.upgrade() else { return };
+                    if !image_request_gate_for_thread.is_current(request_id) {
+                        return;
+                    }
                     ui.set_library_loading(false);
 
                     if let Ok(cats) = cat_res {
@@ -739,9 +845,20 @@ impl AppCoordinator {
                                 .collect();
                             ui.set_collections(ModelRc::from(Rc::new(VecModel::from(ui_cols))));
                             ui.set_status_message("片库已刷新完成。".into());
+                            AppCoordinator::spawn_poster_fetching(
+                                ui.as_weak(),
+                                Arc::clone(&client_for_thread),
+                                Arc::clone(&session_for_thread),
+                                image_cache_for_thread.clone(),
+                                image_request_gate_for_thread.clone(),
+                                request_id,
+                                page.list,
+                            );
+                            ui.set_requires_relogin(false);
                         }
                         Err(err) => {
                             ui.set_library_error(err.user_recovery_hint().into());
+                            ui.set_requires_relogin(err.requires_reauthentication());
                         }
                     }
                 });
@@ -756,6 +873,7 @@ impl AppCoordinator {
         let detail_request_generation = Arc::clone(&self.detail_request_generation);
         let playback_request_generation = Arc::clone(&self.playback_request_generation);
         let playback_session = Arc::clone(&self.playback_session);
+        let image_request_gate = self.image_request_gate.clone();
         self.ui.on_collection_clicked(move |col_id| {
             let Some(ui) = ui_weak.upgrade() else { return };
             let classification_id = ui.get_selected_classification_id().to_string();
@@ -765,6 +883,7 @@ impl AppCoordinator {
                 Arc::clone(&nas_client),
                 Arc::clone(&session),
                 image_cache.clone(),
+                image_request_gate.clone(),
                 Arc::clone(&detail_state),
                 Arc::clone(&detail_request_generation),
                 Arc::clone(&playback_request_generation),
@@ -779,6 +898,7 @@ impl AppCoordinator {
         let detail_request_generation = Arc::clone(&self.detail_request_generation);
         let playback_request_generation = Arc::clone(&self.playback_request_generation);
         let playback_session = Arc::clone(&self.playback_session);
+        let image_request_gate = self.image_request_gate.clone();
         let player = Arc::clone(&self.player);
         self.ui.on_switch_view(move |view_name| {
             let Some(ui) = ui_weak.upgrade() else { return };
@@ -786,6 +906,7 @@ impl AppCoordinator {
             if view_name.as_str() != "detail" {
                 detail_request_generation.fetch_add(1, Ordering::SeqCst);
                 playback_request_generation.fetch_add(1, Ordering::SeqCst);
+                image_request_gate.cancel();
                 *detail_state.lock().unwrap() = None;
                 *playback_session.lock().unwrap() = None;
                 ui.set_playback_loading(false);
@@ -802,10 +923,12 @@ impl AppCoordinator {
         let detail_request_generation = Arc::clone(&self.detail_request_generation);
         let playback_request_generation = Arc::clone(&self.playback_request_generation);
         let playback_session = Arc::clone(&self.playback_session);
+        let image_request_gate = self.image_request_gate.clone();
         self.ui.on_detail_back_clicked(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
             detail_request_generation.fetch_add(1, Ordering::SeqCst);
             playback_request_generation.fetch_add(1, Ordering::SeqCst);
+            image_request_gate.cancel();
             *detail_state.lock().unwrap() = None;
             *playback_session.lock().unwrap() = None;
             ui.set_playback_loading(false);
@@ -874,6 +997,7 @@ impl AppCoordinator {
 
             ui.set_login_loading(true);
             ui.set_login_error_message("".into());
+            ui.set_requires_relogin(false);
 
             info!("Initiating LAN NAS authentication for user: {}", username);
 
@@ -927,6 +1051,7 @@ impl AppCoordinator {
                             ui.set_session_base_url(server_url.into());
                             ui.set_show_sms_field(false);
                             ui.set_login_error_message("".into());
+                            ui.set_requires_relogin(false);
                             ui.set_is_logged_in(true);
                             ui.set_current_view("library".into());
                             ui.set_status_message("局域网鉴权成功，正在拉取极影视片库...".into());
@@ -934,9 +1059,10 @@ impl AppCoordinator {
                             ui.invoke_refresh_library_clicked();
                         }
                         Err(err) => {
-                            warn!("NAS login error: {}", err);
+                            warn!("NAS login error: {}", sanitize_log_message(&err.to_string()));
                             let recovery_hint = err.user_recovery_hint();
                             ui.set_login_error_message(recovery_hint.into());
+                            ui.set_requires_relogin(false);
 
                             if let AuthError::MfaRequired { .. } = err {
                                 ui.set_show_sms_field(true);
@@ -955,6 +1081,7 @@ impl AppCoordinator {
         let detail_request_generation = Arc::clone(&self.detail_request_generation);
         let playback_request_generation = Arc::clone(&self.playback_request_generation);
         let playback_session = Arc::clone(&self.playback_session);
+        let image_request_gate = self.image_request_gate.clone();
 
         #[cfg(windows)]
         let surface_mutex = Arc::clone(&self.video_surface);
@@ -967,6 +1094,7 @@ impl AppCoordinator {
             session.clear();
             detail_request_generation.fetch_add(1, Ordering::SeqCst);
             playback_request_generation.fetch_add(1, Ordering::SeqCst);
+            image_request_gate.cancel();
             *detail_state.lock().unwrap() = None;
             *playback_session.lock().unwrap() = None;
 
@@ -976,11 +1104,39 @@ impl AppCoordinator {
             ui.set_collections(ModelRc::new(VecModel::default()));
             ui.set_playback_loading(false);
             ui.set_playback_error("".into());
+            ui.set_requires_relogin(false);
 
             #[cfg(windows)]
             if let Some(surface) = surface_mutex.lock().unwrap().as_ref() {
                 surface.set_bounds(-9999, -9999, 0, 0);
             }
+        });
+
+        let ui_weak = self.ui.as_weak();
+        let session = Arc::clone(&self.session);
+        let player = Arc::clone(&self.player);
+        let detail_state = Arc::clone(&self.detail_state);
+        let detail_request_generation = Arc::clone(&self.detail_request_generation);
+        let playback_request_generation = Arc::clone(&self.playback_request_generation);
+        let playback_session = Arc::clone(&self.playback_session);
+        let image_request_gate = self.image_request_gate.clone();
+        self.ui.on_relogin_requested(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let _ = player.stop();
+            session.clear();
+            detail_request_generation.fetch_add(1, Ordering::SeqCst);
+            playback_request_generation.fetch_add(1, Ordering::SeqCst);
+            image_request_gate.cancel();
+            *detail_state.lock().unwrap() = None;
+            *playback_session.lock().unwrap() = None;
+            ui.set_is_logged_in(false);
+            ui.set_requires_relogin(false);
+            ui.set_login_error_message("".into());
+            ui.set_login_status_hint("会话已失效，请重新输入凭据登录。".into());
+            ui.set_classifications(ModelRc::new(VecModel::default()));
+            ui.set_collections(ModelRc::new(VecModel::default()));
+            ui.set_playback_loading(false);
+            ui.set_playback_error("".into());
         });
     }
 
@@ -1221,9 +1377,11 @@ fn fetch_detail_image(
     nas_client: &Arc<dyn NasClient>,
     session: &Arc<NasSession>,
     image_cache: &ImageCache,
+    image_request_gate: &ImageRequestGate,
+    request_id: u64,
     image_path: &str,
 ) -> Option<Vec<u8>> {
-    if image_path.is_empty() {
+    if image_path.is_empty() || !image_request_gate.is_current(request_id) {
         return None;
     }
     if let Some(bytes) = image_cache.get(image_path) {
@@ -1232,11 +1390,17 @@ fn fetch_detail_image(
 
     match nas_client.fetch_image(session, image_path) {
         Ok(bytes) => {
+            if !image_request_gate.is_current(request_id) {
+                return None;
+            }
             image_cache.insert(image_path.to_string(), bytes.clone());
             Some(bytes)
         }
         Err(err) => {
-            warn!("Failed to fetch detail image: {}", err);
+            warn!(
+                "Failed to fetch detail image: {}",
+                sanitize_log_message(&err.to_string())
+            );
             None
         }
     }
@@ -1339,6 +1503,14 @@ fn apply_collection_detail(
     ui.set_detail_seasons(ModelRc::from(Rc::new(VecModel::from(ui_seasons))));
     ui.set_selected_episode_id(first_episode_id.into());
     ui.set_status_message("影视详情已加载，可选择剧集。".into());
+}
+
+fn default_image_cache_dir() -> PathBuf {
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+        .unwrap_or_else(std::env::temp_dir);
+    base.join("z-video").join("image-cache")
 }
 
 pub fn find_sample_video_path() -> PathBuf {
