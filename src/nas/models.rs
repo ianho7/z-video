@@ -91,6 +91,10 @@ pub struct Episode {
     pub version_id: String,
     #[serde(default)]
     pub duration: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encrypted_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
 }
 
 impl Episode {
@@ -324,6 +328,8 @@ fn parse_episode(value: &Value, _parent_season: u32, collection_id: &str) -> Opt
     let video_id = first_string(object, &["video_id", "episode_id", "id"]);
     let file_path = first_string(object, &["file_path", "episode_path", "path", "url"]);
     let version_id = first_string(object, &["version_id"]);
+    let encrypted_path = optional_string(object, &["encrypted_path"]);
+    let from = optional_string(object, &["from"]);
     let has_episode_data = !video_id.is_empty()
         || !file_path.is_empty()
         || object.contains_key("episode")
@@ -355,6 +361,8 @@ fn parse_episode(value: &Value, _parent_season: u32, collection_id: &str) -> Opt
         file_path,
         version_id,
         duration,
+        encrypted_path,
+        from,
     })
 }
 
