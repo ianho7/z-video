@@ -1,5 +1,6 @@
 pub mod app;
 pub mod media;
+pub mod metadata;
 pub mod nas;
 pub mod platform;
 pub mod player;
