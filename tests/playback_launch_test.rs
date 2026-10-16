@@ -14,6 +14,16 @@ fn pump_event_loop() {
     slint::run_event_loop_until_quit().expect("playback event loop should run");
 }
 
+fn wait_for_media_load(player: &MockPlayer) {
+    for _ in 0..100 {
+        if !player.call_history().is_empty() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    panic!("playback worker did not call load_media");
+}
+
 fn logged_in_coordinator(nas_client: MockNasClient) -> (AppCoordinator, Arc<MockPlayer>) {
     let player = Arc::new(MockPlayer::new());
     let coordinator = AppCoordinator::with_deps(
@@ -54,6 +64,9 @@ fn coordinator_launches_playback_and_reports_stream_failure() {
         .window()
         .invoke_play_episode_clicked("series-s1e1".into());
     assert!(coordinator.window().get_playback_loading());
+    wait_for_media_load(&player);
+    assert!(coordinator.playback_session().is_none());
+    assert_eq!(coordinator.window().get_current_view(), "detail");
     pump_event_loop();
 
     assert_eq!(coordinator.window().get_current_view(), "player");

@@ -468,7 +468,34 @@ impl AppCoordinator {
         let ui_weak_bg = ui_weak.clone();
         let playback_request_generation_bg = Arc::clone(&playback_request_generation);
         std::thread::spawn(move || {
-            let stream_result = nas_client.get_playback_stream(&session, &episode);
+            let playback_result = match nas_client.get_playback_stream(&session, &episode) {
+                Ok(stream) => {
+                    if playback_request_generation_bg.load(Ordering::SeqCst) != request_generation {
+                        return;
+                    }
+
+                    match player.load_media(&stream.uri) {
+                        Ok(()) => {
+                            let state = player.state();
+                            if playback_request_generation_bg.load(Ordering::SeqCst)
+                                != request_generation
+                            {
+                                return;
+                            }
+                            Ok((stream, state))
+                        }
+                        Err(_) => Err("播放器加载媒体失败，请重试。".to_string()),
+                    }
+                }
+                Err(err) => Err(format!(
+                    "播放地址加载失败：{}",
+                    err.user_recovery_hint()
+                )),
+            };
+
+            if playback_request_generation_bg.load(Ordering::SeqCst) != request_generation {
+                return;
+            }
 
             let _ = slint::invoke_from_event_loop(move || {
                 let Some(ui) = ui_weak_bg.upgrade() else { return };
@@ -481,30 +508,22 @@ impl AppCoordinator {
                 }
 
                 ui.set_playback_loading(false);
-                match stream_result {
-                    Ok(stream) => match player.load_media(&stream.uri) {
-                        Ok(()) => {
-                            let state = player.state();
-                            *playback_session.lock().unwrap() = Some(PlaybackSession::new(
-                                collection_id,
-                                classification_id,
-                                episode_id,
-                                stream,
-                                state,
-                            ));
-                            ui.set_playback_error("".into());
-                            ui.set_current_view("player".into());
-                            ui.set_status_message("媒体流已加载，已进入播放器。".into());
-                        }
-                        Err(_) => {
-                            *playback_session.lock().unwrap() = None;
-                            ui.set_playback_error("播放器加载媒体失败，请重试。".into());
-                            ui.set_status_message("播放加载失败，请重试。".into());
-                        }
-                    },
-                    Err(err) => {
+                match playback_result {
+                    Ok((stream, state)) => {
+                        *playback_session.lock().unwrap() = Some(PlaybackSession::new(
+                            collection_id,
+                            classification_id,
+                            episode_id,
+                            stream,
+                            state,
+                        ));
+                        ui.set_playback_error("".into());
+                        ui.set_current_view("player".into());
+                        ui.set_status_message("媒体流已加载，已进入播放器。".into());
+                    }
+                    Err(error) => {
                         *playback_session.lock().unwrap() = None;
-                        ui.set_playback_error(format!("播放地址加载失败：{}", err.user_recovery_hint()).into());
+                        ui.set_playback_error(error.into());
                         ui.set_status_message("播放加载失败，请重试。".into());
                     }
                 }
