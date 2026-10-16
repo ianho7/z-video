@@ -1,6 +1,10 @@
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use thiserror::Error;
 
 pub const CURRENT_METADATA_CONTRACT_VERSION: u16 = 1;
@@ -62,7 +66,6 @@ fn default_contract_version() -> MetadataContractVersion {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub struct ProviderInfo {
     #[serde(default = "default_contract_version")]
     pub contract_version: MetadataContractVersion,
@@ -74,8 +77,161 @@ pub struct ProviderInfo {
     pub extensions: MetadataExtensions,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MetadataSource {
+    pub provider_id: String,
+    pub source_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MetadataPerson {
+    pub name: String,
+    #[serde(default)]
+    pub role: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ImageReference {
+    pub reference: String,
+    #[serde(default)]
+    pub kind: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MetadataCandidate {
+    #[serde(default = "default_contract_version")]
+    pub contract_version: MetadataContractVersion,
+    pub provider_id: String,
+    pub source_id: String,
+    pub title: String,
+    #[serde(default)]
+    pub year: Option<u16>,
+    #[serde(default)]
+    pub date: Option<String>,
+    #[serde(default)]
+    pub people: Vec<MetadataPerson>,
+    #[serde(default)]
+    pub image_refs: Vec<ImageReference>,
+    #[serde(default)]
+    pub extensions: MetadataExtensions,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MetadataDetails {
+    #[serde(default = "default_contract_version")]
+    pub contract_version: MetadataContractVersion,
+    pub source: MetadataSource,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub original_title: Option<String>,
+    #[serde(default)]
+    pub year: Option<u16>,
+    #[serde(default)]
+    pub date: Option<String>,
+    #[serde(default)]
+    pub synopsis: Option<String>,
+    #[serde(default)]
+    pub genres: Vec<String>,
+    #[serde(default)]
+    pub people: Vec<MetadataPerson>,
+    #[serde(default)]
+    pub image_refs: Vec<ImageReference>,
+    #[serde(default)]
+    pub source_references: Vec<MetadataSource>,
+    #[serde(default)]
+    pub extensions: MetadataExtensions,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Error)]
+#[serde(rename_all = "snake_case")]
+pub enum MetadataProviderError {
+    #[error("no metadata match")]
+    NoMatch,
+    #[error("metadata provider network failure")]
+    Network,
+    #[error("metadata provider authentication required")]
+    AuthenticationRequired,
+    #[error("metadata provider response parse failed")]
+    Parse,
+    #[error("metadata provider request cancelled")]
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MetadataRequestId(u64);
+
+impl MetadataRequestId {
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub const fn value(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MetadataProviderResult<T> {
+    pub request_id: MetadataRequestId,
+    pub value: T,
+}
+
+impl<T> MetadataProviderResult<T> {
+    pub const fn new(request_id: MetadataRequestId, value: T) -> Self {
+        Self { request_id, value }
+    }
+
+    pub const fn applies_to(&self, current_request_id: MetadataRequestId) -> bool {
+        self.request_id == current_request_id
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CancellationToken(Arc<AtomicBool>);
+
+impl CancellationToken {
+    pub fn new() -> Self {
+        Self(Arc::new(AtomicBool::new(false)))
+    }
+
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+}
+
+impl Default for CancellationToken {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Synchronous contract for metadata search and detail lookup.
+///
+/// Implementations should return [`MetadataProviderError::Cancelled`] after
+/// observing a cancelled token. Callers must apply a result only when
+/// [`MetadataProviderResult::applies_to`] matches the current request ID.
+pub trait MetadataProvider {
+    fn search_candidates(
+        &self,
+        request_id: MetadataRequestId,
+        request: &ScrapeRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<MetadataProviderResult<Vec<MetadataCandidate>>, MetadataProviderError>;
+
+    fn get_details(
+        &self,
+        request_id: MetadataRequestId,
+        source: &MetadataSource,
+        cancellation: &CancellationToken,
+    ) -> Result<MetadataProviderResult<MetadataDetails>, MetadataProviderError>;
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub struct ScrapeRequest {
     #[serde(default = "default_contract_version")]
     pub contract_version: MetadataContractVersion,
@@ -90,7 +246,6 @@ pub struct ScrapeRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct ScrapeRequestWire {
     #[serde(default = "default_contract_version")]
     contract_version: MetadataContractVersion,
@@ -110,10 +265,8 @@ pub enum ScrapeRequestError {
     CompletePathInBasename,
 }
 
-impl TryFrom<ScrapeRequestWire> for ScrapeRequest {
-    type Error = ScrapeRequestError;
-
-    fn try_from(request: ScrapeRequestWire) -> Result<Self, Self::Error> {
+impl ScrapeRequest {
+    fn from_wire(request: ScrapeRequestWire) -> Result<Self, ScrapeRequestError> {
         if request
             .basename
             .as_deref()
@@ -137,14 +290,11 @@ impl<'de> Deserialize<'de> for ScrapeRequest {
     where
         D: Deserializer<'de>,
     {
-        ScrapeRequestWire::deserialize(deserializer).and_then(|request| {
-            Self::try_from(request).map_err(D::Error::custom)
-        })
+        ScrapeRequestWire::deserialize(deserializer)
+            .and_then(|request| Self::from_wire(request).map_err(D::Error::custom))
     }
 }
 
 fn contains_path_separator(value: &str) -> bool {
-    value.contains(['/', '\\'])
-        || value.contains("://")
-        || value.as_bytes().get(1) == Some(&b':')
+    value.contains(['/', '\\']) || value.contains("://") || value.as_bytes().get(1) == Some(&b':')
 }
