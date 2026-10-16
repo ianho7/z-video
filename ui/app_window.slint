@@ -84,6 +84,8 @@ export component AppWindow inherits Window {
     in-out property <string> selected_episode_id: "";
     in-out property <bool> detail_loading: false;
     in-out property <string> detail_error: "";
+    in-out property <bool> playback_loading: false;
+    in-out property <string> playback_error: "";
 
     // App & Player Diagnostic Info
     in-out property <string> app_title: "z-video — 极空间影视客户端";
@@ -818,6 +820,23 @@ export component AppWindow inherits Window {
                         font_size: 12px;
                         vertical_alignment: center;
                     }
+                }
+            }
+
+            if root.playback_loading || root.playback_error != "": Rectangle {
+                height: 38px;
+                background: root.playback_error != "" ? #381a1d : #162b3d;
+                border_color: root.playback_error != "" ? #e53935 : #245b7c;
+                border_width: 1px;
+                border_radius: 6px;
+
+                Text {
+                    text: root.playback_error != "" ? "⚠ " + root.playback_error : "正在后台获取媒体流地址...";
+                    color: root.playback_error != "" ? #ffcdd2 : #90caf9;
+                    font_size: 12px;
+                    horizontal_alignment: center;
+                    vertical_alignment: center;
+                    wrap: word-wrap;
                 }
             }
 
