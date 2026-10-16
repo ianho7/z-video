@@ -1148,6 +1148,7 @@ impl AppCoordinator {
         self.player.add_event_listener(Box::new(move |event| {
             let ui_weak = ui_weak.clone();
             let playback_session = Arc::clone(&playback_session);
+            let playback_controls = Arc::clone(&playback_controls);
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = ui_weak.upgrade() {
                     match event {
@@ -1239,7 +1240,7 @@ impl AppCoordinator {
         self.ui.on_fullscreen_clicked(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
             let is_fullscreen = controls.lock().unwrap().toggle_fullscreen();
-            ui.set_full_screen(is_fullscreen);
+            ui.window().set_fullscreen(is_fullscreen);
             ui.set_status_message(if is_fullscreen {
                 "已进入全屏模式。视频表面和控制层会随窗口尺寸更新。"
             } else {

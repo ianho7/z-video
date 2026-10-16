@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use slint::ComponentHandle;
 use z_video::app::AppCoordinator;
 use z_video::player::MockPlayer;
 
@@ -23,9 +24,9 @@ fn test_app_coordinator_fullscreen_callback_toggles_window_state() {
     let coordinator = AppCoordinator::new(mock_player, false).unwrap();
     let window = coordinator.window();
 
-    assert!(!window.get_full_screen());
+    assert!(!window.window().is_fullscreen());
     window.invoke_fullscreen_clicked();
-    assert!(window.get_full_screen());
+    assert!(window.window().is_fullscreen());
     window.invoke_fullscreen_clicked();
-    assert!(!window.get_full_screen());
+    assert!(!window.window().is_fullscreen());
 }

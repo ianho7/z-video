@@ -1103,8 +1103,6 @@ export component AppWindow inherits Window {
         // ==========================================
         player_focus := FocusScope {
             visible: root.current_view == "player";
-            width: parent.width;
-            height: parent.height;
             vertical_stretch: 1;
             horizontal_stretch: 1;
             focus-on-click: true;
@@ -1160,7 +1158,6 @@ export component AppWindow inherits Window {
                     y: parent.height - self.height;
                     width: parent.width;
                     height: 128px;
-                    enabled: root.osd_visible;
                     background: #11161dcc;
                     opacity: root.osd_visible ? 1.0 : 0.0;
                     animate opacity { duration: 250ms; }
