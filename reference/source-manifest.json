@@ -1,0 +1,83 @@
+{
+  "installer": {
+    "path": "D:/Downloads/zspace_windows_2.45.2026082601_082620.exe",
+    "bytes": 336988536,
+    "sha256": "3b645f03ff9b9e72bc1ee46819e3da81b9fbf4259bf5d79bd849ed3d45dcff28"
+  },
+  "asar": {
+    "sha256": "4a8f9a8dd0d476d4ebffc62d02fdbb71da9401be9b1aab1a5cf2626ee09103a4"
+  },
+  "offset_unit": "UTF-16 code units, zero based; byte_offset is UTF-8",
+  "files": [
+    {
+      "path": "package.json",
+      "bytes": 718,
+      "sha256": "9677f1104c86474d8f66b8d29f6bfb6243138a36d46253e5f5454651dc1f624d"
+    },
+    {
+      "path": "index.html",
+      "bytes": 4903,
+      "sha256": "f7da03dd03caeb673248fdc22e74563d660d8e23c2d320feb76d318c2e355637"
+    },
+    {
+      "path": "background.js",
+      "bytes": 5578826,
+      "sha256": "224b2622f0384fa5606189e68b15f66c9c6bc5c43b86ba1666db617c3e5302fe"
+    },
+    {
+      "path": "preload.js",
+      "bytes": 359104,
+      "sha256": "4d6ae34952c9bbedc5406e33a892c419901ca635366b93265fe80cec455eb08b"
+    },
+    {
+      "path": "static/js/app.2f202dac.js",
+      "bytes": 42450,
+      "sha256": "b92e6fcd8c8ef069e6a7cb5432f8e330fc83a71399d814e290b085b2fde8dee2"
+    },
+    {
+      "path": "static/js/chunk-279ed246.16e7a412.js",
+      "bytes": 1974,
+      "sha256": "420a380edd3a17bd8f30daa5acbefd084f6e3e4285c053bd0dfe1b71be0e01fa"
+    },
+    {
+      "path": "static/js/chunk-2d21f0e8.9fec5c82.js",
+      "bytes": 34452,
+      "sha256": "b577aea16f539593d41cebcf085767023b14eba54e114c0ca3ef36f8d5ac0fd5"
+    },
+    {
+      "path": "static/js/chunk-30e2d5b3.4ea20c53.js",
+      "bytes": 1156,
+      "sha256": "ac95ae3391433779df436b92c68f54b64f96a36d762fef08ad7addbdb1f9f432"
+    },
+    {
+      "path": "static/js/chunk-3b0dd3ec.bee8efbf.js",
+      "bytes": 128542,
+      "sha256": "b35f3f33a8b91d0012447f32724e280b3ca130a68f4844d69b7c1d91f56a1253"
+    },
+    {
+      "path": "static/js/chunk-3b397ee9.e0d36d38.js",
+      "bytes": 81926,
+      "sha256": "f43092c98d0b14a6000c51246280667a26a627cf722a1e2a4d466c988d07c524"
+    },
+    {
+      "path": "static/js/chunk-55982765.181b1ed8.js",
+      "bytes": 19732,
+      "sha256": "e4ad15adae7c196830ed865ea1fab291371acfaaf0fbec6d6bed0ee1e129432f"
+    },
+    {
+      "path": "static/js/chunk-5ae07b76.c091440e.js",
+      "bytes": 1116,
+      "sha256": "557a559655a909f43593f617ba9e84928dd557ac94b6944dc72d67abefc0dc40"
+    },
+    {
+      "path": "static/js/chunk-84200ec6.b0586271.js",
+      "bytes": 34625,
+      "sha256": "f6746e83773475272598cca495ab9f0a1c871ea4e498edf4a43bd902425d0f6b"
+    },
+    {
+      "path": "static/js/chunk-be601aa4.2a788879.js",
+      "bytes": 1908,
+      "sha256": "13215d07b1529d22615c8ea93b186ec7a9f0c3bf436d169a5065d78ca6ab04da"
+    }
+  ]
+}

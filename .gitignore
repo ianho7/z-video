@@ -1,0 +1,5 @@
+/target
+.worktrees/
+**/*.rs.bk
+*.log
+.env

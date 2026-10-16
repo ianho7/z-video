@@ -1,0 +1,903 @@
+{
+  "source": "http://192.168.5.2:5055/home/",
+  "observed_date": "2026-10-16",
+  "authentication": "None supplied",
+  "resources": [
+    {
+      "path": "home/static/js/34693.faa26133.js",
+      "url": "http://192.168.5.2:5055/home/static/js/34693.faa26133.js",
+      "bytes": 5714735,
+      "download_file_time_utc": "2026-10-16T04:36:31.080Z",
+      "sha256": "7bd751625d438512e8cbebbf88b0339c553eb6be01ceaf4c4997afc2b302e28b"
+    },
+    {
+      "path": "home/static/js/async/13184.147c72f0.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/13184.147c72f0.js",
+      "bytes": 61774,
+      "download_file_time_utc": "2026-10-16T04:37:23.506Z",
+      "sha256": "8f42a326ff742552c94f7d2b2d9ec725b01ede89b258fad49d772296ce3fc07a"
+    },
+    {
+      "path": "home/static/js/async/14142.e0085364.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/14142.e0085364.js",
+      "bytes": 18884,
+      "download_file_time_utc": "2026-10-16T04:37:23.678Z",
+      "sha256": "8727b3c6827b6385593fbcfcac2aea9237c1221143b99dc4e01c01471fcd7c7f"
+    },
+    {
+      "path": "home/static/js/async/14318.9b9586db.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/14318.9b9586db.js",
+      "bytes": 312506,
+      "download_file_time_utc": "2026-10-16T04:37:23.744Z",
+      "sha256": "488965457cfa14a76a047f4f7614d79f639d3afdd35ff8b6054a291adf357f75"
+    },
+    {
+      "path": "home/static/js/async/14422.6ddae533.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/14422.6ddae533.js",
+      "bytes": 59432,
+      "download_file_time_utc": "2026-10-16T04:37:23.775Z",
+      "sha256": "9f4b4ae26ccb004fab838dff3790d2460b2cb130370e869f895d0dc389001f37"
+    },
+    {
+      "path": "home/static/js/async/1446.d5f233db.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/1446.d5f233db.js",
+      "bytes": 12082,
+      "download_file_time_utc": "2026-10-16T04:37:37.909Z",
+      "sha256": "06061ba5d5f28bd81297d7d42aa5d7fecc1812ef308a58d7ce957a6c53eb3902"
+    },
+    {
+      "path": "home/static/js/async/15915.ebb83990.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/15915.ebb83990.js",
+      "bytes": 21555,
+      "download_file_time_utc": "2026-10-16T04:37:38.052Z",
+      "sha256": "e8e4fc1e46693f62c579736c6187a61b431dc945cfa31a4c7f641abb97da5de2"
+    },
+    {
+      "path": "home/static/js/async/16435.12c1697e.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/16435.12c1697e.js",
+      "bytes": 2497,
+      "download_file_time_utc": "2026-10-16T04:37:38.065Z",
+      "sha256": "f5ba7b20aa794cabf86ef96785620b699c83ee114cbb9f6a5afb2ba948e3e0b1"
+    },
+    {
+      "path": "home/static/js/async/16682.55fbf58d.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/16682.55fbf58d.js",
+      "bytes": 944,
+      "download_file_time_utc": "2026-10-16T04:37:38.056Z",
+      "sha256": "0ee6eac7e5d67d7a50da62f658711483b89ba9477aba83f699170ee1805c4d6f"
+    },
+    {
+      "path": "home/static/js/async/1682.23cd1655.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/1682.23cd1655.js",
+      "bytes": 12532,
+      "download_file_time_utc": "2026-10-16T04:37:23.546Z",
+      "sha256": "3bd41689c6a8974d133b3162af6eafd2ed70be71d310b62d88bb6bd2dea3e4bb"
+    },
+    {
+      "path": "home/static/js/async/16977.13b7d239.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/16977.13b7d239.js",
+      "bytes": 3223,
+      "download_file_time_utc": "2026-10-16T04:37:23.718Z",
+      "sha256": "3b133e8cf783143516620a05db2f6746f7356e1de4887d93f55839fa58ae4da4"
+    },
+    {
+      "path": "home/static/js/async/17270.c78d24a4.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/17270.c78d24a4.js",
+      "bytes": 10023,
+      "download_file_time_utc": "2026-10-16T04:37:37.930Z",
+      "sha256": "abc4b25d6fe25b43e5a5db9c65a78518e2c755cfd5c8a5f1071259d9ca8a70b5"
+    },
+    {
+      "path": "home/static/js/async/17398.47b62dcd.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/17398.47b62dcd.js",
+      "bytes": 167665,
+      "download_file_time_utc": "2026-10-16T04:37:23.704Z",
+      "sha256": "b7564b20f6c97facd4d22615b15fb90f70a91cd12373d10cc75ab21925ec5beb"
+    },
+    {
+      "path": "home/static/js/async/17468.8292ebba.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/17468.8292ebba.js",
+      "bytes": 342,
+      "download_file_time_utc": "2026-10-16T04:37:23.453Z",
+      "sha256": "d3e90d540f91b4d625872d6a59cf4e16247eaa06061f5773a30301946ade8f73"
+    },
+    {
+      "path": "home/static/js/async/17682.caf29772.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/17682.caf29772.js",
+      "bytes": 14993,
+      "download_file_time_utc": "2026-10-16T04:37:37.875Z",
+      "sha256": "3b764e1c38b35364be94d18209bf8f702223fed3528bd4ee3aec13ec4a5705be"
+    },
+    {
+      "path": "home/static/js/async/18126.093ae4fe.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/18126.093ae4fe.js",
+      "bytes": 1244,
+      "download_file_time_utc": "2026-10-16T04:37:37.996Z",
+      "sha256": "e389af8da8af28c9c78faf8bc38959aff058153aa0a0f87943a7038df0d0e2fd"
+    },
+    {
+      "path": "home/static/js/async/18505.23043e79.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/18505.23043e79.js",
+      "bytes": 7602,
+      "download_file_time_utc": "2026-10-16T04:37:23.723Z",
+      "sha256": "cbd84429cd3fa74378ef50307c43fe5c4e82c0edce9cc5e5f643231f42eb4b2b"
+    },
+    {
+      "path": "home/static/js/async/18753.5017bb3d.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/18753.5017bb3d.js",
+      "bytes": 2968,
+      "download_file_time_utc": "2026-10-16T04:37:38.052Z",
+      "sha256": "39c2d1be1ff58789729928de40a0c22654977402cefa14b04100420b53f1a386"
+    },
+    {
+      "path": "home/static/js/async/24306.2b7a8386.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/24306.2b7a8386.js",
+      "bytes": 3778,
+      "download_file_time_utc": "2026-10-16T04:37:23.743Z",
+      "sha256": "c06ec6adfa2c194896ccafb133653ddfc69c83daa9044b90419e6ef7fe8baee6"
+    },
+    {
+      "path": "home/static/js/async/24394.d012f864.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/24394.d012f864.js",
+      "bytes": 4374,
+      "download_file_time_utc": "2026-10-16T04:37:23.435Z",
+      "sha256": "2e34d96e069813eaac9cc365af1b21f753e945164c1aa8287415044fcaa459ab"
+    },
+    {
+      "path": "home/static/js/async/26962.3e405d21.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/26962.3e405d21.js",
+      "bytes": 1304,
+      "download_file_time_utc": "2026-10-16T04:37:23.460Z",
+      "sha256": "272ca91c539ab005d5fc39a6d50553ca97aa0ff6dd77df85e33374e84551072b"
+    },
+    {
+      "path": "home/static/js/async/29502.72fcb266.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/29502.72fcb266.js",
+      "bytes": 3231,
+      "download_file_time_utc": "2026-10-16T04:37:37.973Z",
+      "sha256": "4a015bc541f4109f75697501ba3b1cbae8ae19b792366f26223bc2c6040de526"
+    },
+    {
+      "path": "home/static/js/async/30475.dccf2ee3.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/30475.dccf2ee3.js",
+      "bytes": 16276,
+      "download_file_time_utc": "2026-10-16T04:37:23.435Z",
+      "sha256": "c4b770ccfaf25de4e3f161a8e85473e03f741239c63397e45b835429c5510152"
+    },
+    {
+      "path": "home/static/js/async/30484.23f05812.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/30484.23f05812.js",
+      "bytes": 1182,
+      "download_file_time_utc": "2026-10-16T04:37:23.489Z",
+      "sha256": "a4310f1dbff551f63e4de2070410dbcfebf6cd6e1645abe23c8881106c1e3e1b"
+    },
+    {
+      "path": "home/static/js/async/31453.c6d1d399.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/31453.c6d1d399.js",
+      "bytes": 537,
+      "download_file_time_utc": "2026-10-16T04:37:37.987Z",
+      "sha256": "0edf07dd8cca84146eee2896465622c55f86270718ec7acd007b258c98870cc7"
+    },
+    {
+      "path": "home/static/js/async/32093.ba2b8633.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/32093.ba2b8633.js",
+      "bytes": 50857,
+      "download_file_time_utc": "2026-10-16T04:37:37.938Z",
+      "sha256": "87a70e6ac19c7663f13b67bfea8fe96865a4925e9973945cf5aa353d20192b65"
+    },
+    {
+      "path": "home/static/js/async/32154.bb157686.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/32154.bb157686.js",
+      "bytes": 20644,
+      "download_file_time_utc": "2026-10-16T04:37:23.799Z",
+      "sha256": "c3afddced12aebde2ddfa175a64790e918eada5b096309f8d4d6a1e527a8a8a3"
+    },
+    {
+      "path": "home/static/js/async/32656.cf977597.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/32656.cf977597.js",
+      "bytes": 39378,
+      "download_file_time_utc": "2026-10-16T04:37:23.684Z",
+      "sha256": "fef9c1707b309753d6a12e98c5b623bd821ecab9335ab8fbcb4efd5d649bea1b"
+    },
+    {
+      "path": "home/static/js/async/32779.f5626b76.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/32779.f5626b76.js",
+      "bytes": 56553,
+      "download_file_time_utc": "2026-10-16T04:37:23.709Z",
+      "sha256": "5464af5035d3ed716e6bf5e58241a7663d0cf243ca6a1b2784bfc2041af72ce1"
+    },
+    {
+      "path": "home/static/js/async/33470.53847e4a.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/33470.53847e4a.js",
+      "bytes": 54153,
+      "download_file_time_utc": "2026-10-16T04:37:38.121Z",
+      "sha256": "f452c7f82304dbe1d9116770b6af166a83c070b81dd2ae0730f845777471b071"
+    },
+    {
+      "path": "home/static/js/async/3411.a391f20c.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/3411.a391f20c.js",
+      "bytes": 5635,
+      "download_file_time_utc": "2026-10-16T04:37:23.509Z",
+      "sha256": "d2a8bc58a458683c1d67ff89d9f1dd9b4034c7f5c5ad4a1e44934384666684d4"
+    },
+    {
+      "path": "home/static/js/async/35387.3846a96b.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/35387.3846a96b.js",
+      "bytes": 3096,
+      "download_file_time_utc": "2026-10-16T04:37:37.930Z",
+      "sha256": "55f37fc8c4e4d62710ae0e1ce1aad974b040a5d819e399c1f340139ba90e311a"
+    },
+    {
+      "path": "home/static/js/async/35697.82b0cbe4.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/35697.82b0cbe4.js",
+      "bytes": 21714,
+      "download_file_time_utc": "2026-10-16T04:37:23.769Z",
+      "sha256": "2b226550ab400de357a1b4b451c31871122ce81c0cb73d67650daa223e666822"
+    },
+    {
+      "path": "home/static/js/async/36454.b42e0934.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/36454.b42e0934.js",
+      "bytes": 3950,
+      "download_file_time_utc": "2026-10-16T04:37:38.059Z",
+      "sha256": "4dace17b335328e788ed00913261636d392277e5d393146b2c97dae2903f75e7"
+    },
+    {
+      "path": "home/static/js/async/36777.cfc0b885.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/36777.cfc0b885.js",
+      "bytes": 1484,
+      "download_file_time_utc": "2026-10-16T04:37:38.002Z",
+      "sha256": "4a0faec19676c7f96e3082669ba84dbee847b06811245264fc2e1409af5c4e36"
+    },
+    {
+      "path": "home/static/js/async/38702.b3f9900b.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/38702.b3f9900b.js",
+      "bytes": 11443,
+      "download_file_time_utc": "2026-10-16T04:37:23.428Z",
+      "sha256": "8e8e7e9920bb9fcb285ae7c6e481d5da64aa567a4db1b733c5eb4f567e47871a"
+    },
+    {
+      "path": "home/static/js/async/39021.0e339598.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/39021.0e339598.js",
+      "bytes": 3239,
+      "download_file_time_utc": "2026-10-16T04:37:37.982Z",
+      "sha256": "d602d6876b1a9e784b4eed79671c426842c47d0c7edde363b4e6d7d8e7b0faa6"
+    },
+    {
+      "path": "home/static/js/async/39650.34c8fa09.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/39650.34c8fa09.js",
+      "bytes": 36111,
+      "download_file_time_utc": "2026-10-16T04:37:23.754Z",
+      "sha256": "64b28ac372a931b47bac2f14faf89d294a8b499bb2cb6ede0d2203ababc7f426"
+    },
+    {
+      "path": "home/static/js/async/39794.77c0279d.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/39794.77c0279d.js",
+      "bytes": 8528,
+      "download_file_time_utc": "2026-10-16T04:37:23.723Z",
+      "sha256": "16d3d287188ee6f4698ab454a980bafe6110dd3f0bf4bfdf09a120351777377b"
+    },
+    {
+      "path": "home/static/js/async/42031.0eb0db8c.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/42031.0eb0db8c.js",
+      "bytes": 8910,
+      "download_file_time_utc": "2026-10-16T04:37:38.052Z",
+      "sha256": "7c27dfd529f6f623338486144bd8df93efbe62cde2dcebb2741206ba91d47fe9"
+    },
+    {
+      "path": "home/static/js/async/42909.3ed79625.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/42909.3ed79625.js",
+      "bytes": 7074,
+      "download_file_time_utc": "2026-10-16T04:37:23.775Z",
+      "sha256": "4c904bd187a273db3b032f313f6a715bd3673ad943f1ede60d06f7673b64c0d3"
+    },
+    {
+      "path": "home/static/js/async/43033.fb1884c0.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/43033.fb1884c0.js",
+      "bytes": 10480,
+      "download_file_time_utc": "2026-10-16T04:37:23.737Z",
+      "sha256": "a50d09ae6ab7c328c9123626e5f3466eac959c8a871af49bbb3e64ae470384b4"
+    },
+    {
+      "path": "home/static/js/async/44036.022029bd.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/44036.022029bd.js",
+      "bytes": 87803,
+      "download_file_time_utc": "2026-10-16T04:37:23.521Z",
+      "sha256": "8c87fe811cc1437cbfda71e010b777319c200ac2f8107d2bf7975841526f2438"
+    },
+    {
+      "path": "home/static/js/async/44267.2d92c6a2.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/44267.2d92c6a2.js",
+      "bytes": 10098,
+      "download_file_time_utc": "2026-10-16T04:37:37.980Z",
+      "sha256": "b02cf76453fac0e7889ec608661f7fc59378cba9f426e4318e798394d17b721f"
+    },
+    {
+      "path": "home/static/js/async/44320.93b49191.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/44320.93b49191.js",
+      "bytes": 10059,
+      "download_file_time_utc": "2026-10-16T04:37:23.564Z",
+      "sha256": "d9856e7bc414049ab69c8ea648ae36a74a0da8b9ee88168bdaa2d1b1861b35c1"
+    },
+    {
+      "path": "home/static/js/async/44760.e8591d55.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/44760.e8591d55.js",
+      "bytes": 22533,
+      "download_file_time_utc": "2026-10-16T04:37:23.564Z",
+      "sha256": "48da2cad5a96696cfe5c0d21a0e9e8fac9e4db17da412414243c7b057b5e2dad"
+    },
+    {
+      "path": "home/static/js/async/44849.3f400efa.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/44849.3f400efa.js",
+      "bytes": 24187,
+      "download_file_time_utc": "2026-10-16T04:37:37.868Z",
+      "sha256": "272e6bed6aed5f94d2712e8242aa9d01e24de1fc5db4ecb91917bd16a7be7a42"
+    },
+    {
+      "path": "home/static/js/async/455.1e31183f.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/455.1e31183f.js",
+      "bytes": 2966,
+      "download_file_time_utc": "2026-10-16T04:37:23.509Z",
+      "sha256": "608138f132dd6384fc781f93a09f538bd1d7a974288347f393f891ada77d1fb9"
+    },
+    {
+      "path": "home/static/js/async/45975.e30f2545.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/45975.e30f2545.js",
+      "bytes": 25763,
+      "download_file_time_utc": "2026-10-16T04:37:37.954Z",
+      "sha256": "e1a7a42177868c38ff02df80e3541615e7fb67b7d5864e2793ca07656ffc0620"
+    },
+    {
+      "path": "home/static/js/async/47267.1b6df537.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/47267.1b6df537.js",
+      "bytes": 63055,
+      "download_file_time_utc": "2026-10-16T04:37:37.926Z",
+      "sha256": "2abec541a46608853cdf60af309facfede6297576295f21aee23ae08a1079a18"
+    },
+    {
+      "path": "home/static/js/async/47354.54ea7512.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/47354.54ea7512.js",
+      "bytes": 17938,
+      "download_file_time_utc": "2026-10-16T04:37:23.760Z",
+      "sha256": "0a7fdf149b9c4a4548b52d67165947eb7d1130ff963c1fe0045832a4000d7619"
+    },
+    {
+      "path": "home/static/js/async/4766.c2f46048.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/4766.c2f46048.js",
+      "bytes": 2028,
+      "download_file_time_utc": "2026-10-16T04:37:23.518Z",
+      "sha256": "c2297976acdf0f059bec5231839e92d16a0017e94032987bac364bfbabe04dcf"
+    },
+    {
+      "path": "home/static/js/async/48090.b0b646d3.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/48090.b0b646d3.js",
+      "bytes": 34398,
+      "download_file_time_utc": "2026-10-16T04:37:23.501Z",
+      "sha256": "381ac1f6ceaa2f136c20073b4327f9aa772c658eed5b6351d8e7b401672ba061"
+    },
+    {
+      "path": "home/static/js/async/48096.97fc0486.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/48096.97fc0486.js",
+      "bytes": 409951,
+      "download_file_time_utc": "2026-10-16T04:37:23.658Z",
+      "sha256": "ac0374c097e2b757c8032bacf6f96c8b34acc7618bcaa75242c009bdbd785935"
+    },
+    {
+      "path": "home/static/js/async/48228.f2b4daf5.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/48228.f2b4daf5.js",
+      "bytes": 7481,
+      "download_file_time_utc": "2026-10-16T04:37:37.870Z",
+      "sha256": "e67e12ee24685a8ed3aebfaab35be5b651bf03efd9713640de30bef4284a0e62"
+    },
+    {
+      "path": "home/static/js/async/49093.e77a42d7.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/49093.e77a42d7.js",
+      "bytes": 53883,
+      "download_file_time_utc": "2026-10-16T04:37:23.779Z",
+      "sha256": "9ac98f670abab1701453cc19ac71ab286ee54b19df01420642bf095bc103a0d8"
+    },
+    {
+      "path": "home/static/js/async/49535.0cc98982.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/49535.0cc98982.js",
+      "bytes": 77000,
+      "download_file_time_utc": "2026-10-16T04:37:23.806Z",
+      "sha256": "1a44785352b8fc2ace76891904f611e3fa3c29e507e5253d42294880d1b6ee5d"
+    },
+    {
+      "path": "home/static/js/async/49671.f644fc42.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/49671.f644fc42.js",
+      "bytes": 9302,
+      "download_file_time_utc": "2026-10-16T04:37:38.031Z",
+      "sha256": "bdc70a89eb4c793b865f1930a59ac9889795f44681b2966dbebbc98be591e116"
+    },
+    {
+      "path": "home/static/js/async/50565.410be0fe.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/50565.410be0fe.js",
+      "bytes": 8653,
+      "download_file_time_utc": "2026-10-16T04:37:23.684Z",
+      "sha256": "f9493fdf387f3ac35325d5b4be406af6cca82773e976659316bfc66715a860d0"
+    },
+    {
+      "path": "home/static/js/async/50612.7fefde5f.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/50612.7fefde5f.js",
+      "bytes": 35139,
+      "download_file_time_utc": "2026-10-16T04:37:23.732Z",
+      "sha256": "fe4047dfc4d7f67a9a5c6a53ba8d7cc2e1857f578e6c0ada93a9c8bb357a4d60"
+    },
+    {
+      "path": "home/static/js/async/5062.fa7e75ae.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/5062.fa7e75ae.js",
+      "bytes": 23418,
+      "download_file_time_utc": "2026-10-16T04:37:23.715Z",
+      "sha256": "a50c477534e23bdbfd4f162fead0c45dbe7915e7dae3d77813b1541714ebf631"
+    },
+    {
+      "path": "home/static/js/async/50645.ce54cb57.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/50645.ce54cb57.js",
+      "bytes": 16055,
+      "download_file_time_utc": "2026-10-16T04:37:23.735Z",
+      "sha256": "705747e79a9060bbaa13f42bfef13ba25a64191659a3bdef89f5803972e4c304"
+    },
+    {
+      "path": "home/static/js/async/51444.3a58c198.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/51444.3a58c198.js",
+      "bytes": 4510,
+      "download_file_time_utc": "2026-10-16T04:37:23.806Z",
+      "sha256": "a342c3f603d8236c6b58f13f5afac33c2241c3cee20e05b637ce83376bf00865"
+    },
+    {
+      "path": "home/static/js/async/52435.f5f77941.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/52435.f5f77941.js",
+      "bytes": 2625,
+      "download_file_time_utc": "2026-10-16T04:37:38.073Z",
+      "sha256": "7a7b6f3eee99e874abc5673b843aa939262aaccea85cb154557efdd6dd74ee0a"
+    },
+    {
+      "path": "home/static/js/async/53914.d64301c5.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/53914.d64301c5.js",
+      "bytes": 17671,
+      "download_file_time_utc": "2026-10-16T04:37:23.600Z",
+      "sha256": "4ed538f7cf03102f91ecbb58f3cccb46b9caf8bacb7d783d457cd35e4befa480"
+    },
+    {
+      "path": "home/static/js/async/53990.8a68c48a.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/53990.8a68c48a.js",
+      "bytes": 39295,
+      "download_file_time_utc": "2026-10-16T04:37:23.622Z",
+      "sha256": "a582cfaae4a04d2f761d3040e18f07ef1a694053764596cf7d00f35cf15c9069"
+    },
+    {
+      "path": "home/static/js/async/54119.bffdd068.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/54119.bffdd068.js",
+      "bytes": 70087,
+      "download_file_time_utc": "2026-10-16T04:37:23.544Z",
+      "sha256": "938a164568c4aae6c6f717e6bb291d5a28c6fc186cd74a48d9fd5a6ea52bdf92"
+    },
+    {
+      "path": "home/static/js/async/54896.1f9cd3ba.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/54896.1f9cd3ba.js",
+      "bytes": 531236,
+      "download_file_time_utc": "2026-10-16T04:37:38.200Z",
+      "sha256": "b9deacbaf61c19693a6736b5fc36836e93854d60b82d1a7b718b2fb89bb48052"
+    },
+    {
+      "path": "home/static/js/async/54963.a488f70d.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/54963.a488f70d.js",
+      "bytes": 2848,
+      "download_file_time_utc": "2026-10-16T04:37:37.962Z",
+      "sha256": "2a7ca4663f96c830d8d52cdba1067ae6afeb54dc83b64bf503b8067c3716f9d1"
+    },
+    {
+      "path": "home/static/js/async/56798.126d643e.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/56798.126d643e.js",
+      "bytes": 23195,
+      "download_file_time_utc": "2026-10-16T04:37:37.898Z",
+      "sha256": "082833c631ce4080cefcef79c52f093c0dabe9353beac2c8b793d2718fdf5427"
+    },
+    {
+      "path": "home/static/js/async/572.c43236f8.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/572.c43236f8.js",
+      "bytes": 45713,
+      "download_file_time_utc": "2026-10-16T04:37:23.544Z",
+      "sha256": "c81ec4e95416d99e79398dbd7f089dfcab98e12619e1286f45240aa47ffba746"
+    },
+    {
+      "path": "home/static/js/async/57607.c2a73bb0.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/57607.c2a73bb0.js",
+      "bytes": 3890,
+      "download_file_time_utc": "2026-10-16T04:37:23.504Z",
+      "sha256": "a2644117207c2b7a854f21d4cb22f4342b9f2e2509c1c0ed05a6e178aac66b1b"
+    },
+    {
+      "path": "home/static/js/async/57714.c18541c0.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/57714.c18541c0.js",
+      "bytes": 7039,
+      "download_file_time_utc": "2026-10-16T04:37:37.940Z",
+      "sha256": "2b7036cfab363ee963f9b3ea7891624151d36297b52889a4e596e3b7e388ff51"
+    },
+    {
+      "path": "home/static/js/async/5848.8f7e5633.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/5848.8f7e5633.js",
+      "bytes": 2771,
+      "download_file_time_utc": "2026-10-16T04:37:38.023Z",
+      "sha256": "3b8e6d2e44afd9182f3249144d62f644e9637ad7e8dd9e54ee424826956c464a"
+    },
+    {
+      "path": "home/static/js/async/58668.a18d4617.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/58668.a18d4617.js",
+      "bytes": 14652,
+      "download_file_time_utc": "2026-10-16T04:37:23.427Z",
+      "sha256": "21ca4252a4b40b89f4318a6fd5cdfb80b2765ef6213c0369e92cbde2e3127ae5"
+    },
+    {
+      "path": "home/static/js/async/58898.0322a0c6.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/58898.0322a0c6.js",
+      "bytes": 1612,
+      "download_file_time_utc": "2026-10-16T04:37:38.008Z",
+      "sha256": "52bf60f1d79583523f23147e9971059fb2bad765af3de19b5db8f2942c0a473e"
+    },
+    {
+      "path": "home/static/js/async/59735.c5d10358.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/59735.c5d10358.js",
+      "bytes": 1873,
+      "download_file_time_utc": "2026-10-16T04:37:38.043Z",
+      "sha256": "882696e61344ece3081a05d49a7e9bb15d8234734cd79a76a3da1afe41c043d7"
+    },
+    {
+      "path": "home/static/js/async/60540.f69f6f13.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/60540.f69f6f13.js",
+      "bytes": 448,
+      "download_file_time_utc": "2026-10-16T04:37:23.708Z",
+      "sha256": "514304227eeabffbf4bbf87d66ed439830ce7d79e9773379ace0e4f444e056f9"
+    },
+    {
+      "path": "home/static/js/async/61430.65791410.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/61430.65791410.js",
+      "bytes": 8186,
+      "download_file_time_utc": "2026-10-16T04:37:23.433Z",
+      "sha256": "1f31164ec4ea5f35d35125f5f1bd11c887118b9f59d03381767d452400616cb1"
+    },
+    {
+      "path": "home/static/js/async/6160.835a7fa9.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/6160.835a7fa9.js",
+      "bytes": 2633,
+      "download_file_time_utc": "2026-10-16T04:37:37.931Z",
+      "sha256": "07cfa0459192ba2734b589fc5df1f37068c924fb56a1e7be0aa20c80fde3fb4d"
+    },
+    {
+      "path": "home/static/js/async/62035.4ebb067c.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/62035.4ebb067c.js",
+      "bytes": 23757,
+      "download_file_time_utc": "2026-10-16T04:37:23.428Z",
+      "sha256": "7513d39a4206204b6ae2145875268751be29e03e11a49eb04090484bffecda33"
+    },
+    {
+      "path": "home/static/js/async/63128.5cf8773f.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/63128.5cf8773f.js",
+      "bytes": 1556,
+      "download_file_time_utc": "2026-10-16T04:37:37.995Z",
+      "sha256": "dcbae67e8df9293c6026046f584095b9fc897c4510adb4eef7e4d824b24d46d5"
+    },
+    {
+      "path": "home/static/js/async/63556.87b0f814.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/63556.87b0f814.js",
+      "bytes": 6488,
+      "download_file_time_utc": "2026-10-16T04:37:37.969Z",
+      "sha256": "1d45087ed7d6b124c2bd5ace2b3fc7821306577e2315d497612dde85d70252a3"
+    },
+    {
+      "path": "home/static/js/async/6411.779eba77.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/6411.779eba77.js",
+      "bytes": 5436,
+      "download_file_time_utc": "2026-10-16T04:37:23.475Z",
+      "sha256": "0465ed8ee325bbf33e7ae5bb1b109c6378ff781af402e7d6faad3dd0f6561721"
+    },
+    {
+      "path": "home/static/js/async/65902.8b73324a.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/65902.8b73324a.js",
+      "bytes": 13733,
+      "download_file_time_utc": "2026-10-16T04:37:23.555Z",
+      "sha256": "9060b9cbc45c2ec6e7c4a084b2bd025ce96ae6053d5c46a89a7920b4cf7eb886"
+    },
+    {
+      "path": "home/static/js/async/66758.24b485a4.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/66758.24b485a4.js",
+      "bytes": 26066,
+      "download_file_time_utc": "2026-10-16T04:37:23.525Z",
+      "sha256": "a667f375e9e7794503022a9be83fb968bea6666249888c661f866193c11e55dd"
+    },
+    {
+      "path": "home/static/js/async/66837.eacee639.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/66837.eacee639.js",
+      "bytes": 9526,
+      "download_file_time_utc": "2026-10-16T04:37:23.450Z",
+      "sha256": "05f1019aa7862e8a8850cc6dd05913bc0d3eebf3bdab8b7676b63ea3b7f56fe6"
+    },
+    {
+      "path": "home/static/js/async/6705.0b0304f8.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/6705.0b0304f8.js",
+      "bytes": 11490,
+      "download_file_time_utc": "2026-10-16T04:37:37.938Z",
+      "sha256": "854ef38efe11e26ce970715540c55709262f487cd43670bf0ca376017b432a03"
+    },
+    {
+      "path": "home/static/js/async/6743.4585e51c.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/6743.4585e51c.js",
+      "bytes": 1260,
+      "download_file_time_utc": "2026-10-16T04:37:38.091Z",
+      "sha256": "e31cbd6f061d563082ef1e3d77a999f6488d0cca38b3123c7f3b594676a5347f"
+    },
+    {
+      "path": "home/static/js/async/67654.a07aa883.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/67654.a07aa883.js",
+      "bytes": 1906,
+      "download_file_time_utc": "2026-10-16T04:37:37.962Z",
+      "sha256": "5b066ffaed7b2a4f8f673da4e96afc8625eca57fc4566f93eb2dd331d2dcc299"
+    },
+    {
+      "path": "home/static/js/async/69868.92ddb55d.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/69868.92ddb55d.js",
+      "bytes": 6444,
+      "download_file_time_utc": "2026-10-16T04:37:23.469Z",
+      "sha256": "05d86b46051ca2d13b80fcdf60cf3092393ceddfad3ada02de56de8686aea293"
+    },
+    {
+      "path": "home/static/js/async/69873.67957509.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/69873.67957509.js",
+      "bytes": 36693,
+      "download_file_time_utc": "2026-10-16T04:37:23.653Z",
+      "sha256": "6603372d13135348bd46344551f05187f2e339800edec9c018b5a759edccb682"
+    },
+    {
+      "path": "home/static/js/async/71209.b19a42f6.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/71209.b19a42f6.js",
+      "bytes": 1018,
+      "download_file_time_utc": "2026-10-16T04:37:23.753Z",
+      "sha256": "479884794362166dea9b0fd0d96f4472ba70f351ce6b98840095ade9be711f9b"
+    },
+    {
+      "path": "home/static/js/async/71945.e977d58a.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/71945.e977d58a.js",
+      "bytes": 21479,
+      "download_file_time_utc": "2026-10-16T04:37:38.089Z",
+      "sha256": "0a12951312d02c5ef14556273056e9da05db770e47f529055509431de518b054"
+    },
+    {
+      "path": "home/static/js/async/73005.e5a9d05c.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/73005.e5a9d05c.js",
+      "bytes": 5114,
+      "download_file_time_utc": "2026-10-16T04:37:23.460Z",
+      "sha256": "0ece36612ad123b7adb2a82a298509ddfd84870f752930fec4e38d92f8d3a992"
+    },
+    {
+      "path": "home/static/js/async/73145.2d057e9a.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/73145.2d057e9a.js",
+      "bytes": 3165,
+      "download_file_time_utc": "2026-10-16T04:37:23.668Z",
+      "sha256": "58bdf0e810fac131e4041113411345233e4d83e4be84b3330b55b68e2d11082f"
+    },
+    {
+      "path": "home/static/js/async/74032.148f224c.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/74032.148f224c.js",
+      "bytes": 13155,
+      "download_file_time_utc": "2026-10-16T04:37:37.870Z",
+      "sha256": "bec4c6840ad51f53d5dda00a445ff81c101a7208c3298bcb5fe9dfec7857869b"
+    },
+    {
+      "path": "home/static/js/async/74444.2931f828.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/74444.2931f828.js",
+      "bytes": 11973,
+      "download_file_time_utc": "2026-10-16T04:37:38.100Z",
+      "sha256": "bd43c227a568df27c79de1095f494179b4c96da639c52c0f96ddb56a3a57ffac"
+    },
+    {
+      "path": "home/static/js/async/74789.8ad0d671.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/74789.8ad0d671.js",
+      "bytes": 76088,
+      "download_file_time_utc": "2026-10-16T04:37:23.567Z",
+      "sha256": "b2d4d0f54327dfc0ffffe48ced87cacb122676063beec20e8d581d530c5eb4ec"
+    },
+    {
+      "path": "home/static/js/async/75398.2218d25f.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/75398.2218d25f.js",
+      "bytes": 2845,
+      "download_file_time_utc": "2026-10-16T04:37:37.889Z",
+      "sha256": "33bf0eba21502537350aefed37cac04ccbc24adc8ad122464a64b2f245c02735"
+    },
+    {
+      "path": "home/static/js/async/78421.23a0e3da.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/78421.23a0e3da.js",
+      "bytes": 96139,
+      "download_file_time_utc": "2026-10-16T04:37:38.095Z",
+      "sha256": "2442d231da61a932a65eb674dc711444256cc2a9d0c2ab233a680bb05260df47"
+    },
+    {
+      "path": "home/static/js/async/79367.4cb2e41b.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/79367.4cb2e41b.js",
+      "bytes": 58878,
+      "download_file_time_utc": "2026-10-16T04:37:23.799Z",
+      "sha256": "b228a6cb60b2eb909d3e078bd3b681a425a9e0ef795f7b25620aacb8440b5bd2"
+    },
+    {
+      "path": "home/static/js/async/81181.b7799593.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/81181.b7799593.js",
+      "bytes": 219369,
+      "download_file_time_utc": "2026-10-16T04:37:23.655Z",
+      "sha256": "12ce7ff13d34d52b0c636dcc1dfc930e9f36b2ff59da13b022393ffd0398a3e4"
+    },
+    {
+      "path": "home/static/js/async/82242.8f63df67.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/82242.8f63df67.js",
+      "bytes": 20111,
+      "download_file_time_utc": "2026-10-16T04:37:37.918Z",
+      "sha256": "cf0bfb137c16f61e28c810925b852d93c63ccb0c6f93910b524d5f03a5c46b5d"
+    },
+    {
+      "path": "home/static/js/async/82556.b3a58859.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/82556.b3a58859.js",
+      "bytes": 83012,
+      "download_file_time_utc": "2026-10-16T04:37:23.822Z",
+      "sha256": "4226f84e6bb6239ba5ea9a3580950f86c9a140c21ac0f4dc2f0ef65e24005b1f"
+    },
+    {
+      "path": "home/static/js/async/82830.7a729e9e.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/82830.7a729e9e.js",
+      "bytes": 288739,
+      "download_file_time_utc": "2026-10-16T04:37:23.689Z",
+      "sha256": "2597550fe4c8ff3c877459f8801bdd58f850742257c50a3e5e567bfc961a7376"
+    },
+    {
+      "path": "home/static/js/async/82835.b42a6130.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/82835.b42a6130.js",
+      "bytes": 29364,
+      "download_file_time_utc": "2026-10-16T04:37:23.799Z",
+      "sha256": "589c97ee7777e83e3d7de8ff4257741af1e343825d70178f861c62dbdf7dce03"
+    },
+    {
+      "path": "home/static/js/async/84953.328a8bdd.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/84953.328a8bdd.js",
+      "bytes": 12860,
+      "download_file_time_utc": "2026-10-16T04:37:37.870Z",
+      "sha256": "52438612580d105775d594c154f90e57165d3df31700fb4c9f960ad9d1adcda2"
+    },
+    {
+      "path": "home/static/js/async/85759.b0689e18.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/85759.b0689e18.js",
+      "bytes": 14373,
+      "download_file_time_utc": "2026-10-16T04:37:23.795Z",
+      "sha256": "a88361719657501b26d9feb71145465d1cc9692ba69ce55650fed080eeb77827"
+    },
+    {
+      "path": "home/static/js/async/8658.311506f1.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/8658.311506f1.js",
+      "bytes": 3832,
+      "download_file_time_utc": "2026-10-16T04:37:38.080Z",
+      "sha256": "a2f5bd1b46ba4e82541420365f34e2d57a51083ecc63100a71b141675df4483a"
+    },
+    {
+      "path": "home/static/js/async/86742.45029e7d.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/86742.45029e7d.js",
+      "bytes": 14095,
+      "download_file_time_utc": "2026-10-16T04:37:23.781Z",
+      "sha256": "1444eda68e5a36e11dca3da26bec67dcd58dffb1ea18d6a22d49a45bf6fbf4c2"
+    },
+    {
+      "path": "home/static/js/async/87137.32449d76.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/87137.32449d76.js",
+      "bytes": 4468,
+      "download_file_time_utc": "2026-10-16T04:37:38.025Z",
+      "sha256": "e7cf3630e5d1dd3199044085d97d273a7f811951eb0841e483d76bde3e4361f4"
+    },
+    {
+      "path": "home/static/js/async/90846.9c62b6ae.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/90846.9c62b6ae.js",
+      "bytes": 4303,
+      "download_file_time_utc": "2026-10-16T04:37:37.875Z",
+      "sha256": "5e28e67a82f40036feb366583218c9f2029bc32afecf72ced7ea72c050901dd2"
+    },
+    {
+      "path": "home/static/js/async/92425.c709b1c5.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/92425.c709b1c5.js",
+      "bytes": 2480,
+      "download_file_time_utc": "2026-10-16T04:37:23.778Z",
+      "sha256": "30c198d12a0913be76c125a08f6301d25fd9d826b864299ec0f6c7c9cd8e7527"
+    },
+    {
+      "path": "home/static/js/async/93088.5d911e46.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/93088.5d911e46.js",
+      "bytes": 185190,
+      "download_file_time_utc": "2026-10-16T04:37:23.683Z",
+      "sha256": "c3f1c3269bd9780857ba02d2e5ecfdf3424547e09db63831073a6cc0d423ebbf"
+    },
+    {
+      "path": "home/static/js/async/93706.0c05e6ac.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/93706.0c05e6ac.js",
+      "bytes": 1125,
+      "download_file_time_utc": "2026-10-16T04:37:23.465Z",
+      "sha256": "e2064126d8d81ad59c6192920826f21ddd955f7301cd2abd50f45fbcc9308029"
+    },
+    {
+      "path": "home/static/js/async/95277.950593c4.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/95277.950593c4.js",
+      "bytes": 8592,
+      "download_file_time_utc": "2026-10-16T04:37:37.948Z",
+      "sha256": "264aa59144457d8e86a0b1b0a7bb2e7391e743e9a1ae3f870ffa8e069f890e01"
+    },
+    {
+      "path": "home/static/js/async/96242.ef39f972.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/96242.ef39f972.js",
+      "bytes": 760,
+      "download_file_time_utc": "2026-10-16T04:37:37.989Z",
+      "sha256": "92d1cc98d586bc8dcdec51ab8be8b034e4aca3ca82c93a87cafe90307a94f8fe"
+    },
+    {
+      "path": "home/static/js/async/96869.66c599f4.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/96869.66c599f4.js",
+      "bytes": 2753,
+      "download_file_time_utc": "2026-10-16T04:37:23.478Z",
+      "sha256": "849f6ec66f3b2a64e419c2b838b21fa0bb97f1e073f3da1fd4cce4b72927f82b"
+    },
+    {
+      "path": "home/static/js/async/97890.fc1b9125.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/97890.fc1b9125.js",
+      "bytes": 993,
+      "download_file_time_utc": "2026-10-16T04:37:37.954Z",
+      "sha256": "9092ded7aa71b2ea778546cce34dee0226464e7082c625f2007c490f9cb12f5a"
+    },
+    {
+      "path": "home/static/js/async/99178.0a38c685.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/99178.0a38c685.js",
+      "bytes": 14282,
+      "download_file_time_utc": "2026-10-16T04:37:23.638Z",
+      "sha256": "2c95874476c4cc4807987f15f3781f34291b9bee68baf6d177d1df9ad492205f"
+    },
+    {
+      "path": "home/static/js/async/99344.3c5c689a.js",
+      "url": "http://192.168.5.2:5055/home/static/js/async/99344.3c5c689a.js",
+      "bytes": 8535,
+      "download_file_time_utc": "2026-10-16T04:37:38.095Z",
+      "sha256": "871cfcd3489368455ae7d336c90074cdeae8b6d1ffc4876c2084e97d6d0769d8"
+    },
+    {
+      "path": "home/static/js/echarts.ab94bd45.js",
+      "url": "http://192.168.5.2:5055/home/static/js/echarts.ab94bd45.js",
+      "bytes": 1044166,
+      "download_file_time_utc": "2026-10-16T04:36:29.827Z",
+      "sha256": "5717115a7d5497bf0538c44386c6d1c58d5221c6c1483546e17800c3581f2982"
+    },
+    {
+      "path": "home/static/js/index.3608137b.js",
+      "url": "http://192.168.5.2:5055/home/static/js/index.3608137b.js",
+      "bytes": 1542120,
+      "download_file_time_utc": "2026-10-16T04:36:31.386Z",
+      "sha256": "4b52d44771b429b3599372f73636e81c6a86e02f49443b5419123e4827bc50c3"
+    },
+    {
+      "path": "home/static/js/lib-axios.b14a43f9.js",
+      "url": "http://192.168.5.2:5055/home/static/js/lib-axios.b14a43f9.js",
+      "bytes": 12105,
+      "download_file_time_utc": "2026-10-16T04:36:29.494Z",
+      "sha256": "a58e311b72fe24bd856f0d1556e34fb767b6a8e341eaa961b44dc4a235a22e85"
+    },
+    {
+      "path": "home/static/js/lib-router.22ab4569.js",
+      "url": "http://192.168.5.2:5055/home/static/js/lib-router.22ab4569.js",
+      "bytes": 28435,
+      "download_file_time_utc": "2026-10-16T04:36:29.857Z",
+      "sha256": "d216ba9fb2b978c5f9a9a43204b076b9468d16dd986c967e7e0f144757ff6dec"
+    },
+    {
+      "path": "home/static/js/lib-vue.dc72da37.js",
+      "url": "http://192.168.5.2:5055/home/static/js/lib-vue.dc72da37.js",
+      "bytes": 77692,
+      "download_file_time_utc": "2026-10-16T04:36:29.529Z",
+      "sha256": "b129f952f1c4fc4aa004ae160eb0fdae8e2317e36fb98348a5d26397ea3822b4"
+    },
+    {
+      "path": "index.html",
+      "url": "http://192.168.5.2:5055/home/",
+      "bytes": 4585,
+      "download_file_time_utc": "2026-10-16T04:36:29.451Z",
+      "sha256": "3694985e9f511d4781168276ad23ba7c4f7029b0f7e01e4257e94b85d19b8ce9"
+    }
+  ]
+}

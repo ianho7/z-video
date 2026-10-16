@@ -1,0 +1,605 @@
+{
+  "file": "background.js",
+  "sha256": "224b2622f0384fa5606189e68b15f66c9c6bc5c43b86ba1666db617c3e5302fe",
+  "offset_unit": "UTF-16 code units, zero based; byte_offset is UTF-8",
+  "paths": [
+    {
+      "path": "/transcode/decrypt/playaddr",
+      "offset": 4600214,
+      "byte_offset": 5248915,
+      "alias": "vt",
+      "context_offset": 4600145,
+      "context": "vt=function(e){let t={},n=Et();t.Cookie=wt(n);let o=e.encrypted_path?\"/transcode/decrypt/playaddr\":\"/transcode/playaddr\";return v({headers:t,url:global.ApiHost+o,method:\"get\",apiTarget:\"direct\",params:e,timeout:3e4})}"
+    },
+    {
+      "path": "/transcode/playaddr",
+      "offset": 4600244,
+      "byte_offset": 5248945,
+      "alias": "vt",
+      "context_offset": 4600145,
+      "context": "vt=function(e){let t={},n=Et();t.Cookie=wt(n);let o=e.encrypted_path?\"/transcode/decrypt/playaddr\":\"/transcode/playaddr\";return v({headers:t,url:global.ApiHost+o,method:\"get\",apiTarget:\"direct\",params:e,timeout:3e4})}"
+    },
+    {
+      "path": "/transcode/decrypt/audio/play",
+      "offset": 4600432,
+      "byte_offset": 5249133,
+      "alias": "bt",
+      "context_offset": 4600363,
+      "context": "bt=function(e){let t={},n=Et();t.Cookie=wt(n);let o=e.encrypted_path?\"/transcode/decrypt/audio/play\":\"/transcode/audio/play\";return v({headers:t,url:global.ApiHost+o,method:\"get\",apiTarget:\"direct\",params:e,timeout:3e4})}"
+    },
+    {
+      "path": "/transcode/audio/play",
+      "offset": 4600464,
+      "byte_offset": 5249165,
+      "alias": "bt",
+      "context_offset": 4600363,
+      "context": "bt=function(e){let t={},n=Et();t.Cookie=wt(n);let o=e.encrypted_path?\"/transcode/decrypt/audio/play\":\"/transcode/audio/play\";return v({headers:t,url:global.ApiHost+o,method:\"get\",apiTarget:\"direct\",params:e,timeout:3e4})}"
+    },
+    {
+      "path": "/zvideo/share/updateplaytime",
+      "offset": 4746383,
+      "byte_offset": 5396139,
+      "alias": "qs",
+      "context_offset": 4746298,
+      "context": "qs=function(e){let t={},n=_a();return t.Cookie=ma(n),v({headers:t,url:global.ApiHost+\"/zvideo/share/updateplaytime\",method:\"post\",apiTarget:\"direct\",data:e})}"
+    },
+    {
+      "path": "/zvideo/video/updateplaytime",
+      "offset": 4746672,
+      "byte_offset": 5396428,
+      "alias": "Hs",
+      "context_offset": 4746457,
+      "context": "Hs=function(e){let t={},n=_a();return t.Cookie=ma(n),\"object\"==typeof e.subtitle_setting&&(e.subtitle_setting=JSON.stringify(e.subtitle_setting)),r.a.info(\"reportPlayRecord-send:\",e),v({headers:t,url:global.ApiHost+\"/zvideo/video/updateplaytime\",method:\"post\",apiTarget:\"direct\",data:e})}"
+    },
+    {
+      "path": "/zvideo/share/v3/info",
+      "offset": 4746828,
+      "byte_offset": 5396584,
+      "alias": "Gs",
+      "context_offset": 4746746,
+      "context": "Gs=function(e){let t={},n=_a();t.Cookie=ma(n);let o={headers:t,url:global.ApiHost+\"/zvideo/share/v3/info\",method:\"post\",apiTarget:\"direct\",data:e};return r.a.info(\"config for video getShareInfo api:\",o),v(o)}"
+    },
+    {
+      "path": "/zvideo/collection/v2/info",
+      "offset": 4747037,
+      "byte_offset": 5396793,
+      "alias": "Ws",
+      "context_offset": 4746955,
+      "context": "Ws=function(e){let t={},n=_a();t.Cookie=ma(n);let o={headers:t,url:global.ApiHost+\"/zvideo/collection/v2/info\",method:\"post\",apiTarget:\"direct\",data:e};return r.a.info(\"config for video getInfo api:\",o),v(o)}"
+    },
+    {
+      "path": "/zvideo/share/classification/collection/info",
+      "offset": 4747233,
+      "byte_offset": 5396989,
+      "alias": "Ys",
+      "context_offset": 4747164,
+      "context": "Ys=function(e){let t={},n=_a();t.Cookie=ma(n);let o=e.encrypted_path?\"/zvideo/share/classification/collection/info\":\"/zvideo/collection/info\",i={headers:t,url:global.ApiHost+o,method:\"post\",apiTarget:\"direct\",data:e};return r.a.info(\"config for video getInfoV2 api:\",i),v(i)}"
+    },
+    {
+      "path": "/zvideo/collection/info",
+      "offset": 4747280,
+      "byte_offset": 5397036,
+      "alias": "Ys",
+      "context_offset": 4747164,
+      "context": "Ys=function(e){let t={},n=_a();t.Cookie=ma(n);let o=e.encrypted_path?\"/zvideo/share/classification/collection/info\":\"/zvideo/collection/info\",i={headers:t,url:global.ApiHost+o,method:\"post\",apiTarget:\"direct\",data:e};return r.a.info(\"config for video getInfoV2 api:\",i),v(i)}"
+    },
+    {
+      "path": "/zvideo/share/classification/collection/video",
+      "offset": 4747509,
+      "byte_offset": 5397265,
+      "alias": "Qs",
+      "context_offset": 4747440,
+      "context": "Qs=function(e){let t={},n=_a();t.Cookie=ma(n);let o=e.encrypted_path?\"/zvideo/share/classification/collection/video\":\"/zvideo/collection/video\",i={headers:t,url:global.ApiHost+o,method:\"post\",apiTarget:\"direct\",data:e};return r.a.info(\"config for video getEpisodeList api:\",i),v(i)}"
+    },
+    {
+      "path": "/zvideo/collection/video",
+      "offset": 4747557,
+      "byte_offset": 5397313,
+      "alias": "Qs",
+      "context_offset": 4747440,
+      "context": "Qs=function(e){let t={},n=_a();t.Cookie=ma(n);let o=e.encrypted_path?\"/zvideo/share/classification/collection/video\":\"/zvideo/collection/video\",i={headers:t,url:global.ApiHost+o,method:\"post\",apiTarget:\"direct\",data:e};return r.a.info(\"config for video getEpisodeList api:\",i),v(i)}"
+    },
+    {
+      "path": "/transcode/decrypt/subtitle",
+      "offset": 4747792,
+      "byte_offset": 5397548,
+      "alias": "Ks",
+      "context_offset": 4747723,
+      "context": "Ks=function(e){let t={},n=_a();t.Cookie=ma(n);let o=e.encrypted_path?\"/transcode/decrypt/subtitle\":\"/transcode/subtitle\",i={headers:t,url:global.ApiHost+o,method:\"get\",apiTarget:\"direct\",params:e,timeout:1e4};return r.a.info(\"config for video getSubtitleList api:\",i),v(i)}"
+    },
+    {
+      "path": "/transcode/subtitle",
+      "offset": 4747822,
+      "byte_offset": 5397578,
+      "alias": "Ks",
+      "context_offset": 4747723,
+      "context": "Ks=function(e){let t={},n=_a();t.Cookie=ma(n);let o=e.encrypted_path?\"/transcode/decrypt/subtitle\":\"/transcode/subtitle\",i={headers:t,url:global.ApiHost+o,method:\"get\",apiTarget:\"direct\",params:e,timeout:1e4};return r.a.info(\"config for video getSubtitleList api:\",i),v(i)}"
+    },
+    {
+      "path": "/zvideo/collection/skip",
+      "offset": 4748079,
+      "byte_offset": 5397835,
+      "alias": "$s",
+      "context_offset": 4747997,
+      "context": "$s=function(e){let t={},n=_a();t.Cookie=ma(n);let o={headers:t,url:global.ApiHost+\"/zvideo/collection/skip\",method:\"post\",apiTarget:\"direct\",data:e,timeout:1e4};return r.a.info(\"config for skip video start or end api:\",o),v(o)}"
+    },
+    {
+      "path": "/zvideo/video/media",
+      "offset": 4748307,
+      "byte_offset": 5398063,
+      "alias": "Xs",
+      "context_offset": 4748225,
+      "context": "Xs=function(e){let t={},n=_a();t.Cookie=ma(n);let o={headers:t,url:global.ApiHost+\"/zvideo/video/media\",method:\"post\",apiTarget:\"direct\",data:e,timeout:1e4};return r.a.info(\"config for get video media info api:\",o),v(o)}"
+    },
+    {
+      "path": "/transcode/decrypt/playaddr",
+      "offset": 4748515,
+      "byte_offset": 5398271,
+      "alias": "Js",
+      "context_offset": 4748446,
+      "context": "Js=function(e){let t={},n=_a();t.Cookie=ma(n);let o=e.encrypted_path?\"/transcode/decrypt/playaddr\":\"/transcode/playaddr\";return v({headers:t,url:global.ApiHost+o,method:\"get\",apiTarget:\"direct\",params:e,timeout:3e4})}"
+    },
+    {
+      "path": "/transcode/playaddr",
+      "offset": 4748545,
+      "byte_offset": 5398301,
+      "alias": "Js",
+      "context_offset": 4748446,
+      "context": "Js=function(e){let t={},n=_a();t.Cookie=ma(n);let o=e.encrypted_path?\"/transcode/decrypt/playaddr\":\"/transcode/playaddr\";return v({headers:t,url:global.ApiHost+o,method:\"get\",apiTarget:\"direct\",params:e,timeout:3e4})}"
+    },
+    {
+      "path": "/transcode/decrypt/play",
+      "offset": 4748733,
+      "byte_offset": 5398489,
+      "alias": "Zs",
+      "context_offset": 4748664,
+      "context": "Zs=function(e){let t={},n=_a();t.Cookie=ma(n);let o=e.encrypted_path?\"/transcode/decrypt/play\":\"/transcode/play\";return v({headers:t,url:global.ApiHost+o,method:\"get\",apiTarget:\"direct\",params:e,timeout:3e4})}"
+    },
+    {
+      "path": "/transcode/play",
+      "offset": 4748759,
+      "byte_offset": 5398515,
+      "alias": "Zs",
+      "context_offset": 4748664,
+      "context": "Zs=function(e){let t={},n=_a();t.Cookie=ma(n);let o=e.encrypted_path?\"/transcode/decrypt/play\":\"/transcode/play\";return v({headers:t,url:global.ApiHost+o,method:\"get\",apiTarget:\"direct\",params:e,timeout:3e4})}"
+    },
+    {
+      "path": "/play/stop",
+      "offset": 4748959,
+      "byte_offset": 5398715,
+      "alias": "ea",
+      "context_offset": 4748874,
+      "context": "ea=function(e){let t={},n=_a();return t.Cookie=ma(n),v({headers:t,url:global.ApiHost+\"/play/stop\",method:\"post\",apiTarget:\"direct\",data:e,timeout:5e3})}"
+    },
+    {
+      "path": "/transcode/decrypt/play/stop",
+      "offset": 4749091,
+      "byte_offset": 5398847,
+      "alias": "ta",
+      "context_offset": 4749027,
+      "context": "ta=function(e){let t={},n=_a();t.Cookie=ma(n);let o=e.isDecrypt?\"/transcode/decrypt/play/stop\":\"/transcode/play/stop\";return v({headers:t,url:global.ApiHost+o,method:\"post\",apiTarget:\"direct\",data:e,timeout:5e3})}"
+    },
+    {
+      "path": "/transcode/play/stop",
+      "offset": 4749122,
+      "byte_offset": 5398878,
+      "alias": "ta",
+      "context_offset": 4749027,
+      "context": "ta=function(e){let t={},n=_a();t.Cookie=ma(n);let o=e.isDecrypt?\"/transcode/decrypt/play/stop\":\"/transcode/play/stop\";return v({headers:t,url:global.ApiHost+o,method:\"post\",apiTarget:\"direct\",data:e,timeout:5e3})}"
+    },
+    {
+      "path": "/play/switchtrack",
+      "offset": 4749323,
+      "byte_offset": 5399079,
+      "alias": "na",
+      "context_offset": 4749241,
+      "context": "na=function(e){let t={},n=_a();t.Cookie=ma(n);let o={headers:t,url:global.ApiHost+\"/play/switchtrack\",method:\"post\",apiTarget:\"direct\",data:e,timeout:3e4};return r.a.info(\"Call player switchtrack:\",o),v(o)}"
+    },
+    {
+      "path": "/transcode/decrypt/play/switch",
+      "offset": 4749517,
+      "byte_offset": 5399273,
+      "alias": "oa",
+      "context_offset": 4749448,
+      "context": "oa=function(e){let t={},n=_a();t.Cookie=ma(n);let o=e.encrypted_path?\"/transcode/decrypt/play/switch\":\"/transcode/play/switch\",i=e.encrypted_path?{encrypted_path:e.encrypted_path,from:e.from}:{},s={headers:t,url:global.ApiHost+o,method:\"post\",apiTarget:\"direct\",data:e,params:i,timeout:3e4};return r.a.info(\"Call player switchtrack V2:\",s),v(s)}"
+    },
+    {
+      "path": "/transcode/play/switch",
+      "offset": 4749550,
+      "byte_offset": 5399306,
+      "alias": "oa",
+      "context_offset": 4749448,
+      "context": "oa=function(e){let t={},n=_a();t.Cookie=ma(n);let o=e.encrypted_path?\"/transcode/decrypt/play/switch\":\"/transcode/play/switch\",i=e.encrypted_path?{encrypted_path:e.encrypted_path,from:e.from}:{},s={headers:t,url:global.ApiHost+o,method:\"post\",apiTarget:\"direct\",data:e,params:i,timeout:3e4};return r.a.info(\"Call player switchtrack V2:\",s),v(s)}"
+    },
+    {
+      "path": "/transcode/decrypt/formatmenu",
+      "offset": 4749832,
+      "byte_offset": 5399588,
+      "alias": "ra",
+      "context_offset": 4749794,
+      "context": "ra=function(e){let t=e.encrypted_path?\"/transcode/decrypt/formatmenu\":\"/transcode/formatmenu\",n={},o=_a();return n.Cookie=ma(o),v({headers:n,url:global.ApiHost+t,method:\"get\",apiTarget:\"direct\",params:e,timeout:1e4})}"
+    },
+    {
+      "path": "/transcode/formatmenu",
+      "offset": 4749864,
+      "byte_offset": 5399620,
+      "alias": "ra",
+      "context_offset": 4749794,
+      "context": "ra=function(e){let t=e.encrypted_path?\"/transcode/decrypt/formatmenu\":\"/transcode/formatmenu\",n={},o=_a();return n.Cookie=ma(o),v({headers:n,url:global.ApiHost+t,method:\"get\",apiTarget:\"direct\",params:e,timeout:1e4})}"
+    },
+    {
+      "path": "/transcode/decrypt/format",
+      "offset": 4750050,
+      "byte_offset": 5399806,
+      "alias": "ia",
+      "context_offset": 4750012,
+      "context": "ia=function(e){let t=e.encrypted_path?\"/transcode/decrypt/format\":\"/transcode/format\",n={},o=_a();return n.Cookie=ma(o),v({headers:n,url:global.ApiHost+t,method:\"get\",apiTarget:\"direct\",params:e,timeout:1e6})}"
+    },
+    {
+      "path": "/transcode/format",
+      "offset": 4750078,
+      "byte_offset": 5399834,
+      "alias": "ia",
+      "context_offset": 4750012,
+      "context": "ia=function(e){let t=e.encrypted_path?\"/transcode/decrypt/format\":\"/transcode/format\",n={},o=_a();return n.Cookie=ma(o),v({headers:n,url:global.ApiHost+t,method:\"get\",apiTarget:\"direct\",params:e,timeout:1e6})}"
+    },
+    {
+      "path": "/zvideo/share/v4/collection/info",
+      "offset": 4750304,
+      "byte_offset": 5400060,
+      "alias": "sa",
+      "context_offset": 4750222,
+      "context": "sa=function(e){let t={},n=_a();t.Cookie=ma(n);let o={headers:t,url:global.ApiHost+\"/zvideo/share/v4/collection/info\",method:\"post\",apiTarget:\"direct\",data:e};return r.a.info(\"config for video getShareClassDetail api:\",o),v(o)}"
+    },
+    {
+      "path": "/subs/searchsub",
+      "offset": 4750534,
+      "byte_offset": 5400290,
+      "alias": "aa",
+      "context_offset": 4750449,
+      "context": "aa=function(e){let t={},n=_a();return t.Cookie=ma(n),v({headers:t,url:global.ApiHost+\"/subs/searchsub\",method:\"post\",apiTarget:\"direct\",data:e})}"
+    },
+    {
+      "path": "/subs/getsub",
+      "offset": 4750680,
+      "byte_offset": 5400436,
+      "alias": "ca",
+      "context_offset": 4750595,
+      "context": "ca=function(e){let t={},n=_a();return t.Cookie=ma(n),v({headers:t,url:global.ApiHost+\"/subs/getsub\",method:\"post\",apiTarget:\"direct\",data:e})}"
+    },
+    {
+      "path": "/subs/downloadsub",
+      "offset": 4750805,
+      "byte_offset": 5400561,
+      "alias": "ua",
+      "context_offset": 4750738,
+      "context": "ua=function(e){let t={},n=_a();t.Cookie=ma(n);let o=global.ApiHost+\"/subs/downloadsub\";return e.encrypted_path&&(o=o+\"?from=\"+e.from+\"&encrypted_path=\"+encodeURIComponent(e.encrypted_path)),v({headers:t,url:o,method:\"post\",apiTarget:\"direct\",data:e,timeout:3e4})}"
+    },
+    {
+      "path": "/v2/file/remove",
+      "offset": 4751087,
+      "byte_offset": 5400843,
+      "alias": "la",
+      "context_offset": 4751002,
+      "context": "la=function(e){let t={},n=_a();return t.Cookie=ma(n),v({headers:t,url:global.ApiHost+\"/v2/file/remove\",method:\"post\",apiTarget:\"direct\",data:e,timeout:3e4})}"
+    },
+    {
+      "path": "/subs/v2/searchsub",
+      "offset": 4751450,
+      "byte_offset": 5401206,
+      "alias": "ha",
+      "context_offset": 4751319,
+      "context": "ha=function(e){let t={},n=_a();return t.Cookie=ma(n),r.a.info(\"config for search subtitle api:\",e),v({headers:t,url:global.ApiHost+\"/subs/v2/searchsub\",method:\"post\",apiTarget:\"direct\",data:e})}"
+    },
+    {
+      "path": "/subs/v2/preview",
+      "offset": 4751581,
+      "byte_offset": 5401337,
+      "alias": "pa",
+      "context_offset": 4751514,
+      "context": "pa=function(e){let t={},n=_a();t.Cookie=ma(n);let o=global.ApiHost+\"/subs/v2/preview\";return e.from&&e.encrypted_path&&(o+=`?from=${e.from}&encrypted_path=${encodeURIComponent(e.encrypted_path)}`),v({headers:t,url:o,method:\"post\",apiTarget:\"direct\",data:e,timeout:6e4})}"
+    },
+    {
+      "path": "/subs/v2/downloadsub",
+      "offset": 4751852,
+      "byte_offset": 5401608,
+      "alias": "fa",
+      "context_offset": 4751785,
+      "context": "fa=function(e){let t={},n=_a();t.Cookie=ma(n);let o=global.ApiHost+\"/subs/v2/downloadsub\";return e.from&&e.encrypted_path&&(o+=`?from=${e.from}&encrypted_path=${encodeURIComponent(e.encrypted_path)}`),v({headers:t,url:o,method:\"post\",apiTarget:\"direct\",data:e,timeout:6e4})}"
+    },
+    {
+      "path": "/transcode/decrypt/thumb?",
+      "offset": 4769073,
+      "byte_offset": 5419059,
+      "alias": "uc",
+      "context_offset": 4768817,
+      "context": "uc=(e,t=\"small\")=>{e.dest_fmt=t,e.request_purpose=5,e.device_type=\"pcClient\";let n=e=>{let t=[];for(let n in e){let o=e[n];e.hasOwnProperty(n)&&(o||0===o)&&t.push(encodeURIComponent(n)+\"=\"+encodeURIComponent(o))}return t.join(\"&\")};return e.encrypted_path?\"/transcode/decrypt/thumb?\"+n(e):e.file_path?\"/transcode/thumb?\"+n(e):\"\"}"
+    },
+    {
+      "path": "/transcode/thumb?",
+      "offset": 4769118,
+      "byte_offset": 5419104,
+      "alias": "uc",
+      "context_offset": 4768817,
+      "context": "uc=(e,t=\"small\")=>{e.dest_fmt=t,e.request_purpose=5,e.device_type=\"pcClient\";let n=e=>{let t=[];for(let n in e){let o=e[n];e.hasOwnProperty(n)&&(o||0===o)&&t.push(encodeURIComponent(n)+\"=\"+encodeURIComponent(o))}return t.join(\"&\")};return e.encrypted_path?\"/transcode/decrypt/thumb?\"+n(e):e.file_path?\"/transcode/thumb?\"+n(e):\"\"}"
+    }
+  ],
+  "calls": [
+    {
+      "alias": "bt",
+      "offset": 4603328,
+      "call": "bt(o)",
+      "surrounding": "t].vol=t,At.setVolume(t)||r.a.info(\"set volumn error\"),Ct[kt].rate||(e.playRate=1),e.playRate){let t=Math.min(10,Math.max(0,e.playRate));Ct[kt].rate=t,At.setPlayRate(t)||r.a.info(\"set rate error\")}let n=Ct[kt].channelIndex?Ct[kt].channelIndex.index:0;At.setChannel(n)||r.a.info(\"set channel error\");let o,i=Ct[kt].audioEqualizerSetting?Ct[kt].audioEqualizerSetting:\"\";o=i?At.setAudioEqualizer(i):At.deleteAudioEqualizer(),o||r.a.info(\"set audioEqualizer error\")}else process.emit(\"ipcRootEmit\",{EmitEvent:\"MusicPlayerEvent\",EmitMsg:{code:1100,type:\"playFail\",mediaType:kt,message:\"播放失败\",song_id:It.song_id}});else process.emit(\"ipcRootEmit\",{EmitEvent:\"MusicPlayerEvent\",EmitMsg:{code:n.code,type:\"playFail\",mediaType:kt,message:n.message||n.msg,song_id:It.song_id}})},o={file_path:t,from:e.from,encrypted_path:e.encrypted_path,dest_fmt:\"OP\"};return bt(o).then(e=>{404==e.code?vt(o).then(e=>{n(e)}):n(e)}),{code:200}}"
+    },
+    {
+      "alias": "vt",
+      "offset": 4603355,
+      "call": "vt(o)",
+      "surrounding": "e=>{404==e.code?vt(o).then(e=>{n(e)}):n(e)}"
+    },
+    {
+      "alias": "Ks",
+      "offset": 4756938,
+      "call": "Ks({file_path:Ra.videoPath,encrypted_path:Ra.encrypted_path,from:Ra.fromApp,specify_subtitles:JSON.stringify([e.path])})",
+      "surrounding": "async(e,t)=>{let n=Ra.videoPath||Ra.encrypted_path||\"\";if(t.tmpVideoPath==n){if(delete t.tmpVideoPath,e.path)if(Oa){let n=await Ks({file_path:Ra.videoPath,encrypted_path:Ra.encrypted_path,from:Ra.fromApp,specify_subtitles:JSON.stringify([e.path])});if(r.a.info(\"Add subtitle play res v2\",n),n.success){let e=[...Ra.current.subtitle_list||[],...n.data||[]];t.subtitle_list=e;let o=-1;for(let e=0;e<t.subtitle_list.length;e++){let n=t.subtitle_list[e].data_source;4!=n&&5!=n||(o=t.subtitle_list[e].index)}o>-1?(t.subtitle_index=o,Ra.current.subtitle_index=o):(t.code=500,t.message=\"没有获取到手动添加的字幕\",delete t.subtitle_list)}else t.code=n.code,t.message=n"
+    },
+    {
+      "alias": "Js",
+      "offset": 4757675,
+      "call": "Js(o)",
+      "surrounding": "t n=Ra.videoPath||Ra.encrypted_path||\"\";if(t.tmpVideoPath==n){if(delete t.tmpVideoPath,e.path)if(Oa){let n=await Ks({file_path:Ra.videoPath,encrypted_path:Ra.encrypted_path,from:Ra.fromApp,specify_subtitles:JSON.stringify([e.path])});if(r.a.info(\"Add subtitle play res v2\",n),n.success){let e=[...Ra.current.subtitle_list||[],...n.data||[]];t.subtitle_list=e;let o=-1;for(let e=0;e<t.subtitle_list.length;e++){let n=t.subtitle_list[e].data_source;4!=n&&5!=n||(o=t.subtitle_list[e].index)}o>-1?(t.subtitle_index=o,Ra.current.subtitle_index=o):(t.code=500,t.message=\"没有获取到手动添加的字幕\",delete t.subtitle_list)}else t.code=n.code,t.message=n.message}else{let n=3,o={file_path:Ra.videoPath,dest_fmt:Ra.dest_fmt,video_codec:\"hevc,h264,mpeg4\",support_format:n,encrypted_path:Ra.encrypted_path,from:Ra.fromApp,specify_subtitles:JSON.stringify([e.path])},i=await Js(o);if(r.a.info(\"Add subtitle play res\",i),i.success){t.subtitle_list=i.data.subtitle_list,Ra.current.subtitle_list=i.data.subtitle_list;let e=-1;for(let n=0;n<t.subtitle_list.length;n++){let o=t.subtitle_list[n].data_source;4!=o&&5!=o||(e=t.subtitle_list[n].index)}e>-1?(t.subtitle_index=e,Ra.current.subtitle_index=e):(t.code=500,t.message=\"没有获取到手动添加的字幕\",delete t.subtitle_list)}else t.code=i.code,t.m"
+    },
+    {
+      "alias": "qs",
+      "offset": 4759054,
+      "call": "qs({collection_id:Ra.collection_id,video_id:Ra.videoId,sec:e,chapter:t})",
+      "surrounding": "\",audio_index:n,subtitle_index:o,subtitle_hash:r,subtitle_setting:i,video_duration:s},a)=>{if(s=s||Ra.current.video_duration||\"\",e!=tc&&(global.lastTaskTime=+new Date,tc=e),\"vNormal\"==Ra.mode||\"share\"==Ra.mode||\"zedu\"==Ra.fromApp){let c=Math.floor((new Date).getTime()/1e3);i&&(i={offset:\"\",position:\"\",colour:\"\",size:\"\",...i});let u={},l={sec:e,chapter:t,audio_index:n,subtitle_index:o,subtitle_hash:r,video_duration:s,subtitle_setting:JSON.stringify(i)};Object.keys(l).map(e=>{void 0!==l[e]&&null!==l[e]&&\"\"!==l[e]&&(u[e]=l[e])}),e>1&&process.emit(\"ipcRootEmit\",{EmitEvent:\"updatePlayDuration\",EmitMsg:{id:Ra.videoId,collection_id:Ra.collection_id,classification_id:Ra.classification_id,t:e,...u}}),(a||c-ec>10)&&(ec=c,\"zedu\"==Ra.fromApp?Ra.feedId&&Ra.courseId&&da({feed_id:Ra.feedId,course_id:Ra.courseId,second:1e3*e,chapter:t}):\"share\"==Ra.mode?qs({collection_id:Ra.collection_id,video_id:Ra.videoId,sec:e,chapter:t}):Hs({collection_id:Ra.collection_id,classification_id:Ra.classification_id,video_id:Ra.videoId,...u}))}}"
+    },
+    {
+      "alias": "Hs",
+      "offset": 4759127,
+      "call": "Hs({collection_id:Ra.collection_id,classification_id:Ra.classification_id,video_id:Ra.videoId,...u})",
+      "surrounding": "_duration:s},a)=>{if(s=s||Ra.current.video_duration||\"\",e!=tc&&(global.lastTaskTime=+new Date,tc=e),\"vNormal\"==Ra.mode||\"share\"==Ra.mode||\"zedu\"==Ra.fromApp){let c=Math.floor((new Date).getTime()/1e3);i&&(i={offset:\"\",position:\"\",colour:\"\",size:\"\",...i});let u={},l={sec:e,chapter:t,audio_index:n,subtitle_index:o,subtitle_hash:r,video_duration:s,subtitle_setting:JSON.stringify(i)};Object.keys(l).map(e=>{void 0!==l[e]&&null!==l[e]&&\"\"!==l[e]&&(u[e]=l[e])}),e>1&&process.emit(\"ipcRootEmit\",{EmitEvent:\"updatePlayDuration\",EmitMsg:{id:Ra.videoId,collection_id:Ra.collection_id,classification_id:Ra.classification_id,t:e,...u}}),(a||c-ec>10)&&(ec=c,\"zedu\"==Ra.fromApp?Ra.feedId&&Ra.courseId&&da({feed_id:Ra.feedId,course_id:Ra.courseId,second:1e3*e,chapter:t}):\"share\"==Ra.mode?qs({collection_id:Ra.collection_id,video_id:Ra.videoId,sec:e,chapter:t}):Hs({collection_id:Ra.collection_id,classification_id:Ra.classification_id,video_id:Ra.videoId,...u}))}}"
+    },
+    {
+      "alias": "ra",
+      "offset": 4759840,
+      "call": "ra(o)",
+      "surrounding": "async(e,t)=>{r.a.info({isLocalNetwork:global.isLocalNetwork,connAbility:global.connAbility});let n=[],o={play_env:global.isLocalNetwork||global.connAbility?1:2,video_codec:\"hevc,h264,mpeg4\",support_format:3};t?(o.encrypted_path=t,o.from=Ra.fromApp):o.file_path=e;let i=await ra(o);return r.a.info({formatMenuParams:o,fmtRes:i}),500==i.code&&(i=await ra(o),r.a.info({action:\"try getVideoFormatMenu again\",fmtRes:i})),i.success&&i.data&&Array.isArray(i.data.play_format_list)&&i.data.play_format_list.forEach(e=>{let t={index:n.length,mod:e.mod,name:e.name,w:e.resolution[0],h:e.resolution[1],transcoded:e.transcoded};n.push(t)}),n}"
+    },
+    {
+      "alias": "ra",
+      "offset": 4759915,
+      "call": "ra(o)",
+      "surrounding": "async(e,t)=>{r.a.info({isLocalNetwork:global.isLocalNetwork,connAbility:global.connAbility});let n=[],o={play_env:global.isLocalNetwork||global.connAbility?1:2,video_codec:\"hevc,h264,mpeg4\",support_format:3};t?(o.encrypted_path=t,o.from=Ra.fromApp):o.file_path=e;let i=await ra(o);return r.a.info({formatMenuParams:o,fmtRes:i}),500==i.code&&(i=await ra(o),r.a.info({action:\"try getVideoFormatMenu again\",fmtRes:i})),i.success&&i.data&&Array.isArray(i.data.play_format_list)&&i.data.play_format_list.forEach(e=>{let t={index:n.length,mod:e.mod,name:e.name,w:e.resolution[0],h:e.resolution[1],transcoded:e.transcoded};n.push(t)}),n}"
+    },
+    {
+      "alias": "Zs",
+      "offset": 4762469,
+      "call": "Zs(m)",
+      "surrounding": "channel\",JSON.stringify(t,null,2)),Ka(t),void(Qa=!1)}if(\"zipPreview\"==n){let t=e.name||\"\",o={label:t,file_name:t,file_size:e.size||0,index:0,file_path:Ra.videoPath,feedId:0,uri:`${global.ApiHost}${e.dlPath}`,mode:n,audio_list:[],format_list:[],active:1,seek:0};Ra.mode=n,Ra.current=o,Ra.list=[o];let i={server:{ip:\"127.0.0.1\",port:Va},playList:Ra.list,skip:Ra.skip,f_type:\"5\",s_type:\"5\",mode:n,code:200};return r.a.info(\"Send params to video player from zip file\",JSON.stringify(i,null,2)),Ka(i),void(Qa=!1)}if(e.path&&!e.list&&!e.clsf){let t=await tr({path:e.path},3e3);200==t.code&&(e.list=[t.data])}let m={file_path:Ra.videoPath,play_env:global.isLocalNetwork||global.connAbility?1:2,video_codec:\"hevc,h264,mpeg4\",support_format:3,audio_index:e.audio_index,subtitle_index:e.subtitle_index,encrypted_path:Ra.encrypted_path,from:Ra.fromApp},_=await Zs(m);if(r.a.info(\"new play api req\",m),r.a.info(\"new play api res\",_),!_||404==_.code)return t?t(e):(async e=>{process.emit(\"GET_PROXY_STATUS\"),Ra={},Ra.videoPath=e.path,Ra.playList=[];let t=e.mode,n=e.title,o=e.coll,i=e.clsf,s=e.seek||0,a=e.encrypted_path,c=e.from||\"\",u=\"\",l=e.version_id,d=\"\";if(Ra.mode=t,Ra.collection_id=o,Ra.classification_id=i,Ra.encrypted_path=a,Ra.fromApp=c,Ra.courseId=e.courseI"
+    },
+    {
+      "alias": "sa",
+      "offset": 4763026,
+      "call": "sa(c)",
+      "surrounding": "async e=>{process.emit(\"GET_PROXY_STATUS\"),Ra={},Ra.videoPath=e.path,Ra.playList=[];let t=e.mode,n=e.title,o=e.coll,i=e.clsf,s=e.seek||0,a=e.encrypted_path,c=e.from||\"\",u=\"\",l=e.version_id,d=\"\";if(Ra.mode=t,Ra.collection_id=o,Ra.classification_id=i,Ra.encrypted_path=a,Ra.fromApp=c,Ra.courseId=e.courseId,Ra.feedId=e.feedId,o){let s,c={collection_id:o,get_type:\"all\"};if(a?(r.a.info(\"Call api: videoAPI.getShareClassDetail\"),c.classification_id=i,s=await sa(c)):\"share\"==t?(r.a.info(\"Call api: videoAPI.getShareInfo\"),s=await Gs(c)):(r.a.info(\"Call api: videoAPI.getInfo\"),c.classification_id=i,s=await Ws(c)),r.a.info({infoRes:s}),s.success){if(d=s.data.play_chapter,s.data.list.forEach(e=>{e.version_list&&e.version_list.forEach(t=>{t.file_path==Ra.videoPath&&(Ra.version_id=e.version_id,Ra.playList=e.version_list)})}),null==l){let t=e.path.split(\"/\"),n=t.l"
+    },
+    {
+      "alias": "Gs",
+      "offset": 4763097,
+      "call": "Gs(c)",
+      "surrounding": "async e=>{process.emit(\"GET_PROXY_STATUS\"),Ra={},Ra.videoPath=e.path,Ra.playList=[];let t=e.mode,n=e.title,o=e.coll,i=e.clsf,s=e.seek||0,a=e.encrypted_path,c=e.from||\"\",u=\"\",l=e.version_id,d=\"\";if(Ra.mode=t,Ra.collection_id=o,Ra.classification_id=i,Ra.encrypted_path=a,Ra.fromApp=c,Ra.courseId=e.courseId,Ra.feedId=e.feedId,o){let s,c={collection_id:o,get_type:\"all\"};if(a?(r.a.info(\"Call api: videoAPI.getShareClassDetail\"),c.classification_id=i,s=await sa(c)):\"share\"==t?(r.a.info(\"Call api: videoAPI.getShareInfo\"),s=await Gs(c)):(r.a.info(\"Call api: videoAPI.getInfo\"),c.classification_id=i,s=await Ws(c)),r.a.info({infoRes:s}),s.success){if(d=s.data.play_chapter,s.data.list.forEach(e=>{e.version_list&&e.version_list.forEach(t=>{t.file_path==Ra.videoPath&&(Ra.version_id=e.version_id,Ra.playList=e.version_list)})}),null==l){let t=e.path.split(\"/\"),n=t.length;t.pop();let o=t.join(\"/\");Ra.playList=Ra.playList.filter(e=>{let "
+    },
+    {
+      "alias": "Ws",
+      "offset": 4763174,
+      "call": "Ws(c)",
+      "surrounding": "async e=>{process.emit(\"GET_PROXY_STATUS\"),Ra={},Ra.videoPath=e.path,Ra.playList=[];let t=e.mode,n=e.title,o=e.coll,i=e.clsf,s=e.seek||0,a=e.encrypted_path,c=e.from||\"\",u=\"\",l=e.version_id,d=\"\";if(Ra.mode=t,Ra.collection_id=o,Ra.classification_id=i,Ra.encrypted_path=a,Ra.fromApp=c,Ra.courseId=e.courseId,Ra.feedId=e.feedId,o){let s,c={collection_id:o,get_type:\"all\"};if(a?(r.a.info(\"Call api: videoAPI.getShareClassDetail\"),c.classification_id=i,s=await sa(c)):\"share\"==t?(r.a.info(\"Call api: videoAPI.getShareInfo\"),s=await Gs(c)):(r.a.info(\"Call api: videoAPI.getInfo\"),c.classification_id=i,s=await Ws(c)),r.a.info({infoRes:s}),s.success){if(d=s.data.play_chapter,s.data.list.forEach(e=>{e.version_list&&e.version_list.forEach(t=>{t.file_path==Ra.videoPath&&(Ra.version_id=e.version_id,Ra.playList=e.version_list)})}),null==l){let t=e.path.split(\"/\"),n=t.length;t.pop();let o=t.join(\"/\");Ra.playList=Ra.playList.filter(e=>{let t=e.file_path;return t.split(\"/\").length==n&&-1!=t.indexOf(o)})}Ra.skip=s.dat"
+    },
+    {
+      "alias": "Js",
+      "offset": 4764969,
+      "call": "Js(i)",
+      "surrounding": "e_name,e.index=t,e.file_path==Ra.videoPath&&(Ra.playIndex=t,Ra.videoId=e.video_id)}):u=\"没有对应的电影或剧集信息\"}else u=s.message||\"获取电影或剧集信息失败\"}else if(Ra.videoPath||Ra.encrypted_path){let t=[];e.list&&e.list.length&&e.list.forEach((function(e,n){let o=e.path||e.file_path||e.encrypted_path,r=e.name||e.label||o.replace(/^.*\\//,\"\");t.push({label:r,file_name:r,file_size:parseInt(e.size||e.file_size||0),index:n,file_path:o,encrypted_path:e.encrypted_path,feedId:e.feed_id||e.id||0}),(Ra.videoPath||Ra.encrypted_path)==o&&(Ra.playIndex=n,Ra.videoId=\"\")})),Ra.playList=t}if(!u){let e=global.isLocalNetwork||global.connAbility?\"OP\":\"FHD_EX\",t=await rc(Ra.videoPath,Ra.encrypted_path),n=0;t.length>0&&(e=t[0].mod);let o=3,i={file_path:Ra.videoPath,dest_fmt:e,support_format:o,video_codec:\"hevc,h264,mpeg4\",encrypted_path:Ra.encrypted_path,from:Ra.fromApp},s=await Js(i);if(r.a.info({playRes:s,postData:i}),s.success){if(Ra.current=Ra.playList[Ra.playIndex],r.a.info(Ra.current),s.data.start_time&&(/\\.mp4$/i.test(Ra.videoPath)||delete s.data.start_time),Ra.current?Object.assign(Ra.current,s.data):(Ra.current=s.data,Ra.playList=[Ra.current],Ra.playIndex=0),0==t.length){let n=Ra.current.resolution[0];t.push({index:0,mod:e,w:n,h:Ra.current.resolution[1],name:sc(n)})}R"
+    },
+    {
+      "alias": "uc",
+      "offset": 4766848,
+      "call": "uc({is_extdev:e.is_extdev,file_path:e.path||e.file_path,s:e.file_size||0,encrypted_path:e.encrypted_path})",
+      "surrounding": "function(e,n){let o=e.path||e.file_path||e.encrypted_path,r=e.name||e.label||o.replace(/^.*\\//,\"\");t.push({label:r,file_name:r,file_size:parseInt(e.size||e.file_size||0),index:n,file_path:o,encrypted_path:e.encrypted_path,episode_path:uc({is_extdev:e.is_extdev,file_path:e.path||e.file_path,s:e.file_size||0,encrypted_path:e.encrypted_path}),feedId:e.feed_id||e.id||0}),(Ra.videoPath||Ra.encrypted_path)==o&&(Ra.playIndex=n,Ra.videoId=\"\")}"
+    },
+    {
+      "alias": "Qs",
+      "offset": 4769304,
+      "call": "Qs(n)",
+      "surrounding": "async e=>{let t=qa,n={collection_id:e.collection_id,classification_id:e.classification_id||void 0,get_type:\"all\",encrypted_path:e.encrypted_path},o=await Qs(n),i={server:{ip:\"127.0.0.1\",port:Va},f_type:\"12\",s_type:\"1\",videoList:[],code:200,instanceId:t};if(o.success){if(o.data){Ra.playList=o.data.video_list||[];let t={};Ra.playList.forEach((n,o)=>{Ra.isTvSeries?n.label=(n.ep||\"未匹配集数\")+\" \"+n.file_name:1==Ra.playList.length?n.label=e.title||n.file_name:2==Ra.extendType?n.label=n.file_name:void 0!==n.ep?n.ep?n.label=n.ep+\" \"+n.file_name:n.label=n.file_name"
+    },
+    {
+      "alias": "uc",
+      "offset": 4769830,
+      "call": "uc({is_extdev:n.is_extdev,file_path:n.path||n.file_path,s:n.file_size||0,encrypted_path:n.encrypted_path})",
+      "surrounding": "(n,o)=>{Ra.isTvSeries?n.label=(n.ep||\"未匹配集数\")+\" \"+n.file_name:1==Ra.playList.length?n.label=e.title||n.file_name:2==Ra.extendType?n.label=n.file_name:void 0!==n.ep?n.ep?n.label=n.ep+\" \"+n.file_name:n.label=n.file_name:n.episode?n.label=`第${n.episode}集 ${n.file_name}`:n.label=\"未匹配集数 \"+n.file_name,n.index=o,n.episode_path=n.episode_path||uc({is_extdev:n.is_extdev,file_path:n.path||n.file_path,s:n.file_size||0,encrypted_path:n.encrypted_path}),(n.path||n.file_path||n.encrypted_path)===Ra.videoPath&&(t=n,Ra.playIndex=o)}"
+    },
+    {
+      "alias": "Ks",
+      "offset": 4770320,
+      "call": "Ks(t)",
+      "surrounding": "async e=>{let t={file_path:e.file_path,encrypted_path:e.encrypted_path,from:e.from||e.fromApp,specify_subtitles:e.specify_subtitles||void 0},n=await Ks(t),o={server:{ip:\"127.0.0.1\",port:Va},f_type:\"12\",s_type:\"2\",file_path:e.videoPath,subtitleList:Ra.current.subtitle_list||[],code:200};if(n.success){Ra.current.extSubtitleList=n.data||[];let e=[...Ra.current.subtitle_list||[],...n.data||[]];o.subtitleList=e,o.subtitle_index=Ra.current.subtitle_index}else r.a.info(\"get subtitle list error\",n.message||\"获取字幕列表失败\");r.a.info(\"get Subtitle List\",o),Ka(o)}"
+    },
+    {
+      "alias": "Ys",
+      "offset": 4770855,
+      "call": "Ys(t)",
+      "surrounding": "async e=>{let t={collection_id:e.collection_id,classification_id:e.classification_id,encrypted_path:e.encrypted_path},n=await Ys(t),o={server:{ip:\"127.0.0.1\",port:Va},f_type:\"12\",s_type:\"3\",collectionInfo:{},code:200};n.success?n.data&&(Ra.history=n.data.history||{},n.data.skip&&(Ra.skip=n.data.skip),Ra.extendType=n.data.extend_type,Ra.collectionTitle=n.data.title,Ra.otherTitle=n.data.other_title,Ra.releaseYear=n.data.release_year,Ra.imdbId=n.data.imdb_id,Ra.tmdbid=n.data.tmdbid,Ra.dbId=n.data.dbid,Ra.type=n.data.type,Ra.isTv"
+    },
+    {
+      "alias": "ta",
+      "offset": 4773634,
+      "call": "ta({play_addr:u.url.replace(/^http\\:\\/\\/.*?\\:\\d+/,\"\"),isDecrypt:!!Ra.encrypted_path})",
+      "surrounding": "a from Player:\",c),za){let e={code:200,instanceId:qa,server:{ip:\"127.0.0.1\",port:Va}};if(4==u.f_type&&1==u.s_type){if(e.f_type=\"4\",e.s_type=\"2\",e.isProxyConnected=global.isProxyConnected,u.info){let e=parseInt(u.videotime||0),t=u.result||\"\";Ra.current&&(Ra.current.seek=e);let n={sec:e,chapter:t,audio_index:u.audio_index,subtitle_index:u.subtitle_index,subtitle_hash:u.subtitle_hash,subtitle_setting:u.subtitle_setting,video_duration:u.video_duration};nc(n)}}else{if(4==u.f_type&&3==u.s_type)return r.a.info(\"report-receiveData\",u),void nc({sec:u.sec||0,chapter:u.chapter||\"\",audio_index:u.audio_index,subtitle_index:u.subtitle_index,subtitle_hash:u.subtitle_hash,subtitle_setting:u.subtitle_setting,video_duration:u.video_duration},!0);if(0==u.f_type)e.f_type=\"0\";else{if(1==u.f_type&&3==u.s_type)return r.a.info(\"stopVideo: \"+u.url),void(Oa?await ta({play_addr:u.url.replace(/^http\\:\\/\\/.*?\\:\\d+/,\"\"),isDecrypt:!!Ra.encrypted_path}):await ea({play_addr:u.url.replace(/^http\\:\\/\\/.*?\\:\\d+/,\"\")}));if(3==u.f_type&&1==u.s_type){let t={videoPath:u.info,encrypted_path:\"\"};e.f_type=\"3\",e.s_type=\"2\";for(let e=0;e<Ra.playList.length;e++){let n=Ra.playList[e];if((n.path||n.file_path||n.encrypted_path)==t.videoPath){t.playIndex=e,t.videoId=n.video_id,t.encrypted_path=n.encrypted_path,t.feedId=n.feedId;break}}if(Oa){let n={file_path:t.vi"
+    },
+    {
+      "alias": "ea",
+      "offset": 4773726,
+      "call": "ea({play_addr:u.url.replace(/^http\\:\\/\\/.*?\\:\\d+/,\"\")})",
+      "surrounding": "u.f_type&&1==u.s_type){if(e.f_type=\"4\",e.s_type=\"2\",e.isProxyConnected=global.isProxyConnected,u.info){let e=parseInt(u.videotime||0),t=u.result||\"\";Ra.current&&(Ra.current.seek=e);let n={sec:e,chapter:t,audio_index:u.audio_index,subtitle_index:u.subtitle_index,subtitle_hash:u.subtitle_hash,subtitle_setting:u.subtitle_setting,video_duration:u.video_duration};nc(n)}}else{if(4==u.f_type&&3==u.s_type)return r.a.info(\"report-receiveData\",u),void nc({sec:u.sec||0,chapter:u.chapter||\"\",audio_index:u.audio_index,subtitle_index:u.subtitle_index,subtitle_hash:u.subtitle_hash,subtitle_setting:u.subtitle_setting,video_duration:u.video_duration},!0);if(0==u.f_type)e.f_type=\"0\";else{if(1==u.f_type&&3==u.s_type)return r.a.info(\"stopVideo: \"+u.url),void(Oa?await ta({play_addr:u.url.replace(/^http\\:\\/\\/.*?\\:\\d+/,\"\"),isDecrypt:!!Ra.encrypted_path}):await ea({play_addr:u.url.replace(/^http\\:\\/\\/.*?\\:\\d+/,\"\")}));if(3==u.f_type&&1==u.s_type){let t={videoPath:u.info,encrypted_path:\"\"};e.f_type=\"3\",e.s_type=\"2\";for(let e=0;e<Ra.playList.length;e++){let n=Ra.playList[e];if((n.path||n.file_path||n.encrypted_path)==t.videoPath){t.playIndex=e,t.videoId=n.video_id,t.encrypted_path=n.encrypted_path,t.feedId=n.feedId;break}}if(Oa){let n={file_path:t.videoPath,play_env:global.isLocalNetwork||global.connAbility?1:2"
+    },
+    {
+      "alias": "Zs",
+      "offset": 4774344,
+      "call": "Zs(n)",
+      "surrounding": "ation:u.video_duration},!0);if(0==u.f_type)e.f_type=\"0\";else{if(1==u.f_type&&3==u.s_type)return r.a.info(\"stopVideo: \"+u.url),void(Oa?await ta({play_addr:u.url.replace(/^http\\:\\/\\/.*?\\:\\d+/,\"\"),isDecrypt:!!Ra.encrypted_path}):await ea({play_addr:u.url.replace(/^http\\:\\/\\/.*?\\:\\d+/,\"\")}));if(3==u.f_type&&1==u.s_type){let t={videoPath:u.info,encrypted_path:\"\"};e.f_type=\"3\",e.s_type=\"2\";for(let e=0;e<Ra.playList.length;e++){let n=Ra.playList[e];if((n.path||n.file_path||n.encrypted_path)==t.videoPath){t.playIndex=e,t.videoId=n.video_id,t.encrypted_path=n.encrypted_path,t.feedId=n.feedId;break}}if(Oa){let n={file_path:t.videoPath,play_env:global.isLocalNetwork||global.connAbility?1:2,video_codec:\"hevc,h264,mpeg4\",audio_index:u.audio_index,subtitle_index:u.subtitle_index,support_format:3,encrypted_path:t.encrypted_path,from:Ra.fromApp},o=await Zs(n);if(r.a.info({playRes:o,postData:n}),o.success&&o.data){if(o.data.uri=o.data.uri.startsWith(\"http\")?encodeURI(o.data.uri):oc(global.ApiHost+o.data.uri),o.data.format_list=o.data.play_format_list.map((e,t)=>({index:t,w:e.resolution[0],h:e.resolution[1],...e})),delete o.data.play_format_list,0==o.data.format_list.length&&o.data.resolution[0]){let e=o.data.resolution[0];o.data.format_list=[{index:0,m"
+    },
+    {
+      "alias": "Js",
+      "offset": 4775651,
+      "call": "Js(a)",
+      "surrounding": "e:sc(e)}]}o.data.format_index=o.data.format_list.findIndex(e=>e.mod==o.data.current_fmt),o.data.start_time&&(/\\.mp4$/i.test(Ra.videoPath)||delete o.data.start_time),Object.assign(e,o.data),e.file_path=t.videoPath,Ra.videoPath=t.videoPath,Ra.encrypted_path=t.encrypted_path,Ra.videoId=t.videoId,Ra.playIndex=t.playIndex,Ra.dest_fmt=o.data.current_fmt,Ra.current=o.data,Ra.feedId=t.feedId,Ra.current.file_path=t.videoPath,Ra.current.seek=0,dc({file_path:t.videoPath,encrypted_path:t.encrypted_path,from:Ra.fromApp})}else e.code=o.code,e.message=o.message||\"获取播放地址失败\"}else{let n=global.isLocalNetwork||global.connAbility?\"OP\":\"FHD_EX\",o=await rc(t.videoPath,t.encrypted_path),i=0;o.length>0&&(n=o[0].mod);let s=3,a={file_path:t.videoPath,dest_fmt:n,support_format:s,video_codec:\"hevc,h264,mpeg4\",encrypted_path:t.encrypted_path,from:Ra.fromApp},c=await Js(a);if(r.a.info({playRes:c,postData:a}),c.success){if(0==o.length&&c.data.resolution){let e=Ra.current.resolution[0];o.push({index:0,mod:n,w:e,h:c.data.resolution[1],name:sc(e)})}c.data.format_list=o,c.data.format_index=i,c.data.uri=c.data.uri.startsWith(\"http\")?encodeURI(c.data.uri):oc(global.ApiHost+c.data.uri),c.data.start_time&&(/\\.mp4$/i.test(t.videoPath)||delete c.data.start_time),Object.assign"
+    },
+    {
+      "alias": "oa",
+      "offset": 4777011,
+      "call": "oa(l)",
+      "surrounding": "=t.videoId,Ra.playIndex=t.playIndex,Ra.dest_fmt=n,Ra.current=c.data,Ra.feedId=t.feedId,Ra.current.file_path=t.videoPath,Ra.current.seek=0}else e.code=c.code,e.message=c.message||\"获取播放地址失败\"}}else if(5==u.f_type&&2==u.s_type)e.playList=Ra.playList,e.f_type=\"5\",e.s_type=\"3\";else if(11==u.f_type&&2==u.s_type)Ra.current.subtitle_index=u.subtitle_index||-1,e.f_type=\"11\",e.s_type=\"3\",e.subtitle_index=u.subtitle_index||-1;else if(11==u.f_type&&1==u.s_type){e.f_type=\"11\",e.s_type=\"3\";let t,n=parseFloat(u.seek||0),o=Ra.current.format_list[Ra.current.format_index].mod,i=Ra.current.audio_index,s=u.subtitle_index||-1;l={play_addr:Ra.current.uri.replace(/http(s?)\\:\\/\\/[^\\/]*?\\//,\"/\"),start_time:Math.floor(n),video_codec:\"hevc,h264,mpeg4\",audio_index:i,encrypted_path:Ra.encrypted_path,from:Ra.fromApp,dest_fmt:o},-100!=s&&(l.subtitle_index=s),t=Oa?await oa(l):await na(l),r.a.info({switchRes:t}),t.success?(e.subtitle_index=s,Ra.current.subtitle_index=s,Ra.current.uri=t.data.uri.startsWith(\"http\")?encodeURI(t.data.uri):oc(global.ApiHost+t.data.uri),Ra.current.seek=n,Object.assign(e,Ra.current)):(e.code=t.code,e.message=t.message)}else if(6==u.f_type&&1==u.s_type){let t,n=parseInt(u.result||0),o=parseFloat(u.seek||0),i=Ra.current.format_list[Ra.current.f"
+    },
+    {
+      "alias": "na",
+      "offset": 4777023,
+      "call": "na(l)",
+      "surrounding": "a.playIndex=t.playIndex,Ra.dest_fmt=n,Ra.current=c.data,Ra.feedId=t.feedId,Ra.current.file_path=t.videoPath,Ra.current.seek=0}else e.code=c.code,e.message=c.message||\"获取播放地址失败\"}}else if(5==u.f_type&&2==u.s_type)e.playList=Ra.playList,e.f_type=\"5\",e.s_type=\"3\";else if(11==u.f_type&&2==u.s_type)Ra.current.subtitle_index=u.subtitle_index||-1,e.f_type=\"11\",e.s_type=\"3\",e.subtitle_index=u.subtitle_index||-1;else if(11==u.f_type&&1==u.s_type){e.f_type=\"11\",e.s_type=\"3\";let t,n=parseFloat(u.seek||0),o=Ra.current.format_list[Ra.current.format_index].mod,i=Ra.current.audio_index,s=u.subtitle_index||-1;l={play_addr:Ra.current.uri.replace(/http(s?)\\:\\/\\/[^\\/]*?\\//,\"/\"),start_time:Math.floor(n),video_codec:\"hevc,h264,mpeg4\",audio_index:i,encrypted_path:Ra.encrypted_path,from:Ra.fromApp,dest_fmt:o},-100!=s&&(l.subtitle_index=s),t=Oa?await oa(l):await na(l),r.a.info({switchRes:t}),t.success?(e.subtitle_index=s,Ra.current.subtitle_index=s,Ra.current.uri=t.data.uri.startsWith(\"http\")?encodeURI(t.data.uri):oc(global.ApiHost+t.data.uri),Ra.current.seek=n,Object.assign(e,Ra.current)):(e.code=t.code,e.message=t.message)}else if(6==u.f_type&&1==u.s_type){let t,n=parseInt(u.result||0),o=parseFloat(u.seek||0),i=Ra.current.format_list[Ra.current.format_index]"
+    },
+    {
+      "alias": "oa",
+      "offset": 4777758,
+      "call": "oa(l)",
+      "surrounding": ",encrypted_path:Ra.encrypted_path,from:Ra.fromApp,dest_fmt:o},-100!=s&&(l.subtitle_index=s),t=Oa?await oa(l):await na(l),r.a.info({switchRes:t}),t.success?(e.subtitle_index=s,Ra.current.subtitle_index=s,Ra.current.uri=t.data.uri.startsWith(\"http\")?encodeURI(t.data.uri):oc(global.ApiHost+t.data.uri),Ra.current.seek=n,Object.assign(e,Ra.current)):(e.code=t.code,e.message=t.message)}else if(6==u.f_type&&1==u.s_type){let t,n=parseInt(u.result||0),o=parseFloat(u.seek||0),i=Ra.current.format_list[Ra.current.format_index].mod,s=Ra.current.subtitle_index||-1;l={play_addr:Ra.current.uri.replace(/http(s?)\\:\\/\\/[^\\/]*?\\//,\"/\"),start_time:Math.floor(o),video_codec:\"hevc,h264,mpeg4\",audio_index:n,encrypted_path:Ra.encrypted_path,from:Ra.fromApp,dest_fmt:i},(u.subtitle||0===u.subtitle)&&(s=parseInt(u.subtitle)),-100!=s&&(l.subtitle_index=s),t=Oa?await oa(l):await na(l),r.a.info({switchRes:t}),e.f_type=\"6\",e.s_type=\"3\",t.success?(e.audio_index=n,Ra.current.audio_index=n,Ra.current.uri=t.data.uri.startsWith(\"http\")?encodeURI(t.data.uri):oc(global.ApiHost+t.data.uri),Ra.current.seek=o,Object.assign(e,Ra.current)):(e.code=t.code,e.message=t.message)}else if(6==u.f_type&&2==u.s_type)e.f_type=\"6\",e.s_type=\"3\";else if(7!=u.f_type||1!=u.s_type&&2!=u.s_type)"
+    },
+    {
+      "alias": "na",
+      "offset": 4777770,
+      "call": "na(l)",
+      "surrounding": "ath:Ra.encrypted_path,from:Ra.fromApp,dest_fmt:o},-100!=s&&(l.subtitle_index=s),t=Oa?await oa(l):await na(l),r.a.info({switchRes:t}),t.success?(e.subtitle_index=s,Ra.current.subtitle_index=s,Ra.current.uri=t.data.uri.startsWith(\"http\")?encodeURI(t.data.uri):oc(global.ApiHost+t.data.uri),Ra.current.seek=n,Object.assign(e,Ra.current)):(e.code=t.code,e.message=t.message)}else if(6==u.f_type&&1==u.s_type){let t,n=parseInt(u.result||0),o=parseFloat(u.seek||0),i=Ra.current.format_list[Ra.current.format_index].mod,s=Ra.current.subtitle_index||-1;l={play_addr:Ra.current.uri.replace(/http(s?)\\:\\/\\/[^\\/]*?\\//,\"/\"),start_time:Math.floor(o),video_codec:\"hevc,h264,mpeg4\",audio_index:n,encrypted_path:Ra.encrypted_path,from:Ra.fromApp,dest_fmt:i},(u.subtitle||0===u.subtitle)&&(s=parseInt(u.subtitle)),-100!=s&&(l.subtitle_index=s),t=Oa?await oa(l):await na(l),r.a.info({switchRes:t}),e.f_type=\"6\",e.s_type=\"3\",t.success?(e.audio_index=n,Ra.current.audio_index=n,Ra.current.uri=t.data.uri.startsWith(\"http\")?encodeURI(t.data.uri):oc(global.ApiHost+t.data.uri),Ra.current.seek=o,Object.assign(e,Ra.current)):(e.code=t.code,e.message=t.message)}else if(6==u.f_type&&2==u.s_type)e.f_type=\"6\",e.s_type=\"3\";else if(7!=u.f_type||1!=u.s_type&&2!=u.s_type){if(7==u.f_t"
+    },
+    {
+      "alias": "ia",
+      "offset": 4778271,
+      "call": "ia({encrypted_path:Ra.encrypted_path||void 0,file_path:u.file_path||Ra.videoPath,play_env:global.isLocalNetwork||global.connAbility?1:2,dest_fmt:u.dest_fmt||Ra.dest_fmt||void 0,video_codec:\"hevc,h264,mpeg4\"})",
+      "surrounding": "_index].mod,s=Ra.current.subtitle_index||-1;l={play_addr:Ra.current.uri.replace(/http(s?)\\:\\/\\/[^\\/]*?\\//,\"/\"),start_time:Math.floor(o),video_codec:\"hevc,h264,mpeg4\",audio_index:n,encrypted_path:Ra.encrypted_path,from:Ra.fromApp,dest_fmt:i},(u.subtitle||0===u.subtitle)&&(s=parseInt(u.subtitle)),-100!=s&&(l.subtitle_index=s),t=Oa?await oa(l):await na(l),r.a.info({switchRes:t}),e.f_type=\"6\",e.s_type=\"3\",t.success?(e.audio_index=n,Ra.current.audio_index=n,Ra.current.uri=t.data.uri.startsWith(\"http\")?encodeURI(t.data.uri):oc(global.ApiHost+t.data.uri),Ra.current.seek=o,Object.assign(e,Ra.current)):(e.code=t.code,e.message=t.message)}else if(6==u.f_type&&2==u.s_type)e.f_type=\"6\",e.s_type=\"3\";else if(7!=u.f_type||1!=u.s_type&&2!=u.s_type){if(7==u.f_type&&4==u.s_type){e.f_type=\"7\",e.s_type=\"5\",e.file_path=u.file_path||Ra.videoPath;const t=await ia({encrypted_path:Ra.encrypted_path||void 0,file_path:u.file_path||Ra.videoPath,play_env:global.isLocalNetwork||global.connAbility?1:2,dest_fmt:u.dest_fmt||Ra.dest_fmt||void 0,video_codec:\"hevc,h264,mpeg4\"});if(t.success)if(t.data&&t.data.play_format_list&&t.data.play_format_list.length>0){let n=t.data.play_format_list.map((e,t)=>({index:t,w:e.resolution[0],h:e.resolution[1],...e}));Ra.current.format_list=n,e.format_list=n}else e.format_list=Ra.current.format_list||[],r.a.info(\"getCloudVideoFormatMenu success but no format data\",JSON.stringify(t,null,2));else e.code=t.code,e.message=t.message||\"获取码流列"
+    },
+    {
+      "alias": "aa",
+      "offset": 4779099,
+      "call": "aa({q:s})",
+      "surrounding": "deoPath;const t=await ia({encrypted_path:Ra.encrypted_path||void 0,file_path:u.file_path||Ra.videoPath,play_env:global.isLocalNetwork||global.connAbility?1:2,dest_fmt:u.dest_fmt||Ra.dest_fmt||void 0,video_codec:\"hevc,h264,mpeg4\"});if(t.success)if(t.data&&t.data.play_format_list&&t.data.play_format_list.length>0){let n=t.data.play_format_list.map((e,t)=>({index:t,w:e.resolution[0],h:e.resolution[1],...e}));Ra.current.format_list=n,e.format_list=n}else e.format_list=Ra.current.format_list||[],r.a.info(\"getCloudVideoFormatMenu success but no format data\",JSON.stringify(t,null,2));else e.code=t.code,e.message=t.message||\"获取码流列表失败\",r.a.info(\"getCloudVideoFormatMenu failed\",JSON.stringify(t,null,2))}else if(9==u.f_type&&1==u.s_type)if(e.f_type=\"9\",e.s_type=\"1\",s=u.info,e.file_path=u.file_path,\"\"==s)e.code=500,e.message=\"搜索词为空\";else{let t=await aa({q:s});r.a.info({searchSubRes:t}),t.success?e.info_list=t.data.subs:(e.code=t.code,e.message=t.message)}else if(9==u.f_type&&2==u.s_type)if(e.f_type=\"9\",e.s_type=\"2\",i=u.sub_id,e.file_path=u.file_path,\"\"==i)e.code=500,e.message=\"返回的字幕ID为空\";else{let t=await ca({sub_id:i});r.a.info({getSubRes:t}),t.success?e.info_list=t.data.filelist:(e.code=t.code,e.message=t.message)}else if(9==u.f_type&&3==u.s_type)if("
+    },
+    {
+      "alias": "ca",
+      "offset": 4779359,
+      "call": "ca({sub_id:i})",
+      "surrounding": "a.play_format_list&&t.data.play_format_list.length>0){let n=t.data.play_format_list.map((e,t)=>({index:t,w:e.resolution[0],h:e.resolution[1],...e}));Ra.current.format_list=n,e.format_list=n}else e.format_list=Ra.current.format_list||[],r.a.info(\"getCloudVideoFormatMenu success but no format data\",JSON.stringify(t,null,2));else e.code=t.code,e.message=t.message||\"获取码流列表失败\",r.a.info(\"getCloudVideoFormatMenu failed\",JSON.stringify(t,null,2))}else if(9==u.f_type&&1==u.s_type)if(e.f_type=\"9\",e.s_type=\"1\",s=u.info,e.file_path=u.file_path,\"\"==s)e.code=500,e.message=\"搜索词为空\";else{let t=await aa({q:s});r.a.info({searchSubRes:t}),t.success?e.info_list=t.data.subs:(e.code=t.code,e.message=t.message)}else if(9==u.f_type&&2==u.s_type)if(e.f_type=\"9\",e.s_type=\"2\",i=u.sub_id,e.file_path=u.file_path,\"\"==i)e.code=500,e.message=\"返回的字幕ID为空\";else{let t=await ca({sub_id:i});r.a.info({getSubRes:t}),t.success?e.info_list=t.data.filelist:(e.code=t.code,e.message=t.message)}else if(9==u.f_type&&3==u.s_type)if(e.f_type=\"9\",e.s_type=\"3\",e.msg_id=u.msg_id,e.file_path=u.file_path,n=u.url,t=u.file_path,\"\"==n||\"\"==t)e.code=500,e.message=\"下载字幕的参数错误\";else{let i={sub_url:n,file_name:t};Ra.encrypted_path&&(i.encrypted_path=Ra.encrypted_path,i.from=Ra.fromApp,delete i.file_name);l"
+    },
+    {
+      "alias": "ua",
+      "offset": 4779784,
+      "call": "ua(i)",
+      "surrounding": "ingify(t,null,2))}else if(9==u.f_type&&1==u.s_type)if(e.f_type=\"9\",e.s_type=\"1\",s=u.info,e.file_path=u.file_path,\"\"==s)e.code=500,e.message=\"搜索词为空\";else{let t=await aa({q:s});r.a.info({searchSubRes:t}),t.success?e.info_list=t.data.subs:(e.code=t.code,e.message=t.message)}else if(9==u.f_type&&2==u.s_type)if(e.f_type=\"9\",e.s_type=\"2\",i=u.sub_id,e.file_path=u.file_path,\"\"==i)e.code=500,e.message=\"返回的字幕ID为空\";else{let t=await ca({sub_id:i});r.a.info({getSubRes:t}),t.success?e.info_list=t.data.filelist:(e.code=t.code,e.message=t.message)}else if(9==u.f_type&&3==u.s_type)if(e.f_type=\"9\",e.s_type=\"3\",e.msg_id=u.msg_id,e.file_path=u.file_path,n=u.url,t=u.file_path,\"\"==n||\"\"==t)e.code=500,e.message=\"下载字幕的参数错误\";else{let i={sub_url:n,file_name:t};Ra.encrypted_path&&(i.encrypted_path=Ra.encrypted_path,i.from=Ra.fromApp,delete i.file_name);let s=await ua(i);if(r.a.info({downloadSubRes:s,downloadSubParams:i}),s.success)if(Oa){let t=await Ks({file_path:Ra.videoPath,encrypted_path:Ra.encrypted_path,from:Ra.fromApp});if(r.a.info(\"get out subtitle list 9 3\",t),t.success){let n=[...Ra.current.subtitle_list||[],...t.data||[]];e.subtitle_list=n,o=-1;for(let t=0;t<e.subtitle_list.length;t++){let n=e.subtitle_list[t].data_source;2!=n&&5!=n||(o=e.subtitle_list"
+    },
+    {
+      "alias": "Ks",
+      "offset": 4779871,
+      "call": "Ks({file_path:Ra.videoPath,encrypted_path:Ra.encrypted_path,from:Ra.fromApp})",
+      "surrounding": "o,e.file_path=u.file_path,\"\"==s)e.code=500,e.message=\"搜索词为空\";else{let t=await aa({q:s});r.a.info({searchSubRes:t}),t.success?e.info_list=t.data.subs:(e.code=t.code,e.message=t.message)}else if(9==u.f_type&&2==u.s_type)if(e.f_type=\"9\",e.s_type=\"2\",i=u.sub_id,e.file_path=u.file_path,\"\"==i)e.code=500,e.message=\"返回的字幕ID为空\";else{let t=await ca({sub_id:i});r.a.info({getSubRes:t}),t.success?e.info_list=t.data.filelist:(e.code=t.code,e.message=t.message)}else if(9==u.f_type&&3==u.s_type)if(e.f_type=\"9\",e.s_type=\"3\",e.msg_id=u.msg_id,e.file_path=u.file_path,n=u.url,t=u.file_path,\"\"==n||\"\"==t)e.code=500,e.message=\"下载字幕的参数错误\";else{let i={sub_url:n,file_name:t};Ra.encrypted_path&&(i.encrypted_path=Ra.encrypted_path,i.from=Ra.fromApp,delete i.file_name);let s=await ua(i);if(r.a.info({downloadSubRes:s,downloadSubParams:i}),s.success)if(Oa){let t=await Ks({file_path:Ra.videoPath,encrypted_path:Ra.encrypted_path,from:Ra.fromApp});if(r.a.info(\"get out subtitle list 9 3\",t),t.success){let n=[...Ra.current.subtitle_list||[],...t.data||[]];e.subtitle_list=n,o=-1;for(let t=0;t<e.subtitle_list.length;t++){let n=e.subtitle_list[t].data_source;2!=n&&5!=n||(o=e.subtitle_list[t].index)}o>-1?(e.subtitle_index=o,Ra.current.subtitle_index=o):(e.code=500,e.message=\"没有获取到下载的字幕\",delete e.subtitle_list)}else e.code=t.code,e.message=t.mess"
+    },
+    {
+      "alias": "Js",
+      "offset": 4780517,
+      "call": "Js(n)",
+      "surrounding": "ile_name:t};Ra.encrypted_path&&(i.encrypted_path=Ra.encrypted_path,i.from=Ra.fromApp,delete i.file_name);let s=await ua(i);if(r.a.info({downloadSubRes:s,downloadSubParams:i}),s.success)if(Oa){let t=await Ks({file_path:Ra.videoPath,encrypted_path:Ra.encrypted_path,from:Ra.fromApp});if(r.a.info(\"get out subtitle list 9 3\",t),t.success){let n=[...Ra.current.subtitle_list||[],...t.data||[]];e.subtitle_list=n,o=-1;for(let t=0;t<e.subtitle_list.length;t++){let n=e.subtitle_list[t].data_source;2!=n&&5!=n||(o=e.subtitle_list[t].index)}o>-1?(e.subtitle_index=o,Ra.current.subtitle_index=o):(e.code=500,e.message=\"没有获取到下载的字幕\",delete e.subtitle_list)}else e.code=t.code,e.message=t.message}else{let t=3,n={file_path:Ra.videoPath,dest_fmt:Ra.dest_fmt,support_format:t,video_codec:\"hevc,h264,mpeg4\",encrypted_path:Ra.encrypted_path,from:Ra.fromApp},i=await Js(n);if(r.a.info({playRes:i}),i.success){e.subtitle_list=i.data.subtitle_list,Ra.current.subtitle_list=i.data.subtitle_list,o=-1;for(let t=0;t<e.subtitle_list.length;t++){let n=e.subtitle_list[t].data_source;2!=n&&5!=n||(o=e.subtitle_list[t].index)}o>-1?(e.subtitle_index=o,Ra.current.subtitle_index=o):(e.code=500,e.message=\"没有获取到下载的字幕\",delete e.subtitle_list)}else e.code=i.code,e.message=i.message}els"
+    },
+    {
+      "alias": "la",
+      "offset": 4781064,
+      "call": "la({paths:[t]})",
+      "surrounding": "le_index=o,Ra.current.subtitle_index=o):(e.code=500,e.message=\"没有获取到下载的字幕\",delete e.subtitle_list)}else e.code=t.code,e.message=t.message}else{let t=3,n={file_path:Ra.videoPath,dest_fmt:Ra.dest_fmt,support_format:t,video_codec:\"hevc,h264,mpeg4\",encrypted_path:Ra.encrypted_path,from:Ra.fromApp},i=await Js(n);if(r.a.info({playRes:i}),i.success){e.subtitle_list=i.data.subtitle_list,Ra.current.subtitle_list=i.data.subtitle_list,o=-1;for(let t=0;t<e.subtitle_list.length;t++){let n=e.subtitle_list[t].data_source;2!=n&&5!=n||(o=e.subtitle_list[t].index)}o>-1?(e.subtitle_index=o,Ra.current.subtitle_index=o):(e.code=500,e.message=\"没有获取到下载的字幕\",delete e.subtitle_list)}else e.code=i.code,e.message=i.message}else e.code=s.code,e.message=s.message}else if(9==u.f_type&&4==u.s_type){e.f_type=\"9\",e.s_type=\"4\",e.msg_id=u.msg_id;let t=u.path||u.url,n=await la({paths:[t]});r.a.info({removeRes:n}),e.code=n.code,e.message=n.message}else if(9==u.f_type&&5==u.s_type){if(e.f_type=\"9\",e.s_type=\"5\",e.title=\"\",e.dbid=\"\",e.imdb_id=\"\",e.tmdbid=\"\",Ra.collection_id||\"\"===u.info)s=u.info;else{let t=u.file_path.split(\"/\").pop();if(u.info===t||\"-1\"==u.info){let n=await Xs({file_path:u.file_path});Ha=n.success?{...n.data||{},file_path:u.file_path}:{},s=Ha.dbid?\"db\"+Ha.dbid:Ha.imdb"
+    },
+    {
+      "alias": "Xs",
+      "offset": 4781367,
+      "call": "Xs({file_path:u.file_path})",
+      "surrounding": "Js(n);if(r.a.info({playRes:i}),i.success){e.subtitle_list=i.data.subtitle_list,Ra.current.subtitle_list=i.data.subtitle_list,o=-1;for(let t=0;t<e.subtitle_list.length;t++){let n=e.subtitle_list[t].data_source;2!=n&&5!=n||(o=e.subtitle_list[t].index)}o>-1?(e.subtitle_index=o,Ra.current.subtitle_index=o):(e.code=500,e.message=\"没有获取到下载的字幕\",delete e.subtitle_list)}else e.code=i.code,e.message=i.message}else e.code=s.code,e.message=s.message}else if(9==u.f_type&&4==u.s_type){e.f_type=\"9\",e.s_type=\"4\",e.msg_id=u.msg_id;let t=u.path||u.url,n=await la({paths:[t]});r.a.info({removeRes:n}),e.code=n.code,e.message=n.message}else if(9==u.f_type&&5==u.s_type){if(e.f_type=\"9\",e.s_type=\"5\",e.title=\"\",e.dbid=\"\",e.imdb_id=\"\",e.tmdbid=\"\",Ra.collection_id||\"\"===u.info)s=u.info;else{let t=u.file_path.split(\"/\").pop();if(u.info===t||\"-1\"==u.info){let n=await Xs({file_path:u.file_path});Ha=n.success?{...n.data||{},file_path:u.file_path}:{},s=Ha.dbid?\"db\"+Ha.dbid:Ha.imdb_id||Ha.title||t||\"\",e.title=Ha.title||\"\",e.dbid=String(Ha.dbid||\"\"),e.imdb_id=String(Ha.imdb_id||\"\"),e.tmdbid=String(Ha.tmdbid||\"\")}else s=u.info}if(e.file_path=u.file_path,\"\"==s)e.code=500,e.message=\"搜索词为空\";else{let t=await ha({q:s});r.a.info({searchSubResV2:t}),t.success?e.info_list=t.data.subs:(e.code=t.code,e"
+    },
+    {
+      "alias": "ha",
+      "offset": 4781705,
+      "call": "ha({q:s})",
+      "surrounding": ",delete e.subtitle_list)}else e.code=i.code,e.message=i.message}else e.code=s.code,e.message=s.message}else if(9==u.f_type&&4==u.s_type){e.f_type=\"9\",e.s_type=\"4\",e.msg_id=u.msg_id;let t=u.path||u.url,n=await la({paths:[t]});r.a.info({removeRes:n}),e.code=n.code,e.message=n.message}else if(9==u.f_type&&5==u.s_type){if(e.f_type=\"9\",e.s_type=\"5\",e.title=\"\",e.dbid=\"\",e.imdb_id=\"\",e.tmdbid=\"\",Ra.collection_id||\"\"===u.info)s=u.info;else{let t=u.file_path.split(\"/\").pop();if(u.info===t||\"-1\"==u.info){let n=await Xs({file_path:u.file_path});Ha=n.success?{...n.data||{},file_path:u.file_path}:{},s=Ha.dbid?\"db\"+Ha.dbid:Ha.imdb_id||Ha.title||t||\"\",e.title=Ha.title||\"\",e.dbid=String(Ha.dbid||\"\"),e.imdb_id=String(Ha.imdb_id||\"\"),e.tmdbid=String(Ha.tmdbid||\"\")}else s=u.info}if(e.file_path=u.file_path,\"\"==s)e.code=500,e.message=\"搜索词为空\";else{let t=await ha({q:s});r.a.info({searchSubResV2:t}),t.success?e.info_list=t.data.subs:(e.code=t.code,e.message=t.message)}}else if(9==u.f_type&&6==u.s_type)if(e.f_type=\"9\",e.s_type=\"6\",i=u.sub_id,a=u.download_url,e.file_path=u.file_path,\"\"==i)e.code=500,e.message=\"返回的字幕ID为空\";else if(\"\"==a)e.code=500,e.message=\"返回的字幕download_url为空\";else{let t=await pa({sub_id:i,download_url:a});r.a.info({previewSubRes:t}),t.success?e.in"
+    },
+    {
+      "alias": "pa",
+      "offset": 4782042,
+      "call": "pa({sub_id:i,download_url:a})",
+      "surrounding": "type=\"5\",e.title=\"\",e.dbid=\"\",e.imdb_id=\"\",e.tmdbid=\"\",Ra.collection_id||\"\"===u.info)s=u.info;else{let t=u.file_path.split(\"/\").pop();if(u.info===t||\"-1\"==u.info){let n=await Xs({file_path:u.file_path});Ha=n.success?{...n.data||{},file_path:u.file_path}:{},s=Ha.dbid?\"db\"+Ha.dbid:Ha.imdb_id||Ha.title||t||\"\",e.title=Ha.title||\"\",e.dbid=String(Ha.dbid||\"\"),e.imdb_id=String(Ha.imdb_id||\"\"),e.tmdbid=String(Ha.tmdbid||\"\")}else s=u.info}if(e.file_path=u.file_path,\"\"==s)e.code=500,e.message=\"搜索词为空\";else{let t=await ha({q:s});r.a.info({searchSubResV2:t}),t.success?e.info_list=t.data.subs:(e.code=t.code,e.message=t.message)}}else if(9==u.f_type&&6==u.s_type)if(e.f_type=\"9\",e.s_type=\"6\",i=u.sub_id,a=u.download_url,e.file_path=u.file_path,\"\"==i)e.code=500,e.message=\"返回的字幕ID为空\";else if(\"\"==a)e.code=500,e.message=\"返回的字幕download_url为空\";else{let t=await pa({sub_id:i,download_url:a});r.a.info({previewSubRes:t}),t.success?e.info_list=t.data.subs:(e.code=t.code,e.message=t.message)}else if(9==u.f_type&&7==u.s_type){e.f_type=\"9\",e.s_type=\"7\",e.file_path=u.file_path||\"\",e.sub_id=u.sub_id,e.sub_title=u.sub_title,i=u.sub_id||\"\";let s=u.sub_title||\"\";if(n=u.download_url||\"\",t=u.file_path,\"\"==n||\"\"==t||\"\"==s||\"\"==i)e.code=500,e.message=\"下载字幕的参数错误\";else{let a={download_url:n,file_name"
+    },
+    {
+      "alias": "fa",
+      "offset": 4782601,
+      "call": "fa(a)",
+      "surrounding": "ss?e.info_list=t.data.subs:(e.code=t.code,e.message=t.message)}}else if(9==u.f_type&&6==u.s_type)if(e.f_type=\"9\",e.s_type=\"6\",i=u.sub_id,a=u.download_url,e.file_path=u.file_path,\"\"==i)e.code=500,e.message=\"返回的字幕ID为空\";else if(\"\"==a)e.code=500,e.message=\"返回的字幕download_url为空\";else{let t=await pa({sub_id:i,download_url:a});r.a.info({previewSubRes:t}),t.success?e.info_list=t.data.subs:(e.code=t.code,e.message=t.message)}else if(9==u.f_type&&7==u.s_type){e.f_type=\"9\",e.s_type=\"7\",e.file_path=u.file_path||\"\",e.sub_id=u.sub_id,e.sub_title=u.sub_title,i=u.sub_id||\"\";let s=u.sub_title||\"\";if(n=u.download_url||\"\",t=u.file_path,\"\"==n||\"\"==t||\"\"==s||\"\"==i)e.code=500,e.message=\"下载字幕的参数错误\";else{let a={download_url:n,file_name:t,sub_id:i,sub_title:s};Ra.encrypted_path&&(a.encrypted_path=Ra.encrypted_path,a.from=Ra.fromApp,delete a.file_name);let c=await fa(a);if(r.a.info({downloadSubV2Res:c,downloadSubV2Params:a}),c.success)if(Oa){let t=await Ks({file_path:Ra.videoPath,encrypted_path:Ra.encrypted_path,from:Ra.fromApp});if(r.a.info(\"get out subtitle list 9 7\",t),t.success){let n=[...Ra.current.subtitle_list||[],...t.data||[]];e.subtitle_list=n,o=-1;let r=\"\";for(let t=0;t<e.subtitle_list.length;t++){let n=e.subtitle_list[t].data_source;2!=n&&5!=n||(o=e."
+    },
+    {
+      "alias": "Ks",
+      "offset": 4782692,
+      "call": "Ks({file_path:Ra.videoPath,encrypted_path:Ra.encrypted_path,from:Ra.fromApp})",
+      "surrounding": "_type)if(e.f_type=\"9\",e.s_type=\"6\",i=u.sub_id,a=u.download_url,e.file_path=u.file_path,\"\"==i)e.code=500,e.message=\"返回的字幕ID为空\";else if(\"\"==a)e.code=500,e.message=\"返回的字幕download_url为空\";else{let t=await pa({sub_id:i,download_url:a});r.a.info({previewSubRes:t}),t.success?e.info_list=t.data.subs:(e.code=t.code,e.message=t.message)}else if(9==u.f_type&&7==u.s_type){e.f_type=\"9\",e.s_type=\"7\",e.file_path=u.file_path||\"\",e.sub_id=u.sub_id,e.sub_title=u.sub_title,i=u.sub_id||\"\";let s=u.sub_title||\"\";if(n=u.download_url||\"\",t=u.file_path,\"\"==n||\"\"==t||\"\"==s||\"\"==i)e.code=500,e.message=\"下载字幕的参数错误\";else{let a={download_url:n,file_name:t,sub_id:i,sub_title:s};Ra.encrypted_path&&(a.encrypted_path=Ra.encrypted_path,a.from=Ra.fromApp,delete a.file_name);let c=await fa(a);if(r.a.info({downloadSubV2Res:c,downloadSubV2Params:a}),c.success)if(Oa){let t=await Ks({file_path:Ra.videoPath,encrypted_path:Ra.encrypted_path,from:Ra.fromApp});if(r.a.info(\"get out subtitle list 9 7\",t),t.success){let n=[...Ra.current.subtitle_list||[],...t.data||[]];e.subtitle_list=n,o=-1;let r=\"\";for(let t=0;t<e.subtitle_list.length;t++){let n=e.subtitle_list[t].data_source;2!=n&&5!=n||(o=e.subtitle_list[t].index,r=e.subtitle_list[t].url)}o>-1?(e.subtitle_index=o,Ra.current.subtitle_index=o):(e.code=500,e.message=\"没有获取到下载的字幕\",delete e.subtitle_list);f"
+    },
+    {
+      "alias": "Js",
+      "offset": 4783601,
+      "call": "Js(t)",
+      "surrounding": ",from:Ra.fromApp});if(r.a.info(\"get out subtitle list 9 7\",t),t.success){let n=[...Ra.current.subtitle_list||[],...t.data||[]];e.subtitle_list=n,o=-1;let r=\"\";for(let t=0;t<e.subtitle_list.length;t++){let n=e.subtitle_list[t].data_source;2!=n&&5!=n||(o=e.subtitle_list[t].index,r=e.subtitle_list[t].url)}o>-1?(e.subtitle_index=o,Ra.current.subtitle_index=o):(e.code=500,e.message=\"没有获取到下载的字幕\",delete e.subtitle_list);for(let t=0;t<e.subtitle_list.length;t++){let n=e.subtitle_list[t].data_source;2!=n&&5!=n||(o=e.subtitle_list[t].index)}o>-1?(e.subtitle_index=o,Ra.current.subtitle_index=o):(e.code=500,e.message=\"没有获取到下载的字幕\",delete e.subtitle_list)}else e.code=t.code,e.message=t.message}else{let t={file_path:Ra.videoPath,dest_fmt:Ra.dest_fmt,video_codec:\"hevc,h264,mpeg4\",support_format:3,encrypted_path:Ra.encrypted_path,from:Ra.fromApp},n=await Js(t);if(r.a.info({playResV2:n}),n.success){e.subtitle_list=n.data.subtitle_list,Ra.current.subtitle_list=n.data.subtitle_list,o=-1;let t=\"\";for(let n=0;n<e.subtitle_list.length;n++){let r=e.subtitle_list[n].data_source;2!=r&&5!=r||(o=e.subtitle_list[n].index,t=e.subtitle_list[n].url)}o>-1?(e.subtitle_index=o,Ra.current.subtitle_index=o):(e.code=500,e.message=\"没有获取到下载的字幕\",delete e.subtitle_list)}else e"
+    },
+    {
+      "alias": "$s",
+      "offset": 4784825,
+      "call": "$s({collection_id:u.collection_id,previous:u.previous||0,start:u.start||0,end:u.end||0,preview:u.preview||0,selected:1})",
+      "surrounding": ",delete e.subtitle_list)}else e.code=n.code,e.message=n.message}else e.code=c.code,e.message=c.message}}else if(10==u.f_type){if(e.f_type=\"10\",e.s_type=\"\"+u.s_type,e.tmpVideoPath=Ra.videoPath||Ra.encrypted_path||\"\",u.msg_id&&(e.msg_id=u.msg_id),1==u.s_type){let t=e.tmpVideoPath;return r.a.info(\"video originPath:\"+t),t=t.startsWith(\"/\")?t.replace(/\\/[^\\/]+$/,\"\"):\"\",r.a.info(\"openMainWindowWithAction, type=selectSubtitle, path=\"+t),process.emit(\"openMainWindowWithAction\",{type:\"selectSubtitle\",path:t}),void(global.selectSubtitleCallback=t=>{r.a.info(\"selectSubtitleCallback\",{selData:t,returnData:e}),delete global.selectSubtitleCallback,Za(t,e)})}if(2==u.s_type){let t=u.file_path;return void Ja(t,e)}if(3==u.s_type){let t=u.url||\"\";e.url=u.url;let n=await $a(t);e.code=n.code,e.message=n.message}}else if(12==u.f_type&&0==u.s_type){let t=await $s({collection_id:u.collection_id,previous:u.previous||0,start:u.start||0,end:u.end||0,preview:u.preview||0,selected:1});process.emit(\"ipcRootEmit\",{EmitEvent:\"updateSkipStartEnd\",EmitMsg:{collection_id:u.collection_id,previous:u.previous||0,start:u.start||0,end:u.end||0,preview:u.preview||0}}),e.code=t.code,e.message=t.message}}else{e.f_type=\"7\",e.s_type=\"3\",e.file_path=Ra.videoPath;let t=parseInt(u.result||0),n=parseFloat(u.seek||0),o=Ra.current.format_list,i=Ra.current.audio_index;(u.audiotrack||0===u.audiotrack"
+    },
+    {
+      "alias": "oa",
+      "offset": 4785794,
+      "call": "oa(l)",
+      "surrounding": ");process.emit(\"ipcRootEmit\",{EmitEvent:\"updateSkipStartEnd\",EmitMsg:{collection_id:u.collection_id,previous:u.previous||0,start:u.start||0,end:u.end||0,preview:u.preview||0}}),e.code=t.code,e.message=t.message}}else{e.f_type=\"7\",e.s_type=\"3\",e.file_path=Ra.videoPath;let t=parseInt(u.result||0),n=parseFloat(u.seek||0),o=Ra.current.format_list,i=Ra.current.audio_index;(u.audiotrack||0===u.audiotrack)&&(i=parseInt(u.audiotrack));let s=Ra.current.subtitle_index||-1;if((u.subtitle||0===u.subtitle)&&(s=parseInt(u.subtitle)),o&&o[t]&&o[t].mod){let a,c=o[t].mod;r.a.info({formatList:o,format_index:t,dest_fmt:c}),l={play_addr:Ra.current.uri.replace(/http(s?)\\:\\/\\/[^\\/]*?\\//,\"/\"),start_time:Math.floor(n),video_codec:\"hevc,h264,mpeg4\",audio_index:i,encrypted_path:Ra.encrypted_path,from:Ra.fromApp,dest_fmt:c},-100!=s&&(l.subtitle_index=s),a=Oa?await oa(l):await na(l),r.a.info({switchRes:a}),a.success?(Ra.current.format_index=t,Ra.current.uri=a.data.uri.startsWith(\"http\")?encodeURI(a.data.uri):oc(global.ApiHost+a.data.uri),Ra.current.current_fmt=a.data.current_fmt,Array.isArray(a.data.subtitle_list)&&(Ra.current.subtitle_list=a.data.subtitle_list),Ra.current.subtitle_index=a.data.subtitle_index,Array.isArray(a.data.audio_list)&&(Ra.current.audio_li"
+    },
+    {
+      "alias": "na",
+      "offset": 4785806,
+      "call": "na(l)",
+      "surrounding": "it(\"ipcRootEmit\",{EmitEvent:\"updateSkipStartEnd\",EmitMsg:{collection_id:u.collection_id,previous:u.previous||0,start:u.start||0,end:u.end||0,preview:u.preview||0}}),e.code=t.code,e.message=t.message}}else{e.f_type=\"7\",e.s_type=\"3\",e.file_path=Ra.videoPath;let t=parseInt(u.result||0),n=parseFloat(u.seek||0),o=Ra.current.format_list,i=Ra.current.audio_index;(u.audiotrack||0===u.audiotrack)&&(i=parseInt(u.audiotrack));let s=Ra.current.subtitle_index||-1;if((u.subtitle||0===u.subtitle)&&(s=parseInt(u.subtitle)),o&&o[t]&&o[t].mod){let a,c=o[t].mod;r.a.info({formatList:o,format_index:t,dest_fmt:c}),l={play_addr:Ra.current.uri.replace(/http(s?)\\:\\/\\/[^\\/]*?\\//,\"/\"),start_time:Math.floor(n),video_codec:\"hevc,h264,mpeg4\",audio_index:i,encrypted_path:Ra.encrypted_path,from:Ra.fromApp,dest_fmt:c},-100!=s&&(l.subtitle_index=s),a=Oa?await oa(l):await na(l),r.a.info({switchRes:a}),a.success?(Ra.current.format_index=t,Ra.current.uri=a.data.uri.startsWith(\"http\")?encodeURI(a.data.uri):oc(global.ApiHost+a.data.uri),Ra.current.current_fmt=a.data.current_fmt,Array.isArray(a.data.subtitle_list)&&(Ra.current.subtitle_list=a.data.subtitle_list),Ra.current.subtitle_index=a.data.subtitle_index,Array.isArray(a.data.audio_list)&&(Ra.current.audio_list=a.data.au"
+    },
+    {
+      "alias": "Zs",
+      "offset": 4789766,
+      "call": "Zs({file_path:Ra.videoPath,play_env:global.isLocalNetwork||global.connAbility?1:2,video_codec:\"hevc,h264,mpeg4\",dest_fmt:t,support_format:3,encrypted_path:Ra.encrypted_path,from:Ra.fromApp})",
+      "surrounding": "async e=>{let t;process.emit(\"GET_PROXY_STATUS\"),Ra={},Ra.videoPath=e.path,Ra.mode=e.mode,Ra.collection_id=e.coll,Ra.classification_id=e.clsf,Ra.encrypted_path=e.encrypted_path,Ra.fromApp=e.from||\"\",Ra.videoId=e.video_id||\"\",Ra.courseId=e.courseId,Ra.feedId=e.feedId,ic(!0),t=global.isLocalNetwork||global.connAbility?\"OP\":Ma[La]?Ma[La]:\"FHD_EX\",r.a.info(\"Set dest_fmt for external plyaer:\"+t);let n,o=await Zs({file_path:Ra.videoPath,play_env:global.isLocalNetwork||global.connAbility?1:2,video_codec:\"hevc,h264,mpeg4\",dest_fmt:t,support_format:3,encrypted_path:Ra.encrypted_path,from:Ra.fromApp});if(404==o.code){r.a.info(\"ExernalPlayer get new api 404, use old api\"),Oa=!1;let e=await rc(Ra.videoPath,Ra.encrypted_path);e.length>0&&(t=e[0].mod);let o={file_path:Ra.videoPath,dest_fmt:t,support_format:3,video_codec:\"hevc,h264,mpeg4\",encrypted_path:Ra.encrypted_path,from:Ra.fromApp};n=await Js(o),r.a.info(\"post data of getVideoPlayUrl\",o),r.a.info(\"playRes of external player\",n)}else Oa=!0,n=o"
+    },
+    {
+      "alias": "Js",
+      "offset": 4790252,
+      "call": "Js(o)",
+      "surrounding": "US\"),Ra={},Ra.videoPath=e.path,Ra.mode=e.mode,Ra.collection_id=e.coll,Ra.classification_id=e.clsf,Ra.encrypted_path=e.encrypted_path,Ra.fromApp=e.from||\"\",Ra.videoId=e.video_id||\"\",Ra.courseId=e.courseId,Ra.feedId=e.feedId,ic(!0),t=global.isLocalNetwork||global.connAbility?\"OP\":Ma[La]?Ma[La]:\"FHD_EX\",r.a.info(\"Set dest_fmt for external plyaer:\"+t);let n,o=await Zs({file_path:Ra.videoPath,play_env:global.isLocalNetwork||global.connAbility?1:2,video_codec:\"hevc,h264,mpeg4\",dest_fmt:t,support_format:3,encrypted_path:Ra.encrypted_path,from:Ra.fromApp});if(404==o.code){r.a.info(\"ExernalPlayer get new api 404, use old api\"),Oa=!1;let e=await rc(Ra.videoPath,Ra.encrypted_path);e.length>0&&(t=e[0].mod);let o={file_path:Ra.videoPath,dest_fmt:t,support_format:3,video_codec:\"hevc,h264,mpeg4\",encrypted_path:Ra.encrypted_path,from:Ra.fromApp};n=await Js(o),r.a.info(\"post data of getVideoPlayUrl\",o),r.a.info(\"playRes of external player\",n)}else Oa=!0,n=o;if(n.success){let t=n.data.uri.startsWith(\"http\")?encodeURI(n.data.uri):oc(global.ApiHost+n.data.uri);r.a.info(\"playUrl for external:\"+t);let o,i=Da.replace(/.*[\\\\\\/]/,\"\");o=Ca?`killall -9 \"${i}\"`:`taskkill /f /im \"${i}\"`,r.a.info(\"killCmd for external player:\"+o);try{wa(o,{encoding:\"utf-8\",timeout:"
+    },
+    {
+      "alias": "qs",
+      "offset": 4791153,
+      "call": "qs({collection_id:Ra.collection_id,video_id:Ra.videoId,sec:e,chapter:\"\"})",
+      "surrounding": "a.info(\"playRes of external player\",n)}else Oa=!0,n=o;if(n.success){let t=n.data.uri.startsWith(\"http\")?encodeURI(n.data.uri):oc(global.ApiHost+n.data.uri);r.a.info(\"playUrl for external:\"+t);let o,i=Da.replace(/.*[\\\\\\/]/,\"\");o=Ca?`killall -9 \"${i}\"`:`taskkill /f /im \"${i}\"`,r.a.info(\"killCmd for external player:\"+o);try{wa(o,{encoding:\"utf-8\",timeout:1500})}catch(e){r.a.info(\"kill external player error:\",e)}if(ba(`\"${Da}\" \"${t}\"`,(e,t)=>{e?r.a.info(\"Run external player errorms: \",e):r.a.info(\"Run external player end\")}),ic(!1),\"vNormal\"==Ra.mode||\"share\"==Ra.mode||\"zedu\"==Ra.fromApp){let e=0;process.emit(\"ipcRootEmit\",{EmitEvent:\"updatePlayDuration\",EmitMsg:{id:Ra.videoId,collection_id:Ra.collection_id,t:e}}),\"zedu\"==Ra.fromApp?Ra.feedId&&Ra.courseId&&da({feed_id:Ra.feedId,course_id:Ra.courseId,second:1e3*e,chapter:\"\"}):\"share\"==Ra.mode?qs({collection_id:Ra.collection_id,video_id:Ra.videoId,sec:e,chapter:\"\"}):Hs({collection_id:Ra.collection_id,classification_id:Ra.classification_id,video_id:Ra.videoId,sec:e,chapter:\"\"})}}else ac(n.message||\"获取播放地址失败\")}"
+    },
+    {
+      "alias": "Hs",
+      "offset": 4791227,
+      "call": "Hs({collection_id:Ra.collection_id,classification_id:Ra.classification_id,video_id:Ra.videoId,sec:e,chapter:\"\"})",
+      "surrounding": "n.data.uri.startsWith(\"http\")?encodeURI(n.data.uri):oc(global.ApiHost+n.data.uri);r.a.info(\"playUrl for external:\"+t);let o,i=Da.replace(/.*[\\\\\\/]/,\"\");o=Ca?`killall -9 \"${i}\"`:`taskkill /f /im \"${i}\"`,r.a.info(\"killCmd for external player:\"+o);try{wa(o,{encoding:\"utf-8\",timeout:1500})}catch(e){r.a.info(\"kill external player error:\",e)}if(ba(`\"${Da}\" \"${t}\"`,(e,t)=>{e?r.a.info(\"Run external player errorms: \",e):r.a.info(\"Run external player end\")}),ic(!1),\"vNormal\"==Ra.mode||\"share\"==Ra.mode||\"zedu\"==Ra.fromApp){let e=0;process.emit(\"ipcRootEmit\",{EmitEvent:\"updatePlayDuration\",EmitMsg:{id:Ra.videoId,collection_id:Ra.collection_id,t:e}}),\"zedu\"==Ra.fromApp?Ra.feedId&&Ra.courseId&&da({feed_id:Ra.feedId,course_id:Ra.courseId,second:1e3*e,chapter:\"\"}):\"share\"==Ra.mode?qs({collection_id:Ra.collection_id,video_id:Ra.videoId,sec:e,chapter:\"\"}):Hs({collection_id:Ra.collection_id,classification_id:Ra.classification_id,video_id:Ra.videoId,sec:e,chapter:\"\"})}}else ac(n.message||\"获取播放地址失败\")}"
+    }
+  ]
+}

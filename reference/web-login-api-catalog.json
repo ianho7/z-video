@@ -1,0 +1,3188 @@
+{
+  "schema_version": 1,
+  "scope": "Static login/authentication and HTTP envelope of public zconnect.cn home scripts supplied locally by main investigation. Account CRUD, video and recycle API catalogs excluded.",
+  "source_page": "https://zconnect.cn/home/",
+  "source_manifest": "outputs/web-source-manifest.json",
+  "source_snapshots": "outputs/web-source-snapshot",
+  "raw_wrapper_index": "outputs/web-all-request-wrappers.json",
+  "offset_unit": "zero-based UTF-16 code units into UTF-8-decoded original source",
+  "verification": "No network, target execution, login or REA session mutation. Call links are static candidates; source_verified verifies text only.",
+  "limitations": [
+    "Default regional flag Tj=false; alternate regional APIs present as code, not confirmed active on supplied URL.",
+    "Computed hosts and native/server validation are not runtime verified.",
+    "This catalog is bounded to authentication; it is not an inventory of all account-management endpoints."
+  ],
+  "request_envelope": {
+    "helper_module": "89904",
+    "file": "home/static/js/index.a785a6de.js",
+    "timeout_ms": 30000,
+    "withCredentials_default": false,
+    "cluster_branch_withCredentials": true,
+    "metadata_fields": [
+      "plat=web",
+      "version",
+      "device_id",
+      "device",
+      "_l"
+    ],
+    "append_guard": "typeof config.data === object and method != put; GETs with undefined data receive no automatic common fields",
+    "form_post_conditional_fields": [
+      "token=current user token",
+      "nasid=store.nas.nasId"
+    ],
+    "remote_headers": [
+      "rtoken",
+      "rdeviceid",
+      "rdevice",
+      "ruser"
+    ],
+    "random_query": "rnd=timestamp_random; webagent=v2",
+    "signing": "No generic HMAC/client request-signing algorithm in observed default login/envelope; NAS sign is opaque response data forwarded as verification nasid.",
+    "nas_differences": {
+      "additional_cloud_target": "email",
+      "fake_token_sentinel": "FAKE_TOKEN",
+      "fake_token_initialization_ports": [
+        "8235",
+        "8236"
+      ],
+      "fake_token_append_behavior": "If proposed token/zenithtoken value is sentinel, set proposed value and destination field to empty string before undefined-only append."
+    }
+  },
+  "apis": [
+    {
+      "method": "POST",
+      "path": "/action/report/login",
+      "role": "login/jump telemetry",
+      "feature_parameters": {
+        "body": {}
+      },
+      "target": "cluster/current origin",
+      "timeout_ms": 1000,
+      "branch": "handoff",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 390616,
+        "wrapper_offset": 390584,
+        "export_names": [
+          "CT"
+        ],
+        "excerpt": "function n(){return(0,a.Z)({url:\"/action/report/login\",method:\"post\",data:{},timeout:1e3})}",
+        "excerpt_offset": 390584,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/async/61430.65791410.js",
+          "offset": 4370,
+          "module_id": "17283",
+          "caller_method": "reportAndJump",
+          "expression": "(0,n.CT)()",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/66837.eacee639.js",
+          "offset": 4347,
+          "module_id": "26357",
+          "caller_method": "reportAndJump",
+          "expression": "(0,n.CT)()",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/66837.eacee639.js",
+          "offset": 6274,
+          "module_id": "26357",
+          "caller_method": null,
+          "expression": "(0,n.CT)()",
+          "source_verified": true
+        }
+      ],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 422875,
+        "excerpt_offset": 422843,
+        "excerpt": "function n(){return(0,a.Z)({url:\"/action/report/login\",method:\"post\",data:{},timeout:1e3})}",
+        "apiTarget": null,
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/key/pub",
+      "role": "key discovery",
+      "feature_parameters": {
+        "query": {
+          "signme": 1
+        }
+      },
+      "target": "apiTarget argument; server=https://api.zenithspace.net, nas=cluster/current origin",
+      "response_fields_used": [
+        "key",
+        "key_id",
+        "sign",
+        "name"
+      ],
+      "branch": "default-login",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 390835,
+        "wrapper_offset": 390675,
+        "export_names": [
+          "$3"
+        ],
+        "excerpt": "function r(){var t=arguments.length>0&&void 0!==arguments[0]?arguments[0]:\"nas\",e=arguments.length>1&&void 0!==arguments[1]?arguments[1]:3e4;return(0,a.Z)({url:\"/key/pub\",method:\"get\",apiTarget:t,params:{signme:1},timeout:e})}",
+        "excerpt_offset": 390675,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/async/20295.bc02e13a.js",
+          "offset": 4702,
+          "module_id": "43118",
+          "caller_method": null,
+          "expression": "(0,c.$3)(\"nas\")",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/20295.bc02e13a.js",
+          "offset": 20226,
+          "module_id": "43118",
+          "caller_method": null,
+          "expression": "(0,c.$3)(\"nas\")",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/20295.bc02e13a.js",
+          "offset": 24654,
+          "module_id": "43118",
+          "caller_method": null,
+          "expression": "(0,c.$3)(\"nas\")",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/24394.d012f864.js",
+          "offset": 2987,
+          "module_id": "80056",
+          "caller_method": null,
+          "expression": "(0,u.$3)(\"nas\")",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 5932,
+          "module_id": "80056",
+          "caller_method": null,
+          "expression": "(0,l.$3)(\"nas\")",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 15355,
+          "module_id": "18020",
+          "caller_method": null,
+          "expression": "(0,r.$3)(\"nas\")",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 15883,
+          "module_id": "18020",
+          "caller_method": null,
+          "expression": "(0,r.$3)(\"server\")",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 36371,
+          "module_id": "18020",
+          "caller_method": null,
+          "expression": "(0,r.$3)(\"nas\")",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 43203,
+          "module_id": "18020",
+          "caller_method": null,
+          "expression": "(0,r.$3)(\"server\")",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 45143,
+          "module_id": "18020",
+          "caller_method": null,
+          "expression": "(0,r.$3)(\"nas\")",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/9872.3987cd3c.js",
+          "offset": 4195,
+          "module_id": "27331",
+          "caller_method": null,
+          "expression": "(0,n.$3)(\"nas\")",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/index.a785a6de.js",
+          "offset": 775140,
+          "module_id": "97909",
+          "caller_method": null,
+          "expression": "(0,F.$3)(\"nas\",3e3)",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/index.a785a6de.js",
+          "offset": 1056401,
+          "module_id": "97909",
+          "caller_method": null,
+          "expression": "(0,F.$3)(\"nas\",3e3)",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/index.a785a6de.js",
+          "offset": 1137226,
+          "module_id": "97909",
+          "caller_method": null,
+          "expression": "(0,F.$3)(\"server\")",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/index.a785a6de.js",
+          "offset": 1138426,
+          "module_id": "97909",
+          "caller_method": null,
+          "expression": "(0,F.$3)(\"nas\")",
+          "source_verified": true
+        }
+      ],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 423094,
+        "excerpt_offset": 422934,
+        "excerpt": "function r(){var t=arguments.length>0&&void 0!==arguments[0]?arguments[0]:\"nas\",e=arguments.length>1&&void 0!==arguments[1]?arguments[1]:3e4;return(0,a.Z)({url:\"/key/pub\",method:\"get\",apiTarget:t,params:{signme:1},timeout:e})}",
+        "apiTarget": null,
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/quick/nasid",
+      "role": "account-to-NAS discovery",
+      "feature_parameters": {
+        "body": {
+          "username": "RSA(cloud public key,trim(username))",
+          "key_id": "cloudPubKeyId"
+        }
+      },
+      "target": "https://api.zenithspace.net",
+      "response_fields_used": [
+        "nasid",
+        "username",
+        "qc_name",
+        "nickname",
+        "lan"
+      ],
+      "branch": "default-login",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 391599,
+        "wrapper_offset": 391566,
+        "export_names": [
+          "cs"
+        ],
+        "excerpt": "function m(t){return(0,a.Z)({url:\"/quick/nasid\",method:\"post\",apiTarget:\"server\",data:t})}",
+        "excerpt_offset": 391566,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 15029,
+          "module_id": "18020",
+          "caller_method": null,
+          "expression": "(0,r.cs)({username:s,key_id:this.cloudPubKeyId})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 43553,
+          "module_id": "18020",
+          "caller_method": null,
+          "expression": "(0,r.cs)(m)",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 44817,
+          "module_id": "18020",
+          "caller_method": null,
+          "expression": "(0,r.cs)(P)",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 48290,
+          "module_id": "18020",
+          "caller_method": null,
+          "expression": "(0,r.cs)(e)",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/9872.3987cd3c.js",
+          "offset": 3892,
+          "module_id": "27331",
+          "caller_method": null,
+          "expression": "(0,n.cs)(i)",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/9872.3987cd3c.js",
+          "offset": 7112,
+          "module_id": "27331",
+          "caller_method": null,
+          "expression": "(0,n.cs)(e)",
+          "source_verified": true
+        }
+      ],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 423858,
+        "excerpt_offset": 423825,
+        "excerpt": "function m(t){return(0,a.Z)({url:\"/quick/nasid\",method:\"post\",apiTarget:\"server\",data:t})}",
+        "apiTarget": "server",
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/auth/login",
+      "role": "credential login",
+      "feature_parameters": {
+        "body": {
+          "username": "RSA(NAS public key,trim(username))",
+          "password": "RSA(NAS public key,trim(password))",
+          "sms_proof": "optional SMS proof OR email_proof under this same field"
+        }
+      },
+      "target": "https://clusterHost if selected, else current origin",
+      "response_fields_used": [
+        "token",
+        "username",
+        "qc_name",
+        "nickname",
+        "is_master",
+        "is_local",
+        "avatar"
+      ],
+      "branch": "default-login",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 391932,
+        "wrapper_offset": 391899,
+        "export_names": [
+          "x4"
+        ],
+        "excerpt": "function f(t){return(0,a.Z)({url:\"/auth/login\",method:\"post\",data:t})}",
+        "excerpt_offset": 391899,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/async/20295.bc02e13a.js",
+          "offset": 25179,
+          "module_id": "43118",
+          "caller_method": null,
+          "expression": "(0,c.x4)({username:w,password:b,sms_proof:this.sms_proof})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/20295.bc02e13a.js",
+          "offset": 25286,
+          "module_id": "43118",
+          "caller_method": null,
+          "expression": "(0,c.x4)({username:w,password:b})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 45606,
+          "module_id": "18020",
+          "caller_method": null,
+          "expression": "(0,r.x4)((0,o._)((0,a._)({},L),{sms_proof:this.sms_proof}))",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 45759,
+          "module_id": "18020",
+          "caller_method": null,
+          "expression": "(0,r.x4)((0,o._)((0,a._)({},L),{sms_proof:this.email_proof}))",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 45839,
+          "module_id": "18020",
+          "caller_method": null,
+          "expression": "(0,r.x4)(L)",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/9872.3987cd3c.js",
+          "offset": 4614,
+          "module_id": "27331",
+          "caller_method": null,
+          "expression": "(0,n.x4)((0,o._)((0,a._)({},v),{sms_proof:this.sms_proof}))",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/9872.3987cd3c.js",
+          "offset": 4762,
+          "module_id": "27331",
+          "caller_method": null,
+          "expression": "(0,n.x4)((0,o._)((0,a._)({},v),{sms_proof:this.email_proof}))",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/9872.3987cd3c.js",
+          "offset": 4841,
+          "module_id": "27331",
+          "caller_method": null,
+          "expression": "(0,n.x4)(v)",
+          "source_verified": true
+        }
+      ],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 424191,
+        "excerpt_offset": 424158,
+        "excerpt": "function f(t){return(0,a.Z)({url:\"/auth/login\",method:\"post\",data:t})}",
+        "apiTarget": null,
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/auth/pwdcheck",
+      "role": "password re-verification",
+      "feature_parameters": {
+        "body": {
+          "username": "RSA(NAS key,username)",
+          "password": "RSA(NAS key,trim(password))"
+        }
+      },
+      "target": "cluster/current origin",
+      "branch": "reauthentication",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 392002,
+        "wrapper_offset": 391969,
+        "export_names": [
+          "ni"
+        ],
+        "excerpt": "function _(t){return(0,a.Z)({url:\"/auth/pwdcheck\",method:\"post\",data:t})}",
+        "excerpt_offset": 391969,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/async/84046.92eb489e.js",
+          "offset": 63550,
+          "module_id": "64809",
+          "caller_method": null,
+          "expression": "(0,A.ni)({username:t,password:e})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/index.a785a6de.js",
+          "offset": 417940,
+          "module_id": "97909",
+          "caller_method": "checkPwd",
+          "expression": "(0,F.ni)({username:s,password:e})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/index.a785a6de.js",
+          "offset": 659507,
+          "module_id": "97909",
+          "caller_method": "checkedManagerPwd",
+          "expression": "(0,F.ni)({username:s,password:e})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/index.a785a6de.js",
+          "offset": 660934,
+          "module_id": "97909",
+          "caller_method": "checkedManagerPwd",
+          "expression": "(0,F.ni)({username:s,password:e})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/index.a785a6de.js",
+          "offset": 661150,
+          "module_id": "97909",
+          "caller_method": "checkedManagerPwd",
+          "expression": "(0,F.ni)({username:s,password:e})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/index.a785a6de.js",
+          "offset": 717579,
+          "module_id": "97909",
+          "caller_method": "checkedManagerPwd",
+          "expression": "(0,F.ni)({username:s,password:e})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/index.a785a6de.js",
+          "offset": 796811,
+          "module_id": "97909",
+          "caller_method": "checkedPwd",
+          "expression": "(0,F.ni)({username:s,password:e})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/index.a785a6de.js",
+          "offset": 971334,
+          "module_id": "97909",
+          "caller_method": "wcacheForceMount",
+          "expression": "(0,F.ni)({username:s,password:e})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/index.a785a6de.js",
+          "offset": 971892,
+          "module_id": "97909",
+          "caller_method": "froceUse",
+          "expression": "(0,F.ni)({username:s,password:e})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/index.a785a6de.js",
+          "offset": 972234,
+          "module_id": "97909",
+          "caller_method": "giveUpCache",
+          "expression": "(0,F.ni)({username:s,password:e})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/index.a785a6de.js",
+          "offset": 987254,
+          "module_id": "97909",
+          "caller_method": "checkedManagerPwd",
+          "expression": "(0,F.ni)({username:s,password:e})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/index.a785a6de.js",
+          "offset": 987405,
+          "module_id": "97909",
+          "caller_method": "checkedManagerPwd",
+          "expression": "(0,F.ni)({username:s,password:e})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/index.a785a6de.js",
+          "offset": 987558,
+          "module_id": "97909",
+          "caller_method": "checkedManagerPwd",
+          "expression": "(0,F.ni)({username:s,password:e})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/index.a785a6de.js",
+          "offset": 1036845,
+          "module_id": "97909",
+          "caller_method": "checkedManagerPwd",
+          "expression": "(0,F.ni)({username:s,password:e})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/index.a785a6de.js",
+          "offset": 1075457,
+          "module_id": "97909",
+          "caller_method": "checkedPwd",
+          "expression": "(0,F.ni)({username:s,password:e})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/index.a785a6de.js",
+          "offset": 1085132,
+          "module_id": "97909",
+          "caller_method": "onSubmit",
+          "expression": "(0,F.ni)({username:s,password:e})",
+          "source_verified": true
+        }
+      ],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 424261,
+        "excerpt_offset": 424228,
+        "excerpt": "function _(t){return(0,a.Z)({url:\"/auth/pwdcheck\",method:\"post\",data:t})}",
+        "apiTarget": null,
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/sms/usend",
+      "role": "send verification SMS",
+      "feature_parameters": {
+        "body": {
+          "username": "RSA(cloud key,trim(username))",
+          "key_id": "cloudPubKeyId",
+          "nasid": "remoteSign || NAS sign",
+          "type": "optional",
+          "by": "optional voice"
+        }
+      },
+      "target": "https://api.zenithspace.net",
+      "branch": "verification",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 392237,
+        "wrapper_offset": 392204,
+        "export_names": [
+          "F0"
+        ],
+        "excerpt": "function k(t){return(0,a.Z)({url:\"/sms/usend\",method:\"post\",apiTarget:\"server\",data:t})}",
+        "excerpt_offset": 392204,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/async/20295.bc02e13a.js",
+          "offset": 1520,
+          "module_id": "25199",
+          "caller_method": null,
+          "expression": "(0,l.F0)(o)",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/2601.0a1f8b61.js",
+          "offset": 3842,
+          "module_id": "25199",
+          "caller_method": null,
+          "expression": "(0,l.F0)(i)",
+          "source_verified": true
+        }
+      ],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 424496,
+        "excerpt_offset": 424463,
+        "excerpt": "function y(t){return(0,a.Z)({url:\"/sms/usend\",method:\"post\",apiTarget:\"server\",data:t})}",
+        "apiTarget": "server",
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/sms/ucheck",
+      "role": "verify SMS",
+      "feature_parameters": {
+        "body": {
+          "username": "RSA(cloud key,trim(username))",
+          "key_id": "cloudPubKeyId",
+          "nasid": "NAS sign",
+          "sms_code": "code"
+        }
+      },
+      "target": "https://api.zenithspace.net",
+      "response_fields_used": [
+        "sms_proof"
+      ],
+      "branch": "verification",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 392412,
+        "wrapper_offset": 392379,
+        "export_names": [
+          "Zs"
+        ],
+        "excerpt": "function A(t){return(0,a.Z)({url:\"/sms/ucheck\",method:\"post\",apiTarget:\"server\",data:t})}",
+        "excerpt_offset": 392379,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 13439,
+          "module_id": "18020",
+          "caller_method": null,
+          "expression": "(0,r.Zs)({username:e,key_id:this.cloudPubKeyId,nasid:this.sign,sms_code:this.smsCode})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 38575,
+          "module_id": "18020",
+          "caller_method": null,
+          "expression": "(0,r.Zs)({username:s,key_id:this.cloudPubKeyId,nasid:this.sign,sms_code:this.smsCode})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 41241,
+          "module_id": "18020",
+          "caller_method": null,
+          "expression": "(0,r.Zs)({username:e,key_id:this.cloudPubKeyId,nasid:this.sign,sms_code:this.smsCode})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/9872.3987cd3c.js",
+          "offset": 2625,
+          "module_id": "27331",
+          "caller_method": null,
+          "expression": "(0,n.Zs)({username:e,key_id:this.cloudPubKeyId,nasid:this.sign,sms_code:this.smsCode})",
+          "source_verified": true
+        }
+      ],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 424671,
+        "excerpt_offset": 424638,
+        "excerpt": "function w(t){return(0,a.Z)({url:\"/sms/ucheck\",method:\"post\",apiTarget:\"server\",data:t})}",
+        "apiTarget": "server",
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v2/email/send",
+      "role": "send email challenge",
+      "feature_parameters": {
+        "body": {
+          "email": "RSA(cloud key,trim(email))",
+          "key_id": "cloudPubKeyId",
+          "nasid": "remoteSign || NAS sign",
+          "type": "optional",
+          "by": "optional"
+        }
+      },
+      "target": "https://api.zenithspace.net",
+      "branch": "verification",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 392501,
+        "wrapper_offset": 392468,
+        "export_names": [
+          "HK"
+        ],
+        "excerpt": "function S(t){return(0,a.Z)({url:\"/v2/email/send\",method:\"post\",apiTarget:\"server\",data:t})}",
+        "excerpt_offset": 392468,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/async/2601.0a1f8b61.js",
+          "offset": 1510,
+          "module_id": "53719",
+          "caller_method": null,
+          "expression": "(0,l.HK)(i)",
+          "source_verified": true
+        }
+      ],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 424760,
+        "excerpt_offset": 424727,
+        "excerpt": "function A(t){return(0,a.Z)({url:\"/v2/email/send\",method:\"post\",apiTarget:\"email\",data:t})}",
+        "apiTarget": "email",
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v2/email/check",
+      "role": "verify email",
+      "feature_parameters": {
+        "body": {
+          "username": "RSA(cloud key,trim(username))",
+          "key_id": "cloudPubKeyId",
+          "nasid": "NAS sign",
+          "email_code": "code"
+        }
+      },
+      "target": "https://api.zenithspace.net",
+      "response_fields_used": [
+        "email_proof"
+      ],
+      "branch": "verification",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 392687,
+        "wrapper_offset": 392654,
+        "export_names": [
+          "Ag"
+        ],
+        "excerpt": "function C(t){return(0,a.Z)({url:\"/v2/email/check\",method:\"post\",apiTarget:\"server\",data:t})}",
+        "excerpt_offset": 392654,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 40581,
+          "module_id": "18020",
+          "caller_method": null,
+          "expression": "(0,r.Ag)({username:e,key_id:this.cloudPubKeyId,nasid:this.sign,email_code:this.smsCode})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/9872.3987cd3c.js",
+          "offset": 1988,
+          "module_id": "27331",
+          "caller_method": null,
+          "expression": "(0,n.Ag)({username:e,key_id:this.cloudPubKeyId,nasid:this.sign,email_code:this.smsCode})",
+          "source_verified": true
+        }
+      ],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 425039,
+        "excerpt_offset": 425006,
+        "excerpt": "function x(t){return(0,a.Z)({url:\"/v2/email/check\",method:\"post\",apiTarget:\"email\",data:t})}",
+        "apiTarget": "email",
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/auth/tmptoken",
+      "role": "password re-verification",
+      "feature_parameters": {
+        "body": {
+          "token": "current token",
+          "password": "RSA(NAS key,trim(password))"
+        }
+      },
+      "target": "cluster/current origin",
+      "branch": "reauthentication",
+      "limitation": "Observed caller only consumes success; not a confirmed token refresh API.",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 393184,
+        "wrapper_offset": 393151,
+        "export_names": [
+          "jY"
+        ],
+        "excerpt": "function T(t){return(0,a.Z)({url:\"/auth/tmptoken\",method:\"post\",data:t})}",
+        "excerpt_offset": 393151,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/async/84046.92eb489e.js",
+          "offset": 63251,
+          "module_id": "64809",
+          "caller_method": null,
+          "expression": "(0,A.jY)({token:this.token,password:e})",
+          "source_verified": true
+        }
+      ],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 425535,
+        "excerpt_offset": 425502,
+        "excerpt": "function T(t){return(0,a.Z)({url:\"/auth/tmptoken\",method:\"post\",data:t})}",
+        "apiTarget": null,
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/auth/token",
+      "role": "restore existing session/user information",
+      "feature_parameters": {
+        "body": {
+          "token": "existing user token"
+        }
+      },
+      "target": "cluster/current origin",
+      "response_fields_used": [
+        "username",
+        "qc_name",
+        "nickname",
+        "authorize",
+        "perm",
+        "avatar",
+        "sp_perms"
+      ],
+      "branch": "session-restore",
+      "limitation": "Caller does not consume a new token; not confirmed refresh semantics.",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 393331,
+        "wrapper_offset": 393298,
+        "export_names": [
+          "a_"
+        ],
+        "excerpt": "function F(t){return(0,a.Z)({url:\"/auth/token\",method:\"post\",data:t})}",
+        "excerpt_offset": 393298,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/index.a785a6de.js",
+          "offset": 1137393,
+          "module_id": "97909",
+          "caller_method": null,
+          "expression": "(0,F.a_)({token:this.token})",
+          "source_verified": true
+        }
+      ],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 425682,
+        "excerpt_offset": 425649,
+        "excerpt": "function z(t){return(0,a.Z)({url:\"/auth/token\",method:\"post\",data:t})}",
+        "apiTarget": null,
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/captcha",
+      "role": "recovery image captcha",
+      "feature_parameters": {
+        "query": {}
+      },
+      "target": "https://api.zenithspace.net",
+      "response_fields_used": [
+        "image",
+        "captcha_id",
+        "code_length",
+        "type"
+      ],
+      "branch": "recovery",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 393401,
+        "wrapper_offset": 393368,
+        "export_names": [
+          "U8"
+        ],
+        "excerpt": "function z(t){return(0,a.Z)({url:\"/captcha\",method:\"get\",apiTarget:\"server\",params:t})}",
+        "excerpt_offset": 393368,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 13736,
+          "module_id": "18020",
+          "caller_method": "getCaptcha",
+          "expression": "(0,r.U8)()",
+          "source_verified": true
+        }
+      ],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 425752,
+        "excerpt_offset": 425719,
+        "excerpt": "function B(t){return(0,a.Z)({url:\"/captcha\",method:\"get\",apiTarget:\"server\",params:t})}",
+        "apiTarget": "server",
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/captcha/check",
+      "role": "verify recovery captcha",
+      "feature_parameters": {
+        "body": {
+          "captcha_id": "captcha identifier",
+          "captcha_code": "entered code",
+          "append": "plain username"
+        }
+      },
+      "target": "https://api.zenithspace.net",
+      "response_fields_used": [
+        "captcha_proof"
+      ],
+      "branch": "recovery",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 393488,
+        "wrapper_offset": 393455,
+        "export_names": [
+          "dI"
+        ],
+        "excerpt": "function B(t){return(0,a.Z)({url:\"/captcha/check\",method:\"post\",apiTarget:\"server\",data:t})}",
+        "excerpt_offset": 393455,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 13950,
+          "module_id": "18020",
+          "caller_method": "checkCaptcha",
+          "expression": "(0,r.dI)({captcha_id:this.captcha_id,captcha_code:this.code,append:this.username})",
+          "source_verified": true
+        }
+      ],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 425839,
+        "excerpt_offset": 425806,
+        "excerpt": "function R(t){return(0,a.Z)({url:\"/captcha/check\",method:\"post\",apiTarget:\"server\",data:t})}",
+        "apiTarget": "server",
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/auth/sexists",
+      "role": "recovery eligibility",
+      "feature_parameters": {
+        "body": {
+          "username": "RSA(NAS key,trim(username))",
+          "captcha_proof": "captcha proof"
+        }
+      },
+      "target": "cluster/current origin",
+      "response_fields_used": [
+        "disable",
+        "repass",
+        "exists"
+      ],
+      "branch": "recovery",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 393682,
+        "wrapper_offset": 393649,
+        "export_names": [
+          "pt"
+        ],
+        "excerpt": "function N(t){return(0,a.Z)({url:\"/auth/sexists\",method:\"post\",data:t})}",
+        "excerpt_offset": 393649,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 14453,
+          "module_id": "18020",
+          "caller_method": "checkUsername",
+          "expression": "(0,r.pt)({username:(0,l.Fd)(e,this.nasPubKey),captcha_proof:this.captcha_proof})",
+          "source_verified": true
+        }
+      ],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 426033,
+        "excerpt_offset": 426000,
+        "excerpt": "function L(t){return(0,a.Z)({url:\"/auth/sexists\",method:\"post\",data:t})}",
+        "apiTarget": null,
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/auth/srepassword",
+      "role": "recover password after proof",
+      "feature_parameters": {
+        "body": {
+          "username": "RSA(NAS key,username)",
+          "password": "RSA(NAS key,trim(newPassword))",
+          "sms_proof": "proof"
+        }
+      },
+      "target": "cluster/current origin",
+      "branch": "recovery",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 393754,
+        "wrapper_offset": 393721,
+        "export_names": [
+          "J$"
+        ],
+        "excerpt": "function Z(t){return(0,a.Z)({url:\"/auth/srepassword\",method:\"post\",data:t})}",
+        "excerpt_offset": 393721,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 11924,
+          "module_id": "18020",
+          "caller_method": "resetPassword",
+          "expression": "(0,r.J$)({username:(0,l.Fd)(this.username,this.nasPubKey),password:e,sms_proof:this.sms_proof})",
+          "source_verified": true
+        }
+      ],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 426105,
+        "excerpt_offset": 426072,
+        "excerpt": "function Z(t){return(0,a.Z)({url:\"/auth/srepassword\",method:\"post\",data:t})}",
+        "apiTarget": null,
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/auth/authcode",
+      "role": "unresolved auth-code declaration",
+      "feature_parameters": null,
+      "target": "cluster/current origin",
+      "branch": "declaration-only",
+      "limitation": "No login-scope call resolved; parameters/server semantics unknown.",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 393976,
+        "wrapper_offset": 393943,
+        "export_names": [
+          "X7"
+        ],
+        "excerpt": "function O(t){return(0,a.Z)({url:\"/auth/authcode\",method:\"post\",data:t})}",
+        "excerpt_offset": 393943,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 426327,
+        "excerpt_offset": 426294,
+        "excerpt": "function U(t){return(0,a.Z)({url:\"/auth/authcode\",method:\"post\",data:t})}",
+        "apiTarget": null,
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v2/vcode/send/by/email",
+      "role": "alternative regional email code send",
+      "feature_parameters": {
+        "body": {
+          "key_id": "cloudPubKeyId",
+          "email": "RSA(cloud key,email)",
+          "uuid": "random UUID",
+          "captcha_code": "entered captcha",
+          "check": "isCheck / 1"
+        }
+      },
+      "target": "https://api.zenithspace.net",
+      "branch": "alternative-region",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 394682,
+        "wrapper_offset": 394649,
+        "export_names": [
+          "qo"
+        ],
+        "excerpt": "function Q(t){return(0,a.Z)({url:\"/v2/vcode/send/by/email\",method:\"post\",apiTarget:\"server\",data:t})}",
+        "excerpt_offset": 394649,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/async/57607.c2a73bb0.js",
+          "offset": 2689,
+          "module_id": "98984",
+          "caller_method": null,
+          "expression": "(0,l.qo)({key_id:this.cloudPubKeyId,email:(0,u.Fd)(this.emailVal,this.cloudPubKey),uuid:this.uuid,captcha_code:this.captchaVal,check:this.isCheck})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/69868.92ddb55d.js",
+          "offset": 5957,
+          "module_id": "69885",
+          "caller_method": null,
+          "expression": "(0,r.qo)({key_id:this.cloudPubKeyId,email:(0,u.Fd)(this.email,this.cloudPubKey),uuid:this.uuid,captcha_code:this.captchaVal,check:1})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/96377.5347ad04.js",
+          "offset": 30212,
+          "module_id": "98984",
+          "caller_method": null,
+          "expression": "(0,l.qo)({key_id:this.cloudPubKeyId,email:(0,u.Fd)(this.emailVal,this.cloudPubKey),uuid:this.uuid,captcha_code:this.captchaVal,check:this.isCheck})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/96377.5347ad04.js",
+          "offset": 33584,
+          "module_id": "80287",
+          "caller_method": null,
+          "expression": "(0,c.qo)({key_id:this.cloudPubKeyId,email:(0,u.Fd)(this.email,this.cloudPubKey),uuid:this.uuid,captcha_code:this.captchaVal,check:1})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/96869.66c599f4.js",
+          "offset": 2266,
+          "module_id": "80287",
+          "caller_method": null,
+          "expression": "(0,r.qo)({key_id:this.cloudPubKeyId,email:(0,d.Fd)(this.email,this.cloudPubKey),uuid:this.uuid,captcha_code:this.captchaVal,check:1})",
+          "source_verified": true
+        }
+      ],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 427033,
+        "excerpt_offset": 427000,
+        "excerpt": "function K(t){return(0,a.Z)({url:\"/v2/vcode/send/by/email\",method:\"post\",apiTarget:\"server\",data:t})}",
+        "apiTarget": "server",
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v2/vcode/login",
+      "role": "alternative regional cloud identity login",
+      "feature_parameters": {
+        "body": {
+          "email": "RSA(cloud key,email)",
+          "vcode": "six-digit code",
+          "device": "client device"
+        }
+      },
+      "target": "https://api.zenithspace.net",
+      "response_fields_used": [
+        "token"
+      ],
+      "branch": "alternative-region",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 394783,
+        "wrapper_offset": 394750,
+        "export_names": [
+          "B3"
+        ],
+        "excerpt": "function K(t){return(0,a.Z)({url:\"/v2/vcode/login\",method:\"post\",apiTarget:\"server\",data:t})}",
+        "excerpt_offset": 394750,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/async/69868.92ddb55d.js",
+          "offset": 784,
+          "module_id": "35790",
+          "caller_method": null,
+          "expression": "(0,r.B3)({email:(0,l.Fd)(this.email,this.cloudPubKey),vcode:this.codeStr,device:this.device})",
+          "source_verified": true
+        }
+      ],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 427134,
+        "excerpt_offset": 427101,
+        "excerpt": "function q(t){return(0,a.Z)({url:\"/v2/vcode/login\",method:\"post\",apiTarget:\"server\",data:t})}",
+        "apiTarget": "server",
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v2/qc/list",
+      "role": "alternative regional device selection",
+      "feature_parameters": {
+        "body": {
+          "token": "cloudToken, overrides standard body user token"
+        }
+      },
+      "target": "https://api.zenithspace.net",
+      "response_fields_used": [
+        "list"
+      ],
+      "branch": "alternative-region",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 394876,
+        "wrapper_offset": 394843,
+        "export_names": [
+          "qr"
+        ],
+        "excerpt": "function q(t){return(0,a.Z)({url:\"/v2/qc/list\",method:\"post\",apiTarget:\"server\",data:t})}",
+        "excerpt_offset": 394843,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/async/20295.bc02e13a.js",
+          "offset": 50724,
+          "module_id": "49076",
+          "caller_method": null,
+          "expression": "(0,d.qr)({token:this.cloudToken})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/6411.779eba77.js",
+          "offset": 753,
+          "module_id": "49076",
+          "caller_method": null,
+          "expression": "(0,d.qr)({token:this.cloudToken})",
+          "source_verified": true
+        }
+      ],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 427227,
+        "excerpt_offset": 427194,
+        "excerpt": "function J(t){return(0,a.Z)({url:\"/v2/qc/list\",method:\"post\",apiTarget:\"server\",data:t})}",
+        "apiTarget": "server",
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/auth/qcv",
+      "role": "alternative regional account linkage proof",
+      "feature_parameters": {
+        "body": "no explicit argument in observed call; not an explicit {} payload"
+      },
+      "target": "cluster/current origin",
+      "response_fields_used": [
+        "qcv"
+      ],
+      "branch": "alternative-region",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 394965,
+        "wrapper_offset": 394932,
+        "export_names": [
+          "n2"
+        ],
+        "excerpt": "function J(t){return(0,a.Z)({url:\"/auth/qcv\",method:\"post\",data:t})}",
+        "excerpt_offset": 394932,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/async/96377.5347ad04.js",
+          "offset": 13248,
+          "module_id": "57361",
+          "caller_method": null,
+          "expression": "(0,l.n2)()",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/index.a785a6de.js",
+          "offset": 1138066,
+          "module_id": "97909",
+          "caller_method": null,
+          "expression": "(0,F.n2)()",
+          "source_verified": true
+        }
+      ],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 427316,
+        "excerpt_offset": 427283,
+        "excerpt": "function X(t){return(0,a.Z)({url:\"/auth/qcv\",method:\"post\",data:t})}",
+        "apiTarget": null,
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v2/qc/create/master",
+      "role": "alternative regional master-account linkage",
+      "feature_parameters": {
+        "body": {
+          "email": "RSA(cloud key,email)",
+          "qcv": "qcv",
+          "vcode": "code",
+          "_lc": "username",
+          "_se": "sendEmail"
+        }
+      },
+      "target": "https://api.zenithspace.net",
+      "branch": "alternative-region",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 395033,
+        "wrapper_offset": 395000,
+        "export_names": [
+          "iJ"
+        ],
+        "excerpt": "function X(t){return(0,a.Z)({url:\"/v2/qc/create/master\",method:\"post\",apiTarget:\"server\",data:t})}",
+        "excerpt_offset": 395000,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/async/96377.5347ad04.js",
+          "offset": 4422,
+          "module_id": "57361",
+          "caller_method": null,
+          "expression": "(0,l.iJ)({email:(0,u.Fd)(this.email,this.cloudPubKey),qcv:this.qcv,vcode:this.codeStr,_lc:this.username,_se:this.sendEmail})",
+          "source_verified": true
+        }
+      ],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 427385,
+        "excerpt_offset": 427351,
+        "excerpt": "function tt(t){return(0,a.Z)({url:\"/v2/qc/create/master\",method:\"post\",apiTarget:\"server\",data:t})}",
+        "apiTarget": "server",
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/ql/code/gen",
+      "role": "generate QR login code",
+      "feature_parameters": {
+        "query": {}
+      },
+      "target": "https://api.zenithspace.net",
+      "response_fields_used": [
+        "bcode"
+      ],
+      "branch": "qr-login",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 395625,
+        "wrapper_offset": 395591,
+        "export_names": [
+          "To"
+        ],
+        "excerpt": "function ti(t){return(0,a.Z)({url:\"/ql/code/gen\",method:\"get\",apiTarget:\"server\",params:t})}",
+        "excerpt_offset": 395591,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/async/24394.d012f864.js",
+          "offset": 772,
+          "module_id": "80056",
+          "caller_method": null,
+          "expression": "(0,u.To)()",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/24394.d012f864.js",
+          "offset": 1166,
+          "module_id": "80056",
+          "caller_method": null,
+          "expression": "(0,u.To)()",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 3717,
+          "module_id": "80056",
+          "caller_method": null,
+          "expression": "(0,l.To)()",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 4111,
+          "module_id": "80056",
+          "caller_method": null,
+          "expression": "(0,l.To)()",
+          "source_verified": true
+        }
+      ],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 427977,
+        "excerpt_offset": 427943,
+        "excerpt": "function tn(t){return(0,a.Z)({url:\"/ql/code/gen\",method:\"get\",apiTarget:\"server\",params:t})}",
+        "apiTarget": "server",
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/ql/code/read",
+      "role": "poll QR scan",
+      "feature_parameters": {
+        "body": {
+          "bcode": "generated QR code"
+        }
+      },
+      "target": "https://api.zenithspace.net",
+      "response_fields_used": [
+        "nasid",
+        "qltk"
+      ],
+      "branch": "qr-login",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 395717,
+        "wrapper_offset": 395683,
+        "export_names": [
+          "kh"
+        ],
+        "excerpt": "function tn(t){return(0,a.Z)({url:\"/ql/code/read\",method:\"post\",apiTarget:\"server\",data:t})}",
+        "excerpt_offset": 395683,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/async/24394.d012f864.js",
+          "offset": 1645,
+          "module_id": "80056",
+          "caller_method": null,
+          "expression": "(0,u.kh)({bcode:this.bcode})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 4590,
+          "module_id": "80056",
+          "caller_method": null,
+          "expression": "(0,l.kh)({bcode:this.bcode})",
+          "source_verified": true
+        }
+      ],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 428069,
+        "excerpt_offset": 428035,
+        "excerpt": "function tr(t){return(0,a.Z)({url:\"/ql/code/read\",method:\"post\",apiTarget:\"server\",data:t})}",
+        "apiTarget": "server",
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/account/loginbyqltk",
+      "role": "exchange QR login token",
+      "feature_parameters": {
+        "body": {
+          "qltk": "from code/read"
+        }
+      },
+      "target": "cluster/current origin; not explicit server target",
+      "response_fields_used": [
+        "token",
+        "username",
+        "qc_name",
+        "nickname",
+        "avatar"
+      ],
+      "branch": "qr-login",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 395809,
+        "wrapper_offset": 395775,
+        "export_names": [
+          "TB"
+        ],
+        "excerpt": "function tr(t){return(0,a.Z)({url:\"/account/loginbyqltk\",method:\"post\",data:t})}",
+        "excerpt_offset": 395775,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/async/24394.d012f864.js",
+          "offset": 1815,
+          "module_id": "80056",
+          "caller_method": null,
+          "expression": "(0,u.TB)({qltk:s.qltk})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 4760,
+          "module_id": "80056",
+          "caller_method": null,
+          "expression": "(0,l.TB)({qltk:s.qltk})",
+          "source_verified": true
+        }
+      ],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 428161,
+        "excerpt_offset": 428127,
+        "excerpt": "function tc(t){return(0,a.Z)({url:\"/account/loginbyqltk\",method:\"post\",data:t})}",
+        "apiTarget": null,
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/reset/ok",
+      "role": "check physical-reset state",
+      "feature_parameters": {
+        "body": {}
+      },
+      "target": "cluster/current origin",
+      "response_fields_used": [
+        "reseting"
+      ],
+      "branch": "recovery",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 395984,
+        "wrapper_offset": 395950,
+        "export_names": [
+          "KJ"
+        ],
+        "excerpt": "function tl(t){return(0,a.Z)({url:\"/reset/ok\",method:\"post\",data:t})}",
+        "excerpt_offset": 395950,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/async/20295.bc02e13a.js",
+          "offset": 5075,
+          "module_id": "43118",
+          "caller_method": null,
+          "expression": "(0,c.KJ)({})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 9525,
+          "module_id": "18020",
+          "caller_method": null,
+          "expression": "(0,r.KJ)({})",
+          "source_verified": true
+        }
+      ],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 428336,
+        "excerpt_offset": 428302,
+        "excerpt": "function td(t){return(0,a.Z)({url:\"/reset/ok\",method:\"post\",data:t})}",
+        "apiTarget": null,
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/auth/repassword",
+      "role": "reset admin password",
+      "feature_parameters": {
+        "body": {
+          "username": "RSA(NAS key,username)",
+          "password": "RSA(NAS key,trim(newPassword))",
+          "sms_proof": "proof, possibly empty/undefined in physical-reset path"
+        }
+      },
+      "target": "cluster/current origin",
+      "branch": "recovery",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 396053,
+        "wrapper_offset": 396019,
+        "export_names": [
+          "m"
+        ],
+        "excerpt": "function td(t){return(0,a.Z)({url:\"/auth/repassword\",method:\"post\",data:t})}",
+        "excerpt_offset": 396019,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/async/20295.bc02e13a.js",
+          "offset": 5329,
+          "module_id": "43118",
+          "caller_method": null,
+          "expression": "(0,c.m)({username:(0,d.Fd)(this.username,this.nasPubKey),password:_,sms_proof:this.sms_proof})",
+          "source_verified": true
+        },
+        {
+          "file": "home/static/js/async/62931.614afdfb.js",
+          "offset": 9779,
+          "module_id": "18020",
+          "caller_method": null,
+          "expression": "(0,r.m)({username:(0,l.Fd)(this.username,this.nasPubKey),password:e,sms_proof:this.sms_proof})",
+          "source_verified": true
+        }
+      ],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 428405,
+        "excerpt_offset": 428371,
+        "excerpt": "function tu(t){return(0,a.Z)({url:\"/auth/repassword\",method:\"post\",data:t})}",
+        "apiTarget": null,
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/auth/regist",
+      "role": "alternative regional NAS admin bootstrap",
+      "feature_parameters": {
+        "body": {
+          "username": "RSA(NAS key,username)",
+          "password": "RSA(NAS key,password)"
+        }
+      },
+      "target": "cluster/current origin",
+      "branch": "alternative-region",
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "41718",
+        "offset": 396236,
+        "wrapper_offset": 396203,
+        "export_names": [],
+        "excerpt": "function t(t){return(0,a.Z)({url:\"/auth/regist\",method:\"post\",data:t})}",
+        "excerpt_offset": 396203,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/async/96377.5347ad04.js",
+          "offset": 12878,
+          "module_id": "57361",
+          "caller_method": null,
+          "expression": "l.ZP.register(i)",
+          "source_verified": true
+        }
+      ],
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 428588,
+        "excerpt_offset": 428555,
+        "excerpt": "function t(t){return(0,a.Z)({url:\"/auth/regist\",method:\"post\",data:t})}",
+        "apiTarget": null,
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/auth/oauth2/authorize",
+      "role": "OAuth authorization after credential login",
+      "branch": "oauth-login",
+      "target": "cluster/current origin",
+      "feature_parameters": {
+        "body": {
+          "os": "oauthParams.os",
+          "source": "oauthParams.source",
+          "redirectUrl": "oauthParams.redirectUrl"
+        }
+      },
+      "response_fields_used": [
+        "access_token",
+        "expires_in"
+      ],
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "module_id": "52324",
+        "offset": 379982,
+        "excerpt": "function t(t){return(0,a.Z)({url:\"/auth/oauth2/authorize\",method:\"post\",data:t})}",
+        "excerpt_offset": 379949,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "call_evidence": [
+        {
+          "file": "home/static/js/async/9872.3987cd3c.js",
+          "offset": 5344,
+          "expression": "m.ZP.oauthAuthorize({os:b,source:C,redirectUrl:k})",
+          "source_verified": true
+        }
+      ],
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "52324",
+        "offset": 412216,
+        "excerpt_offset": 412183,
+        "excerpt": "function t(t){return(0,a.Z)({url:\"/auth/oauth2/authorize\",method:\"post\",data:t})}",
+        "apiTarget": null,
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/zconn/http/5055/{nasid}/key/pub",
+      "role": "remote NAS key",
+      "branch": "remote-NAS-wrapper",
+      "target": "cluster/current origin",
+      "feature_parameters": {
+        "path": {
+          "nasid": "t"
+        },
+        "query": {
+          "signme": 1
+        }
+      },
+      "excerpt_length": 240,
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "offset": 391243,
+        "excerpt": "url:\"/zconn/http/5055/\".concat(t,\"/key/pub\"),method:\"get\",params:{signme:1},timeout:e})}function d(t,e){return t.forRemoteNas=!0,t.headers={rtoken:e.token,rdeviceid:e.device_id,rdevice:e.device,ruser:",
+        "excerpt_offset": 391243,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "offset": 423502,
+        "excerpt_offset": 423502,
+        "excerpt": "url:\"/zconn/http/5055/\".concat(t,\"/key/pub\"),method:\"get\",params:{signme:1},timeout:e})}function d(t,e){return t.forRemoteNas=!0,t.headers={rtoken:e.token,rdeviceid:e.device_id,rdevice:e.device,ruser:e.username},t}function u(t,e,s){return(0",
+        "comparison": "same computed URL pattern in NAS source; no runtime confirmation",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/zconn/http/5055/{nasid}/auth/login",
+      "role": "remote NAS credential login",
+      "branch": "remote-NAS-wrapper",
+      "target": "cluster/current origin",
+      "feature_parameters": {
+        "path": {
+          "nasid": "t"
+        },
+        "body": "e (caller-provided, not resolved in selected login route)",
+        "headers": {
+          "rtoken": "s.token",
+          "rdeviceid": "s.device_id",
+          "rdevice": "s.device",
+          "ruser": "s.username"
+        }
+      },
+      "forRemoteNas": true,
+      "envelope": "Skip common metadata and body token/nasid injection; still form serialization plus rnd/webagent.",
+      "excerpt_length": 125,
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "offset": 391492,
+        "excerpt": "url:\"/zconn/http/5055/\".concat(t,\"/auth/login\"),method:\"post\",data:e},s))}function m(t){return(0,a.Z)({url:\"/quick/nasid\",method:\"post\",apiTarget:\"server\",data:t})}function p(t){return(0,a.Z)({url:\"/a",
+        "excerpt_offset": 391492,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "offset": 423751,
+        "excerpt_offset": 423751,
+        "excerpt": "url:\"/zconn/http/5055/\".concat(t,\"/auth/login\"),method:\"post\",data:e},s))}function m(t){return(0,a.Z)({url:\"/quick/nasid\",method:\"post\",apiTarget:\"server\",data:t})}function p(t){return(0,a.Z)({url:\"/auth/modremark\",method:\"post\",data:t})}fu",
+        "comparison": "same computed URL pattern in NAS source; no runtime confirmation",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v2/captcha/{uuid}",
+      "role": "alternative email-flow captcha",
+      "branch": "alternative-region",
+      "target": "https://api.zenithspace.net",
+      "feature_parameters": {
+        "path": {
+          "uuid": "random UUID"
+        },
+        "query": {}
+      },
+      "excerpt_length": 125,
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "offset": 393576,
+        "excerpt": "url:\"/v2/captcha/\".concat(t),method:\"get\",apiTarget:\"server\",params:{}})}function N(t){return(0,a.Z)({url:\"/auth/sexists\",method:\"post\",data:t})}function Z(t){return(0,a.Z)({url:\"/auth/srepassword\",me",
+        "excerpt_offset": 393576,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "offset": 425927,
+        "excerpt_offset": 425927,
+        "excerpt": "url:\"/v2/captcha/\".concat(t),method:\"get\",apiTarget:\"server\",params:{}})}function L(t){return(0,a.Z)({url:\"/auth/sexists\",method:\"post\",data:t})}function Z(t){return(0,a.Z)({url:\"/auth/srepassword\",method:\"post\",data:t})}function j(t){retur",
+        "comparison": "same computed URL pattern in NAS source; no runtime confirmation",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v2/ud/key/pub",
+      "role": "conditional v2 cloud key wrapper",
+      "branch": "alternative-region",
+      "target": "apiTarget argument; path is /v2/ud/key/pub only when Tj=true; supplied build Tj=false chooses /key/pub",
+      "feature_parameters": {
+        "query": {
+          "signme": 1
+        }
+      },
+      "excerpt_length": 310,
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "offset": 391057,
+        "excerpt": "url:o.Tj?\"/v2/ud/key/pub\":\"/key/pub\",method:\"get\",apiTarget:t,params:{signme:1},timeout:e})}function l(t){var e=arguments.length>1&&void 0!==arguments[1]?arguments[1]:3e4;return(0,a.Z)({url:\"/zconn/ht",
+        "excerpt_offset": 391057,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 423325,
+        "excerpt_offset": 423160,
+        "excerpt": "function c(){var t=arguments.length>0&&void 0!==arguments[0]?arguments[0]:\"nas\",e=arguments.length>1&&void 0!==arguments[1]?arguments[1]:3e4;return(0,a.Z)({url:o.Tj?\"/v2/ud/key/pub\":\"/key/pub\",method:\"get\",apiTarget:t,params:{signme:1},timeout:e})}",
+        "apiTarget": null,
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v2/ud/key/pub",
+      "role": "regional agreement API",
+      "branch": "alternative-region-agreement",
+      "target": "VUE_APP_ZLINK_BASE_API + path; configured host unresolved",
+      "feature_parameters": {
+        "query": {}
+      },
+      "excerpt_length": 140,
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "offset": 1383331,
+        "excerpt": "url:d+\"/v2/ud/key/pub\",method:\"get\",apiTarget:\"direct\"})}function f(t){return(0,l.Z)({url:d+\"/v2/ud/agree\",method:\"post\",data:t,apiTarget:\"direct\"})}function _(t){return(0,l.Z)({url:d+\"/v2/ud/expire\",",
+        "excerpt_offset": 1383331,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "offset": 1428460,
+        "excerpt_offset": 1428460,
+        "excerpt": "url:d+\"/v2/ud/key/pub\",method:\"get\",apiTarget:\"direct\"})}function f(t){return(0,l.Z)({url:d+\"/v2/ud/agree\",method:\"post\",data:t,apiTarget:\"direct\"})}function _(t){return(0,l.Z)({url:d+\"/v2/ud/expire\",method:\"post\",data:t,apiTarget:\"direct\"}",
+        "comparison": "same computed URL pattern in NAS source; no runtime confirmation",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v2/ud/agree",
+      "role": "regional agreement API",
+      "branch": "alternative-region-agreement",
+      "target": "VUE_APP_ZLINK_BASE_API + path; configured host unresolved",
+      "feature_parameters": {
+        "body": {
+          "uuid": "random UUID",
+          "rid": "RSA(qc public key,SHA256(uuid+random+timestamp) hex)",
+          "key_id": "qcPubKeyId"
+        }
+      },
+      "excerpt_length": 140,
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "offset": 1383417,
+        "excerpt": "url:d+\"/v2/ud/agree\",method:\"post\",data:t,apiTarget:\"direct\"})}function _(t){return(0,l.Z)({url:d+\"/v2/ud/expire\",method:\"post\",data:t,apiTarget:\"direct\"})}function v(t){return(0,l.Z)({url:d+\"/v2/ud/c",
+        "excerpt_offset": 1383417,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "offset": 1428546,
+        "excerpt_offset": 1428546,
+        "excerpt": "url:d+\"/v2/ud/agree\",method:\"post\",data:t,apiTarget:\"direct\"})}function _(t){return(0,l.Z)({url:d+\"/v2/ud/expire\",method:\"post\",data:t,apiTarget:\"direct\"})}function v(t){return(0,l.Z)({url:d+\"/v2/ud/check\",method:\"post\",data:t,apiTarget:\"di",
+        "comparison": "same computed URL pattern in NAS source; no runtime confirmation",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v2/ud/expire",
+      "role": "regional agreement API",
+      "branch": "alternative-region-agreement",
+      "target": "VUE_APP_ZLINK_BASE_API + path; configured host unresolved",
+      "feature_parameters": {
+        "body": {
+          "nasid": "NAS sign",
+          "uuid": "agreement uuid",
+          "expire": "AES-CBC duration string"
+        }
+      },
+      "excerpt_length": 140,
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "offset": 1383509,
+        "excerpt": "url:d+\"/v2/ud/expire\",method:\"post\",data:t,apiTarget:\"direct\"})}function v(t){return(0,l.Z)({url:d+\"/v2/ud/check\",method:\"post\",data:t,apiTarget:\"direct\"})}var b=s(55835),k=s(39632),y=s(73920),A=s(649",
+        "excerpt_offset": 1383509,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "offset": 1428638,
+        "excerpt_offset": 1428638,
+        "excerpt": "url:d+\"/v2/ud/expire\",method:\"post\",data:t,apiTarget:\"direct\"})}function v(t){return(0,l.Z)({url:d+\"/v2/ud/check\",method:\"post\",data:t,apiTarget:\"direct\"})}var b=s(55835),y=s(39632),k=s(73920),w=s(64945).Buffer,A=\"QcInfo\",S=\"QcShare\",C=\"qcE",
+        "comparison": "same computed URL pattern in NAS source; no runtime confirmation",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v2/ud/check",
+      "role": "regional agreement API",
+      "branch": "alternative-region-agreement",
+      "target": "VUE_APP_ZLINK_BASE_API + path; configured host unresolved",
+      "feature_parameters": {
+        "body": {
+          "plain": "plaintext",
+          "cipher": "AES-CBC ciphertext",
+          "uuid": "agreement uuid"
+        }
+      },
+      "excerpt_length": 140,
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "offset": 1383602,
+        "excerpt": "url:d+\"/v2/ud/check\",method:\"post\",data:t,apiTarget:\"direct\"})}var b=s(55835),k=s(39632),y=s(73920),A=s(64945).Buffer,S=\"QcInfo\",w=\"QcShare\",C=\"qcExpireTime\",x=function(){return{UUID:\"\",expireTime:0,a",
+        "excerpt_offset": 1383602,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "verification": "static source only; no network or target execution",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "offset": 1428731,
+        "excerpt_offset": 1428731,
+        "excerpt": "url:d+\"/v2/ud/check\",method:\"post\",data:t,apiTarget:\"direct\"})}var b=s(55835),y=s(39632),k=s(73920),w=s(64945).Buffer,A=\"QcInfo\",S=\"QcShare\",C=\"qcExpireTime\",x=function(){return{UUID:\"\",expireTime:0,aesKey:null,aesIv:null,timeLeft:-1}},D=fu",
+        "comparison": "same computed URL pattern in NAS source; no runtime confirmation",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/tracker/query",
+      "target": "https://proxy.zenithspace.net",
+      "role": "NAS LAN-address discovery",
+      "branch": "default-cloud-login",
+      "feature_parameters": {
+        "query": {
+          "platform": "nas",
+          "zrp": "v2"
+        },
+        "headers": {
+          "id": "discovered nasid"
+        }
+      },
+      "definition": {
+        "file": "home/static/js/async/62931.614afdfb.js",
+        "offset": 43864,
+        "excerpt": "v=\"https://\".concat(\"proxy.zenithspace.net\",\"/tracker/query?platform=nas&zrp=v2\"),[4,d.ZP.rawAjax(v,\"get\",{},{id:_.data.nasid})];case 4:return(f=n.sent()).success&&(b=f.data.local_",
+        "excerpt_offset": 43864,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "parameter_position_evidence": {
+        "file": "home/static/js/index.a785a6de.js",
+        "offset": 363828,
+        "note": "rawAjax fourth argument supplies headers, not query params"
+      },
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/async/44036.022029bd.js",
+        "offset": 50243,
+        "excerpt_offset": 50243,
+        "excerpt": "v=\"https://\".concat(\"proxy.zenithspace.net\",\"/tracker/query?platform=nas&zrp=v2\"),[4,d.ZP.rawAjax(v,\"get\",{},{id:_.data.nasid})];case 4:return(f=r.sent()).success&&(w=f.data.local_addrs||\"\")&&this.$store.dispatch(\"nas/setNasIp\",w.split(\";\")",
+        "comparison": "same computed URL pattern in NAS source; no runtime confirmation",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v2/getcluster",
+      "target": "https://zrpl-ucloud.zenithspace.net",
+      "role": "NAS cluster discovery",
+      "branch": "default-cloud-login",
+      "feature_parameters": {
+        "query": {
+          "action": "login"
+        },
+        "headers": {
+          "id": "discovered nasid"
+        }
+      },
+      "definition": {
+        "file": "home/static/js/async/62931.614afdfb.js",
+        "offset": 44194,
+        "excerpt": "x=\"https://\".concat(\"zrpl-ucloud.zenithspace.net\",\"/v2/getcluster?action=login\"),[4,d.ZP.rawAjax(x,\"get\",{},{id:_.data.nasid})];case 5:return(S=n.sent()).success?(this.$store.",
+        "excerpt_offset": 44194,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "cache": "localStorage.clusters[md5(nasid).slice(0,8)]",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/async/44036.022029bd.js",
+        "offset": 50573,
+        "excerpt_offset": 50573,
+        "excerpt": "x=\"https://\".concat(\"zrpl-ucloud.zenithspace.net\",\"/v2/getcluster?action=login\"),[4,d.ZP.rawAjax(x,\"get\",{},{id:_.data.nasid})];case 5:return(S=r.sent()).success?(this.$store.dispatch(\"app/setClusterHost\",S.data),k[y]=S.data,localStorage.se",
+        "comparison": "same computed URL pattern in NAS source; no runtime confirmation",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/system/polling2",
+      "role": "post-login NAS state",
+      "branch": "default-login",
+      "target": "cluster/current origin",
+      "feature_parameters": {
+        "body": "undefined in observed no-argument login systemPoll() call; do not assume {}"
+      },
+      "timeout_ms": 5000,
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "offset": 364300,
+        "excerpt": "function u(t){return(0,a.Z)({url:\"/system/polling2\",method:\"post\",data:t,timeout:5e3})}",
+        "excerpt_offset": 364267,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "52324",
+        "offset": 396534,
+        "excerpt_offset": 396501,
+        "excerpt": "function u(t){return(0,a.Z)({url:\"/system/polling2\",method:\"post\",data:t,timeout:5e3})}",
+        "apiTarget": null,
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/zhelper/state",
+      "role": "session bootstrap NAS identity",
+      "branch": "session-restore",
+      "target": "cluster/current origin",
+      "feature_parameters": null,
+      "definition": {
+        "file": "home/static/js/index.a785a6de.js",
+        "offset": 351685,
+        "excerpt": "function m(t){return(0,n.Z)({url:\"/zhelper/state\",method:\"get\",params:t})}",
+        "excerpt_offset": 351652,
+        "offset_semantics": "URL expression/literal start for indexed wrappers; use excerpt_offset for excerpt text start"
+      },
+      "limitation": "Called via ta.Fv during session bootstrap; no additional feature fields established.",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "74168",
+        "offset": 383919,
+        "excerpt_offset": 383886,
+        "excerpt": "function m(t){return(0,n.Z)({url:\"/zhelper/state\",method:\"get\",params:t})}",
+        "apiTarget": null,
+        "comparison": "same method/path declaration in NAS source; parameters remain bounded to the inspected call chain",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v2/email/send/msg",
+      "role": "NAS-only additional email send declaration",
+      "branch": "nas-declaration-only",
+      "source_scope": "nas-only",
+      "target": "https://api.zenithspace.net via NAS apiTarget=email",
+      "feature_parameters": null,
+      "limitation": "Wrapper forwards data:t; no call resolved in bounded login follow-up. Do not copy feature fields from /v2/email/send automatically.",
+      "nasSource": {
+        "root": "work/zspace-nas-web",
+        "file": "home/static/js/index.3608137b.js",
+        "module_id": "41718",
+        "offset": 424851,
+        "excerpt_offset": 424818,
+        "excerpt": "function S(t){return(0,a.Z)({url:\"/v2/email/send/msg\",method:\"post\",apiTarget:\"email\",data:t})}",
+        "apiTarget": "email",
+        "source_manifest": "outputs/nas-source-manifest.json",
+        "source_snapshot_root": "outputs/nas-source-snapshot"
+      },
+      "verification": "static declaration only; no network or target execution"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "R01",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 80970,
+      "end_exclusive": 82620
+    },
+    {
+      "id": "R02",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 397973,
+      "end_exclusive": 398203
+    },
+    {
+      "id": "R03",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 1141221,
+      "end_exclusive": 1141371
+    },
+    {
+      "id": "H01",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 1389695,
+      "end_exclusive": 1390195
+    },
+    {
+      "id": "H02",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 1390049,
+      "end_exclusive": 1390404
+    },
+    {
+      "id": "H03",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 1390257,
+      "end_exclusive": 1391057
+    },
+    {
+      "id": "H04",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 1390934,
+      "end_exclusive": 1391474
+    },
+    {
+      "id": "H05",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 1391397,
+      "end_exclusive": 1391877
+    },
+    {
+      "id": "H06",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 1393373,
+      "end_exclusive": 1394073
+    },
+    {
+      "id": "H07",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 1397167,
+      "end_exclusive": 1398167
+    },
+    {
+      "id": "H08",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 363828,
+      "end_exclusive": 364313
+    },
+    {
+      "id": "H09",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 364141,
+      "end_exclusive": 364301
+    },
+    {
+      "id": "C01",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 1313590,
+      "end_exclusive": 1313920
+    },
+    {
+      "id": "C02",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 1334187,
+      "end_exclusive": 1334262
+    },
+    {
+      "id": "C03",
+      "file": "home/static/js/34693.faa26133.js",
+      "offset": 3642967,
+      "end_exclusive": 3643437
+    },
+    {
+      "id": "C04",
+      "file": "home/static/js/34693.faa26133.js",
+      "offset": 3666299,
+      "end_exclusive": 3666389
+    },
+    {
+      "id": "C05",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 1314838,
+      "end_exclusive": 1314983
+    },
+    {
+      "id": "C06",
+      "file": "home/static/js/34693.faa26133.js",
+      "offset": 3602019,
+      "end_exclusive": 3602319
+    },
+    {
+      "id": "F01",
+      "file": "home/static/js/async/62931.614afdfb.js",
+      "offset": 42757,
+      "end_exclusive": 45457
+    },
+    {
+      "id": "F02",
+      "file": "home/static/js/async/62931.614afdfb.js",
+      "offset": 45405,
+      "end_exclusive": 45945
+    },
+    {
+      "id": "F03",
+      "file": "home/static/js/async/62931.614afdfb.js",
+      "offset": 45897,
+      "end_exclusive": 46997
+    },
+    {
+      "id": "F04",
+      "file": "home/static/js/async/62931.614afdfb.js",
+      "offset": 47050,
+      "end_exclusive": 48170
+    },
+    {
+      "id": "F05",
+      "file": "home/static/js/async/62931.614afdfb.js",
+      "offset": 42147,
+      "end_exclusive": 42437
+    },
+    {
+      "id": "F06",
+      "file": "home/static/js/async/62931.614afdfb.js",
+      "offset": 33195,
+      "end_exclusive": 33635
+    },
+    {
+      "id": "F07",
+      "file": "home/static/js/async/62931.614afdfb.js",
+      "offset": 49039,
+      "end_exclusive": 49659
+    },
+    {
+      "id": "S01",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 1304982,
+      "end_exclusive": 1305962
+    },
+    {
+      "id": "S02",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 1323768,
+      "end_exclusive": 1324378
+    },
+    {
+      "id": "S03",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 1284022,
+      "end_exclusive": 1284202
+    },
+    {
+      "id": "S04",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 1137380,
+      "end_exclusive": 1138230
+    },
+    {
+      "id": "S05",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 1208191,
+      "end_exclusive": 1208931
+    },
+    {
+      "id": "Q01",
+      "file": "home/static/js/async/24394.d012f864.js",
+      "offset": 1441,
+      "end_exclusive": 2491
+    },
+    {
+      "id": "Q02",
+      "file": "home/static/js/async/24394.d012f864.js",
+      "offset": 2478,
+      "end_exclusive": 3828
+    },
+    {
+      "id": "L01",
+      "file": "home/static/js/async/66837.eacee639.js",
+      "offset": 6004,
+      "end_exclusive": 6734
+    },
+    {
+      "id": "L02",
+      "file": "home/static/js/async/66837.eacee639.js",
+      "offset": 6762,
+      "end_exclusive": 7262
+    },
+    {
+      "id": "L03",
+      "file": "home/static/js/async/66837.eacee639.js",
+      "offset": 5767,
+      "end_exclusive": 6152
+    },
+    {
+      "id": "L04",
+      "file": "home/static/js/async/455.1e31183f.js",
+      "offset": 1378,
+      "end_exclusive": 1948
+    },
+    {
+      "id": "L05",
+      "file": "home/static/js/async/61430.65791410.js",
+      "offset": 4496,
+      "end_exclusive": 5266
+    },
+    {
+      "id": "L06",
+      "file": "home/static/js/async/61430.65791410.js",
+      "offset": 5459,
+      "end_exclusive": 6399
+    },
+    {
+      "id": "O01",
+      "file": "home/static/js/async/9872.3987cd3c.js",
+      "offset": 3100,
+      "end_exclusive": 3440
+    },
+    {
+      "id": "O02",
+      "file": "home/static/js/async/9872.3987cd3c.js",
+      "offset": 5344,
+      "end_exclusive": 5904
+    },
+    {
+      "id": "A01",
+      "file": "home/static/js/async/57607.c2a73bb0.js",
+      "offset": 2686,
+      "end_exclusive": 2996
+    },
+    {
+      "id": "A02",
+      "file": "home/static/js/async/69868.92ddb55d.js",
+      "offset": 781,
+      "end_exclusive": 1231
+    },
+    {
+      "id": "A03",
+      "file": "home/static/js/async/6411.779eba77.js",
+      "offset": 750,
+      "end_exclusive": 1180
+    },
+    {
+      "id": "A04",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 1383103,
+      "end_exclusive": 1383643
+    },
+    {
+      "id": "A05",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 1385900,
+      "end_exclusive": 1387510
+    },
+    {
+      "id": "A06",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 1384291,
+      "end_exclusive": 1384686
+    },
+    {
+      "id": "A07",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 1314009,
+      "end_exclusive": 1315159
+    },
+    {
+      "id": "T01",
+      "file": "home/static/js/async/84046.92eb489e.js",
+      "offset": 63045,
+      "end_exclusive": 63565
+    },
+    {
+      "id": "T02",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 417807,
+      "end_exclusive": 418202
+    },
+    {
+      "id": "V01",
+      "file": "home/static/js/async/2601.0a1f8b61.js",
+      "offset": 1390,
+      "end_exclusive": 1610
+    },
+    {
+      "id": "V02",
+      "file": "home/static/js/async/2601.0a1f8b61.js",
+      "offset": 3719,
+      "end_exclusive": 3939
+    },
+    {
+      "id": "C07",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 1313816,
+      "end_exclusive": 1314116
+    },
+    {
+      "id": "A08",
+      "file": "home/static/js/async/96377.5347ad04.js",
+      "offset": 4419,
+      "end_exclusive": 4709
+    },
+    {
+      "id": "F08",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 1334068,
+      "end_exclusive": 1334223
+    },
+    {
+      "id": "S06",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 1284721,
+      "end_exclusive": 1285076
+    },
+    {
+      "id": "E01",
+      "file": "home/static/js/async/62931.614afdfb.js",
+      "offset": 13703,
+      "end_exclusive": 14463
+    },
+    {
+      "id": "E02",
+      "file": "home/static/js/async/62931.614afdfb.js",
+      "offset": 14775,
+      "end_exclusive": 15675
+    },
+    {
+      "id": "E03",
+      "file": "home/static/js/async/62931.614afdfb.js",
+      "offset": 13113,
+      "end_exclusive": 13773
+    },
+    {
+      "id": "E04",
+      "file": "home/static/js/async/62931.614afdfb.js",
+      "offset": 40952,
+      "end_exclusive": 41652
+    },
+    {
+      "id": "H10",
+      "file": "home/static/js/index.a785a6de.js",
+      "offset": 1392099,
+      "end_exclusive": 1392799
+    }
+  ],
+  "source_identity": [
+    {
+      "file": "home/static/js/index.a785a6de.js",
+      "url": "https://zconnect.cn/home/static/js/index.a785a6de.js",
+      "sha256": "51ac369cb2a4e88d247d5b0636f1417dc36ef8c7d382c6a019f72d197f337373",
+      "manifestMatch": true
+    },
+    {
+      "file": "home/static/js/async/30475.dccf2ee3.js",
+      "url": "https://zconnect.cn/home/static/js/async/30475.dccf2ee3.js",
+      "sha256": "c4b770ccfaf25de4e3f161a8e85473e03f741239c63397e45b835429c5510152",
+      "manifestMatch": true
+    },
+    {
+      "file": "home/static/js/async/61430.65791410.js",
+      "url": "https://zconnect.cn/home/static/js/async/61430.65791410.js",
+      "sha256": "1f31164ec4ea5f35d35125f5f1bd11c887118b9f59d03381767d452400616cb1",
+      "manifestMatch": true
+    },
+    {
+      "file": "home/static/js/async/2601.0a1f8b61.js",
+      "url": "https://zconnect.cn/home/static/js/async/2601.0a1f8b61.js",
+      "sha256": "0464f23d7ab6694c7650bd76be680b52bd836f9c8f86f200d9d42bdc53ffbda2",
+      "manifestMatch": true
+    },
+    {
+      "file": "home/static/js/async/9872.3987cd3c.js",
+      "url": "https://zconnect.cn/home/static/js/async/9872.3987cd3c.js",
+      "sha256": "eed698747840db820fe0d3e8ea4a566ba8a3b07a2c9121263dfc6481f6e4eaf0",
+      "manifestMatch": true
+    },
+    {
+      "file": "home/static/js/async/62035.4ebb067c.js",
+      "url": "https://zconnect.cn/home/static/js/async/62035.4ebb067c.js",
+      "sha256": "7513d39a4206204b6ae2145875268751be29e03e11a49eb04090484bffecda33",
+      "manifestMatch": true
+    },
+    {
+      "file": "home/static/js/async/24394.d012f864.js",
+      "url": "https://zconnect.cn/home/static/js/async/24394.d012f864.js",
+      "sha256": "2e34d96e069813eaac9cc365af1b21f753e945164c1aa8287415044fcaa459ab",
+      "manifestMatch": true
+    },
+    {
+      "file": "home/static/js/async/66837.eacee639.js",
+      "url": "https://zconnect.cn/home/static/js/async/66837.eacee639.js",
+      "sha256": "05f1019aa7862e8a8850cc6dd05913bc0d3eebf3bdab8b7676b63ea3b7f56fe6",
+      "manifestMatch": true
+    },
+    {
+      "file": "home/static/js/async/17468.8292ebba.js",
+      "url": "https://zconnect.cn/home/static/js/async/17468.8292ebba.js",
+      "sha256": "d3e90d540f91b4d625872d6a59cf4e16247eaa06061f5773a30301946ade8f73",
+      "manifestMatch": true
+    },
+    {
+      "file": "home/static/js/async/73005.e5a9d05c.js",
+      "url": "https://zconnect.cn/home/static/js/async/73005.e5a9d05c.js",
+      "sha256": "0ece36612ad123b7adb2a82a298509ddfd84870f752930fec4e38d92f8d3a992",
+      "manifestMatch": true
+    },
+    {
+      "file": "home/static/js/async/77614.5bf291ae.js",
+      "url": "https://zconnect.cn/home/static/js/async/77614.5bf291ae.js",
+      "sha256": "f54b2ec80011526dcf341bcf64525b193c23d6b6578e9c7010496d8a8f3cf2bf",
+      "manifestMatch": true
+    },
+    {
+      "file": "home/static/js/async/93706.0c05e6ac.js",
+      "url": "https://zconnect.cn/home/static/js/async/93706.0c05e6ac.js",
+      "sha256": "e2064126d8d81ad59c6192920826f21ddd955f7301cd2abd50f45fbcc9308029",
+      "manifestMatch": true
+    },
+    {
+      "file": "home/static/js/async/69868.92ddb55d.js",
+      "url": "https://zconnect.cn/home/static/js/async/69868.92ddb55d.js",
+      "sha256": "05d86b46051ca2d13b80fcdf60cf3092393ceddfad3ada02de56de8686aea293",
+      "manifestMatch": true
+    },
+    {
+      "file": "home/static/js/async/6411.779eba77.js",
+      "url": "https://zconnect.cn/home/static/js/async/6411.779eba77.js",
+      "sha256": "0465ed8ee325bbf33e7ae5bb1b109c6378ff781af402e7d6faad3dd0f6561721",
+      "manifestMatch": true
+    },
+    {
+      "file": "home/static/js/async/96869.66c599f4.js",
+      "url": "https://zconnect.cn/home/static/js/async/96869.66c599f4.js",
+      "sha256": "849f6ec66f3b2a64e419c2b838b21fa0bb97f1e073f3da1fd4cce4b72927f82b",
+      "manifestMatch": true
+    },
+    {
+      "file": "home/static/js/async/96377.5347ad04.js",
+      "url": "https://zconnect.cn/home/static/js/async/96377.5347ad04.js",
+      "sha256": "7a3d4f2db1c3e0c68c7be1a5b94dfc40614b31603bc5dcf69453d78a7081398e",
+      "manifestMatch": true
+    },
+    {
+      "file": "home/static/js/async/20295.bc02e13a.js",
+      "url": "https://zconnect.cn/home/static/js/async/20295.bc02e13a.js",
+      "sha256": "d0e562cb106673a48aa66a1f06d72a2a4a02be88b375fd1ec7ee93c9ed6fc539",
+      "manifestMatch": true
+    },
+    {
+      "file": "home/static/js/async/30484.1861c2ed.js",
+      "url": "https://zconnect.cn/home/static/js/async/30484.1861c2ed.js",
+      "sha256": "820bb1acdf0e35556cc11ad16d89170d988745f4320b143740a34bec381c60dd",
+      "manifestMatch": true
+    },
+    {
+      "file": "home/static/js/async/62931.614afdfb.js",
+      "url": "https://zconnect.cn/home/static/js/async/62931.614afdfb.js",
+      "sha256": "642e8307892fbd85158e33a98c89aa30f18adcb97f8c4b23915954ec6fb54b98",
+      "manifestMatch": true
+    },
+    {
+      "file": "home/static/js/async/455.1e31183f.js",
+      "url": "https://zconnect.cn/home/static/js/async/455.1e31183f.js",
+      "sha256": "608138f132dd6384fc781f93a09f538bd1d7a974288347f393f891ada77d1fb9",
+      "manifestMatch": true
+    },
+    {
+      "file": "home/static/js/async/57607.c2a73bb0.js",
+      "url": "https://zconnect.cn/home/static/js/async/57607.c2a73bb0.js",
+      "sha256": "a2644117207c2b7a854f21d4cb22f4342b9f2e2509c1c0ed05a6e178aac66b1b",
+      "manifestMatch": true
+    },
+    {
+      "file": "home/static/js/async/3411.a391f20c.js",
+      "url": "https://zconnect.cn/home/static/js/async/3411.a391f20c.js",
+      "sha256": "d2a8bc58a458683c1d67ff89d9f1dd9b4034c7f5c5ad4a1e44934384666684d4",
+      "manifestMatch": true
+    },
+    {
+      "file": "home/static/js/async/4766.c2f46048.js",
+      "url": "https://zconnect.cn/home/static/js/async/4766.c2f46048.js",
+      "sha256": "c2297976acdf0f059bec5231839e92d16a0017e94032987bac364bfbabe04dcf",
+      "manifestMatch": true
+    },
+    {
+      "file": "home/static/js/34693.faa26133.js",
+      "url": "https://zconnect.cn/home/static/js/34693.faa26133.js",
+      "sha256": "7bd751625d438512e8cbebbf88b0339c553eb6be01ceaf4c4997afc2b302e28b",
+      "manifestMatch": true
+    },
+    {
+      "file": "home/static/js/async/84046.92eb489e.js",
+      "url": "https://zconnect.cn/home/static/js/async/84046.92eb489e.js",
+      "sha256": "47886aa9a25584b58b678ee82fbcd1229961fc1362524545b0968e4ac342242d",
+      "manifestMatch": true
+    }
+  ],
+  "nas_comparison": {
+    "scope": "Bounded follow-up: request helper89904, auth41718, support crypto/token/cookie/flag modules, and login/auth chunks only; media/recycle route counts not used as auth evidence.",
+    "source_page": "http://192.168.5.2:5055/home/",
+    "resolved_ipv4": "192.168.5.2 (supplied by main investigation; no DNS probe here)",
+    "nas_bundle": "home/static/js/index.3608137b.js",
+    "nas_version": "2.3.2026082801",
+    "cloud_bundle": "home/static/js/index.a785a6de.js",
+    "cloud_version": "2.3.2026042401",
+    "matched_existing_api_entries": 40,
+    "nas_only_declaration_entries": 1,
+    "core_parity": [
+      "RSA encrypt/decrypt helper function text identical",
+      "cookie helper39632 and regional flag78296 module text identical",
+      "30s timeout, form serialization, object-data append guard, token/nasid fields, rnd/webagent markers, and cluster/current-origin routing preserved",
+      "normal username/password RSA and optional email_proof-as-sms_proof preserved",
+      "5 checked QR/LAN bridge/entry/shared chunks byte-identical"
+    ],
+    "differences": [
+      {
+        "kind": "email-target",
+        "detail": "NAS apiTarget=email maps to https://api.zenithspace.net; email send/check/modify wrappers use it instead of server; additional /v2/email/send/msg declaration."
+      },
+      {
+        "kind": "token-placeholder",
+        "detail": "NAS user31575 initially assigns FAKE_TOKEN on ports8235/8236; helper89904 clears appended token/zenithtoken when proposed value equals sentinel. Captured5055 origin does not select that port branch; backend authentication semantics unknown."
+      },
+      {
+        "kind": "login-ui",
+        "detail": "NAS default login30975/chunk44036 adds email recovery method selection and response-aware SMS/email send handling; OAuth module68664/chunk58668 retains os/source/redirectUrl authorization parameters."
+      },
+      {
+        "kind": "chunk-identity",
+        "detail": "Main login: cloud18020/62931 -> NAS30975/44036; verification shared2601 ->38702; OAuth27331/9872 ->68664/58668. Chunk IDs/names alone are not semantic identity."
+      }
+    ],
+    "source_manifest": "outputs/nas-source-manifest.json",
+    "source_snapshot_root": "outputs/nas-source-snapshot",
+    "source_identity": [
+      {
+        "path": "home/static/js/index.3608137b.js",
+        "url": "http://192.168.5.2:5055/home/static/js/index.3608137b.js",
+        "bytes": 1542120,
+        "download_file_time_utc": "2026-10-16T04:36:31.386Z",
+        "sha256": "4b52d44771b429b3599372f73636e81c6a86e02f49443b5419123e4827bc50c3",
+        "manifest_verified": true
+      },
+      {
+        "path": "home/static/js/async/44036.022029bd.js",
+        "url": "http://192.168.5.2:5055/home/static/js/async/44036.022029bd.js",
+        "bytes": 87803,
+        "download_file_time_utc": "2026-10-16T04:37:23.521Z",
+        "sha256": "8c87fe811cc1437cbfda71e010b777319c200ac2f8107d2bf7975841526f2438",
+        "manifest_verified": true
+      },
+      {
+        "path": "home/static/js/async/38702.b3f9900b.js",
+        "url": "http://192.168.5.2:5055/home/static/js/async/38702.b3f9900b.js",
+        "bytes": 11443,
+        "download_file_time_utc": "2026-10-16T04:37:23.428Z",
+        "sha256": "8e8e7e9920bb9fcb285ae7c6e481d5da64aa567a4db1b733c5eb4f567e47871a",
+        "manifest_verified": true
+      },
+      {
+        "path": "home/static/js/async/58668.a18d4617.js",
+        "url": "http://192.168.5.2:5055/home/static/js/async/58668.a18d4617.js",
+        "bytes": 14652,
+        "download_file_time_utc": "2026-10-16T04:37:23.427Z",
+        "sha256": "21ca4252a4b40b89f4318a6fd5cdfb80b2765ef6213c0369e92cbde2e3127ae5",
+        "manifest_verified": true
+      },
+      {
+        "path": "home/static/js/async/24394.d012f864.js",
+        "url": "http://192.168.5.2:5055/home/static/js/async/24394.d012f864.js",
+        "bytes": 4374,
+        "download_file_time_utc": "2026-10-16T04:37:23.435Z",
+        "sha256": "2e34d96e069813eaac9cc365af1b21f753e945164c1aa8287415044fcaa459ab",
+        "manifest_verified": true
+      },
+      {
+        "path": "home/static/js/async/66837.eacee639.js",
+        "url": "http://192.168.5.2:5055/home/static/js/async/66837.eacee639.js",
+        "bytes": 9526,
+        "download_file_time_utc": "2026-10-16T04:37:23.450Z",
+        "sha256": "05f1019aa7862e8a8850cc6dd05913bc0d3eebf3bdab8b7676b63ea3b7f56fe6",
+        "manifest_verified": true
+      },
+      {
+        "path": "home/static/js/async/455.1e31183f.js",
+        "url": "http://192.168.5.2:5055/home/static/js/async/455.1e31183f.js",
+        "bytes": 2966,
+        "download_file_time_utc": "2026-10-16T04:37:23.509Z",
+        "sha256": "608138f132dd6384fc781f93a09f538bd1d7a974288347f393f891ada77d1fb9",
+        "manifest_verified": true
+      },
+      {
+        "path": "home/static/js/async/61430.65791410.js",
+        "url": "http://192.168.5.2:5055/home/static/js/async/61430.65791410.js",
+        "bytes": 8186,
+        "download_file_time_utc": "2026-10-16T04:37:23.433Z",
+        "sha256": "1f31164ec4ea5f35d35125f5f1bd11c887118b9f59d03381767d452400616cb1",
+        "manifest_verified": true
+      },
+      {
+        "path": "home/static/js/async/62035.4ebb067c.js",
+        "url": "http://192.168.5.2:5055/home/static/js/async/62035.4ebb067c.js",
+        "bytes": 23757,
+        "download_file_time_utc": "2026-10-16T04:37:23.428Z",
+        "sha256": "7513d39a4206204b6ae2145875268751be29e03e11a49eb04090484bffecda33",
+        "manifest_verified": true
+      }
+    ],
+    "exact_text_comparisons": {
+      "rsa_encrypt_identical": true,
+      "rsa_decrypt_identical": true,
+      "modules": [
+        {
+          "module": "89904",
+          "cloud_file": "home/static/js/index.a785a6de.js",
+          "cloud_offset": 1388551,
+          "cloud_chars": 9452,
+          "nas_file": "home/static/js/index.3608137b.js",
+          "nas_offset": 1433680,
+          "nas_chars": 9549,
+          "text_identical": false
+        },
+        {
+          "module": "41718",
+          "cloud_file": "home/static/js/index.a785a6de.js",
+          "cloud_offset": 389016,
+          "cloud_chars": 7292,
+          "nas_file": "home/static/js/index.3608137b.js",
+          "nas_offset": 421250,
+          "nas_chars": 7425,
+          "text_identical": false
+        },
+        {
+          "module": "73920",
+          "cloud_file": "home/static/js/index.a785a6de.js",
+          "cloud_offset": 1312621,
+          "cloud_chars": 2689,
+          "nas_file": "home/static/js/index.3608137b.js",
+          "nas_offset": 1351953,
+          "nas_chars": 2689,
+          "text_identical": false
+        },
+        {
+          "module": "31575",
+          "cloud_file": "home/static/js/index.a785a6de.js",
+          "cloud_offset": 1304982,
+          "cloud_chars": 2298,
+          "nas_file": "home/static/js/index.3608137b.js",
+          "nas_offset": 1344078,
+          "nas_chars": 2387,
+          "text_identical": false
+        },
+        {
+          "module": "39632",
+          "cloud_file": "home/static/js/index.a785a6de.js",
+          "cloud_offset": 1323768,
+          "cloud_chars": 538,
+          "nas_file": "home/static/js/index.3608137b.js",
+          "nas_offset": 1365913,
+          "nas_chars": 538,
+          "text_identical": true
+        },
+        {
+          "module": "78296",
+          "cloud_file": "home/static/js/index.a785a6de.js",
+          "cloud_offset": 397973,
+          "cloud_chars": 1293,
+          "nas_file": "home/static/js/index.3608137b.js",
+          "nas_offset": 1285169,
+          "nas_chars": 1293,
+          "text_identical": true
+        },
+        {
+          "module": "55202",
+          "cloud_file": "home/static/js/index.a785a6de.js",
+          "cloud_offset": 80970,
+          "cloud_chars": 2086,
+          "nas_file": "home/static/js/index.3608137b.js",
+          "nas_offset": 107986,
+          "nas_chars": 2263,
+          "text_identical": false
+        }
+      ],
+      "shared_chunks": [
+        {
+          "nasFile": "home/static/js/async/24394.d012f864.js",
+          "cloudFile": "home/static/js/async/24394.d012f864.js",
+          "identical": true,
+          "chars": 4374
+        },
+        {
+          "nasFile": "home/static/js/async/66837.eacee639.js",
+          "cloudFile": "home/static/js/async/66837.eacee639.js",
+          "identical": true,
+          "chars": 9526
+        },
+        {
+          "nasFile": "home/static/js/async/455.1e31183f.js",
+          "cloudFile": "home/static/js/async/455.1e31183f.js",
+          "identical": true,
+          "chars": 2966
+        },
+        {
+          "nasFile": "home/static/js/async/61430.65791410.js",
+          "cloudFile": "home/static/js/async/61430.65791410.js",
+          "identical": true,
+          "chars": 8186
+        },
+        {
+          "nasFile": "home/static/js/async/62035.4ebb067c.js",
+          "cloudFile": "home/static/js/async/62035.4ebb067c.js",
+          "identical": true,
+          "chars": 23757
+        }
+      ]
+    },
+    "evidence": [
+      {
+        "id": "N01",
+        "file": "home/static/js/index.3608137b.js",
+        "offset": 1306047,
+        "end_exclusive": 1306102,
+        "excerpt": "version:\"2.3.2026082801\",deviceId:(0,n.Zw)(),videoTypes"
+      },
+      {
+        "id": "N02",
+        "file": "home/static/js/index.3608137b.js",
+        "offset": 1435193,
+        "end_exclusive": 1435643,
+        "excerpt": "v.appendParams=function(t,e){if(\"object\"==(0,o._)(t.data)&&\"put\"!=t.method)for(var s in\"post\"==t.method?(t.data||(t.data={}),a=t.data):(t.params||(t.params={}),a=t.params),e){var a,i=e[s];(\"token\"==s||\"zenithtoken\"==s)&&i===f&&(i=\"\",a[s]=\"\"),void 0===a[s]&&(a[s]=i)}},v.interceptors.request.use(function(t){var e=\"\";if(\"server\"==t.apiTarget||\"email\"==t.apiTarget?e=\"https://api.zenithspace.net\":\"share\"==t.apiTarget?e=\"https://znas.cn\":\"direct\"==t.ap"
+      },
+      {
+        "id": "N03",
+        "file": "home/static/js/index.3608137b.js",
+        "offset": 1435461,
+        "end_exclusive": 1435901,
+        "excerpt": "v.interceptors.request.use(function(t){var e=\"\";if(\"server\"==t.apiTarget||\"email\"==t.apiTarget?e=\"https://api.zenithspace.net\":\"share\"==t.apiTarget?e=\"https://znas.cn\":\"direct\"==t.apiTarget||(l.Z.state.app.clusterHost?(e=\"https://\"+l.Z.state.app.clusterHost,t.withCredentials=!0):e=\"\"),delete t.apiTarget,(-1==t.url.indexOf(\"downloader\")&&(-1==t.url.indexOf(\"transfer\")||/^\\/znetdisk/gi.test(t.url))&&-1==t.url.indexOf(\"/play/\")||/^\\/zmusic"
+      },
+      {
+        "id": "N04",
+        "file": "home/static/js/index.3608137b.js",
+        "offset": 1344240,
+        "end_exclusive": 1344540,
+        "excerpt": "r=\"FAKE_TOKEN\",c=[\"8235\",\"8236\"],l=function(t){var e=o.Z.get(t);return\"0\"==e?\"\":e};e.default={namespaced:!0,state:{token:function(){return c.includes(window.location.port)?r:l(\"zenithtoken\")||l(\"token\")}(),userid:o.Z.get(\"userid\"),username:o.Z.get(\"username\"),qcname:o.Z.get(\"qcname\"),avatar:s(53148)"
+      },
+      {
+        "id": "N05",
+        "file": "home/static/js/index.3608137b.js",
+        "offset": 424727,
+        "end_exclusive": 425107,
+        "excerpt": "function A(t){return(0,a.Z)({url:\"/v2/email/send\",method:\"post\",apiTarget:\"email\",data:t})}function S(t){return(0,a.Z)({url:\"/v2/email/send/msg\",method:\"post\",apiTarget:\"email\",data:t})}function C(t){return(0,a.Z)({url:\"/v2/email/modify\",method:\"post\",apiTarget:\"email\",data:t})}function x(t){return(0,a.Z)({url:\"/v2/email/check\",method:\"post\",apiTarget:\"email\",data:t})}function "
+      },
+      {
+        "id": "N06",
+        "file": "home/static/js/async/44036.022029bd.js",
+        "offset": 51784,
+        "end_exclusive": 52354,
+        "excerpt": "i=(0,l.Fd)(s,this.nasPubKey),N=(0,c.fy)(this.form.props.password),N=(0,l.Fd)(N,this.nasPubKey),T={username:i,password:N},\"tiyan\"===t&&this.genExperUser(T,\"login\"),!this.sms_proof)return[3,12];return[4,(0,n.x4)((0,o._)((0,a._)({},T),{sms_proof:this.sms_proof}))];case 11:case 13:return E=r.sent(),[3,16];case 12:if(!this.email_proof)return[3,14];return[4,(0,n.x4)((0,o._)((0,a._)({},T),{sms_proof:this.email_proof}))];case 14:return[4,(0,n.x4)(T)];case 15:E=r.sent(),r.label=16;case 16:return E.success?(this.$store.dispatch(\"user/setToken\",E.data.token),this.$store.disp"
+      },
+      {
+        "id": "N07",
+        "file": "home/static/js/async/44036.022029bd.js",
+        "offset": 11769,
+        "end_exclusive": 12619,
+        "excerpt": "selectEmailVerification:function(){return(0,i._)(function(){var t;return(0,r.Jh)(this,function(e){switch(e.label){case 0:if(this.button_loading)return[2];if(this.errorMsg=\"\",!this.recoveryEmail)return(0,_.D)({content:'你未填写用于安全验证的邮箱地址，请使用短信验证码进行安全验证。<br/><div style=\"margin-top:8px\"> 登录完成之后你可以到“我的账号”页面进行验证邮箱的设置</div>',confirm:\"知道了\",cancel:null,header:\"邮箱验证码\"}),[2];return this.smsCode=\"\",this.button_loading=!0,[4,(0,n.HK)({email:(0,l.Fd)((0,c.fy)(this.recoveryEmail),this.cloudPubKey),key_id:this.cloudPubKeyId,nasid:this.sign})];case 1:return t=e.sent(),this.button_loading=!1,t.success||200==t.code?this.show=\"checkEmail\":this.errorMsg=t.message,[2]}})}).call(this)},sendPhone:function(t){this.sendPhoneNum=t},getSmsError:function(t){this.errorMsg=t},onSendVoice:function(){var t=this;this.showVoiceTips=!0,window.setTimeout(function(){t.showVoice"
+      },
+      {
+        "id": "N08",
+        "file": "home/static/js/async/38702.b3f9900b.js",
+        "offset": 1578,
+        "end_exclusive": 2728,
+        "excerpt": "sendSms:function(){var e=arguments.length>0&&void 0!==arguments[0]?arguments[0]:\"\";return(0,s._)(function(){var t,n,s,i,o;return(0,c.Jh)(this,function(c){switch(c.label){case 0:return t=(0,a.fy)(this.email),n=(0,r.Fd)(t,this.cloudPubKey),s=this.remoteSign||this.sign,i={email:n,key_id:this.cloudPubKeyId,nasid:s},this.type&&(i.type=this.type),e&&(i.by=e),[4,(0,u.HK)(i)];case 1:if((o=c.sent()).success||200==o.code)return[2,!0];return this.$emit(\"errMsg\",o.message),[2,!1]}})}).call(this)}},mounted:function(){return(0,s._)(function(){return(0,c.Jh)(this,function(e){switch(e.label){case 0:if(this.smsTryTimes=0,this.setFocus(),!(this.second<=0))return[3,3];if(!this.autoSend)return[3,2];return[4,this.sendSms()];case 1:return e.sent()&&this.timer(),[3,3];case 2:this.timer(),e.label=3;case 3:return[2]}})}).call(this)}},d=(0,n(41772).Z)(l,function(){var e=this,t=e._self._c;return t(\"div\",[t(\"div\",{staticClass:\"smsRoot\"},[t(\"el-input\",{ref:\"smsInput\",class:{afterWidth:e.afterWidth>296},attrs:{placeholder:e.$t(\"common_user_verification_code_required\"),type:\"text\"},on:{input:e.send},nativeOn:{keyup:function(t){return!t.type.indexOf(\"key\")&&e._k(t"
+      },
+      {
+        "id": "N09",
+        "file": "home/static/js/async/58668.a18d4617.js",
+        "offset": 6169,
+        "end_exclusive": 6649,
+        "excerpt": "d.ZP.oauthAuthorize({os:b,source:C,redirectUrl:k})];case 9:return 200===(w=r.sent()).code?(V=(P=w.data).access_token,S=P.expires_in,(K=new URL(decodeURIComponent(k))).searchParams.set(\"token\",V),K.searchParams.set(\"expires_in\",S),window.location.href=K.toString()):(this.noticeVisible=!0,this.loginLoading=!1,this.tips=w.message||\"授权失败\"),[3,11];case 10:return $=r.sent(),this.noticeVisible=!0,this.loginLoading=!1,this.tips=$.message||\"授权请求异常\",[3,11];case 11:return[3,13];case 12:"
+      },
+      {
+        "id": "N10",
+        "file": "home/static/js/index.3608137b.js",
+        "offset": 1352922,
+        "end_exclusive": 1353252,
+        "excerpt": "function m(t){var e=arguments.length>1&&void 0!==arguments[1]?arguments[1]:u,s=new i.X;if(s.setPublicKey(e),e!=u)return s.encrypt(t);for(var a=[];t;){var o=t.substr(0,50);a.push(s.encrypt(o)),t=t.substr(50)}return a.join(\"~\")}function p(t){var e=arguments.length>1&&void 0!==arguments[1]?arguments[1]:d,s=new i.X;s.setPrivateKey(e"
+      },
+      {
+        "id": "N11",
+        "file": "home/static/js/index.3608137b.js",
+        "offset": 1365913,
+        "end_exclusive": 1366451,
+        "excerpt": "39632:function(t,e,s){\"use strict\";var a=s(36808),o=s.n(a),i={path:\"/\"},n=!1;window.location.host.toLowerCase().includes(\"zconnect.cn\")&&(n=!0,i.domain=\".\".concat(\"zconnect.cn\")),e.Z={set:function(t,e){var s=arguments.length>2&&void 0!==arguments[2]?arguments[2]:null;\"true\"!=window.localStorage.getItem(\"keepLogin\")||s||(s=360);var a=Object.assign({},i);s&&(a.expires=s),o().set(t,e,a)},remove:function(t){o().remove(t),o().remove(t,i),n&&o().remove(t,{path:\"/\",domain:\"www.\".concat(\"zconnect.cn\")})},get:function(t){return o().get(t)}}}"
+      },
+      {
+        "id": "N12",
+        "file": "home/static/js/async/44036.022029bd.js",
+        "offset": 50243,
+        "end_exclusive": 51003,
+        "excerpt": "v=\"https://\".concat(\"proxy.zenithspace.net\",\"/tracker/query?platform=nas&zrp=v2\"),[4,d.ZP.rawAjax(v,\"get\",{},{id:_.data.nasid})];case 4:return(f=r.sent()).success&&(w=f.data.local_addrs||\"\")&&this.$store.dispatch(\"nas/setNasIp\",w.split(\";\")),y=C()(_.data.nasid).substring(0,8),k=JSON.parse(localStorage.getItem(\"clusters\")||\"{}\"),x=\"https://\".concat(\"zrpl-ucloud.zenithspace.net\",\"/v2/getcluster?action=login\"),[4,d.ZP.rawAjax(x,\"get\",{},{id:_.data.nasid})];case 5:return(S=r.sent()).success?(this.$store.dispatch(\"app/setClusterHost\",S.data),k[y]=S.data,localStorage.setItem(\"clusters\",JSON.stringify(k))):k[y]&&this.$store.dispatch(\"app/setClusterHost\",k[y]),[3,7];case 6:return this.tips=_.message||\"获取设备信息失败，请检查设备联网情况后重试\",this.loginLoading=!1,[2];case 7:re"
+      }
+    ],
+    "verification": "static only; 9 NAS file digests matched supplied manifest; no network, login, target execution or REA session operation"
+  }
+}

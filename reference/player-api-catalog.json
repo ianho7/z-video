@@ -1,0 +1,691 @@
+{
+  "target_version": "2.45.2026082601",
+  "coverage": "Installer-side literal routes and relevant callsites only; NAS-delivered /home/ UI and native-player internal HTTP remain unexamined.",
+  "parameter_policy": "Observed fields only; required/optional status and server-side validation unknown.",
+  "routes": [
+    {
+      "path": "/transcode/decrypt/playaddr",
+      "method": "GET",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "音频播放旧版回退（共用转码服务）",
+      "observed_parameters": "file_path,from,encrypted_path,dest_fmt=OP",
+      "observed_response_fields": "data (audio flow)",
+      "alias": "vt",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4600214,
+        "utf8_offset": 5248915,
+        "wrapper_utf16_offset": 4600145
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/transcode/playaddr",
+      "method": "GET",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "音频播放旧版回退（共用转码服务）",
+      "observed_parameters": "file_path,from,encrypted_path,dest_fmt=OP",
+      "observed_response_fields": "data (audio flow)",
+      "alias": "vt",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4600244,
+        "utf8_offset": 5248945,
+        "wrapper_utf16_offset": 4600145
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/transcode/decrypt/audio/play",
+      "method": "GET",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "shared-audio",
+      "purpose": "音频播放（共用转码服务）",
+      "observed_parameters": "file_path,from,encrypted_path,dest_fmt=OP",
+      "observed_response_fields": "data (audio flow)",
+      "alias": "bt",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4600432,
+        "utf8_offset": 5249133,
+        "wrapper_utf16_offset": 4600363
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/transcode/audio/play",
+      "method": "GET",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "shared-audio",
+      "purpose": "音频播放（共用转码服务）",
+      "observed_parameters": "file_path,from,encrypted_path,dest_fmt=OP",
+      "observed_response_fields": "data (audio flow)",
+      "alias": "bt",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4600464,
+        "utf8_offset": 5249165,
+        "wrapper_utf16_offset": 4600363
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/zvideo/share/updateplaytime",
+      "method": "POST",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "共享播放进度",
+      "observed_parameters": "collection_id,video_id,sec,chapter",
+      "observed_response_fields": "success/code/message",
+      "alias": "qs",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4746383,
+        "utf8_offset": 5396139,
+        "wrapper_utf16_offset": 4746298
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/zvideo/video/updateplaytime",
+      "method": "POST",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "个人播放进度",
+      "observed_parameters": "collection_id,classification_id,video_id,sec,chapter,audio_index,subtitle_index,subtitle_hash,video_duration,subtitle_setting",
+      "observed_response_fields": "success/code/message",
+      "alias": "Hs",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4746672,
+        "utf8_offset": 5396428,
+        "wrapper_utf16_offset": 4746457
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/zvideo/share/v3/info",
+      "method": "POST",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "旧版共享内容详情",
+      "observed_parameters": "collection_id,get_type=all",
+      "observed_response_fields": "data.list[].version_list,data.play_chapter,data.skip",
+      "alias": "Gs",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4746828,
+        "utf8_offset": 5396584,
+        "wrapper_utf16_offset": 4746746
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/zvideo/collection/v2/info",
+      "method": "POST",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "旧版合集内容详情",
+      "observed_parameters": "collection_id,classification_id,get_type=all",
+      "observed_response_fields": "data.list[].version_list,data.play_chapter,data.skip",
+      "alias": "Ws",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4747037,
+        "utf8_offset": 5396793,
+        "wrapper_utf16_offset": 4746955
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/zvideo/share/classification/collection/info",
+      "method": "POST",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "合集详情",
+      "observed_parameters": "collection_id,classification_id,encrypted_path",
+      "observed_response_fields": "data.history,data.skip,data.extend_type,data.title,data.other_title,data.release_year,data.imdb_id,data.tmdbid,data.dbid,data.type",
+      "alias": "Ys",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4747233,
+        "utf8_offset": 5396989,
+        "wrapper_utf16_offset": 4747164
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/zvideo/collection/info",
+      "method": "POST",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "合集详情",
+      "observed_parameters": "collection_id,classification_id,encrypted_path",
+      "observed_response_fields": "data.history,data.skip,data.extend_type,data.title,data.other_title,data.release_year,data.imdb_id,data.tmdbid,data.dbid,data.type",
+      "alias": "Ys",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4747280,
+        "utf8_offset": 5397036,
+        "wrapper_utf16_offset": 4747164
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/zvideo/share/classification/collection/video",
+      "method": "POST",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "合集剧集列表",
+      "observed_parameters": "collection_id,classification_id,get_type=all,encrypted_path",
+      "observed_response_fields": "data.video_list",
+      "alias": "Qs",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4747509,
+        "utf8_offset": 5397265,
+        "wrapper_utf16_offset": 4747440
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/zvideo/collection/video",
+      "method": "POST",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "合集剧集列表",
+      "observed_parameters": "collection_id,classification_id,get_type=all,encrypted_path",
+      "observed_response_fields": "data.video_list",
+      "alias": "Qs",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4747557,
+        "utf8_offset": 5397313,
+        "wrapper_utf16_offset": 4747440
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/transcode/decrypt/subtitle",
+      "method": "GET",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "外部字幕列表",
+      "observed_parameters": "file_path,encrypted_path,from,specify_subtitles(JSON string)",
+      "observed_response_fields": "data[]",
+      "alias": "Ks",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4747792,
+        "utf8_offset": 5397548,
+        "wrapper_utf16_offset": 4747723
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/transcode/subtitle",
+      "method": "GET",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "外部字幕列表",
+      "observed_parameters": "file_path,encrypted_path,from,specify_subtitles(JSON string)",
+      "observed_response_fields": "data[]",
+      "alias": "Ks",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4747822,
+        "utf8_offset": 5397578,
+        "wrapper_utf16_offset": 4747723
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/zvideo/collection/skip",
+      "method": "POST",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "设置跳过片头/片尾",
+      "observed_parameters": "collection_id,previous,start,end,preview,selected=1",
+      "observed_response_fields": "code/message",
+      "alias": "$s",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4748079,
+        "utf8_offset": 5397835,
+        "wrapper_utf16_offset": 4747997
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/zvideo/video/media",
+      "method": "POST",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "视频关联媒体信息",
+      "observed_parameters": "file_path",
+      "observed_response_fields": "data.dbid,data.imdb_id,data.title,data.tmdbid",
+      "alias": "Xs",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4748307,
+        "utf8_offset": 5398063,
+        "wrapper_utf16_offset": 4748225
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/transcode/decrypt/play",
+      "method": "GET",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "新版开始播放/获取播放信息",
+      "observed_parameters": "file_path,play_env,video_codec=hevc,h264,mpeg4,support_format=3,audio_index,subtitle_index,encrypted_path,from,dest_fmt",
+      "observed_response_fields": "data.uri,data.play_format_list,data.current_fmt,data.resolution,data.subtitle_list,data.audio_list,data.audio_index,data.subtitle_index,data.start_time",
+      "alias": "Zs",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4748733,
+        "utf8_offset": 5398489,
+        "wrapper_utf16_offset": 4748664
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/transcode/play",
+      "method": "GET",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "新版开始播放/获取播放信息",
+      "observed_parameters": "file_path,play_env,video_codec=hevc,h264,mpeg4,support_format=3,audio_index,subtitle_index,encrypted_path,from,dest_fmt",
+      "observed_response_fields": "data.uri,data.play_format_list,data.current_fmt,data.resolution,data.subtitle_list,data.audio_list,data.audio_index,data.subtitle_index,data.start_time",
+      "alias": "Zs",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4748759,
+        "utf8_offset": 5398515,
+        "wrapper_utf16_offset": 4748664
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/play/stop",
+      "method": "POST",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "旧版停止播放",
+      "observed_parameters": "play_addr",
+      "observed_response_fields": "code/message",
+      "alias": "ea",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4748959,
+        "utf8_offset": 5398715,
+        "wrapper_utf16_offset": 4748874
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/transcode/decrypt/play/stop",
+      "method": "POST",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "新版停止播放",
+      "observed_parameters": "play_addr,isDecrypt(client-side route selector)",
+      "observed_response_fields": "code/message",
+      "alias": "ta",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4749091,
+        "utf8_offset": 5398847,
+        "wrapper_utf16_offset": 4749027
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/transcode/play/stop",
+      "method": "POST",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "新版停止播放",
+      "observed_parameters": "play_addr,isDecrypt(client-side route selector)",
+      "observed_response_fields": "code/message",
+      "alias": "ta",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4749122,
+        "utf8_offset": 5398878,
+        "wrapper_utf16_offset": 4749027
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/play/switchtrack",
+      "method": "POST",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "旧版切换音轨/字幕/清晰度",
+      "observed_parameters": "play_addr,start_time,video_codec,audio_index,subtitle_index,encrypted_path,from,dest_fmt",
+      "observed_response_fields": "data.uri,data.current_fmt,data.subtitle_list,data.audio_list",
+      "alias": "na",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4749323,
+        "utf8_offset": 5399079,
+        "wrapper_utf16_offset": 4749241
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/transcode/decrypt/play/switch",
+      "method": "POST",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "新版切换音轨/字幕/清晰度",
+      "observed_parameters": "play_addr,start_time,video_codec,audio_index,subtitle_index,encrypted_path,from,dest_fmt; encrypted_path/from also in query for decrypt route",
+      "observed_response_fields": "data.uri,data.current_fmt,data.subtitle_list,data.audio_list",
+      "alias": "oa",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4749517,
+        "utf8_offset": 5399273,
+        "wrapper_utf16_offset": 4749448
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/transcode/play/switch",
+      "method": "POST",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "新版切换音轨/字幕/清晰度",
+      "observed_parameters": "play_addr,start_time,video_codec,audio_index,subtitle_index,encrypted_path,from,dest_fmt; encrypted_path/from also in query for decrypt route",
+      "observed_response_fields": "data.uri,data.current_fmt,data.subtitle_list,data.audio_list",
+      "alias": "oa",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4749550,
+        "utf8_offset": 5399306,
+        "wrapper_utf16_offset": 4749448
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/transcode/decrypt/formatmenu",
+      "method": "GET",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "旧版获取播放清晰度菜单",
+      "observed_parameters": "play_env,video_codec=hevc,h264,mpeg4,support_format=3,file_path OR encrypted_path/from",
+      "observed_response_fields": "data.play_format_list[].mod/name/resolution/transcoded",
+      "alias": "ra",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4749832,
+        "utf8_offset": 5399588,
+        "wrapper_utf16_offset": 4749794
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/transcode/formatmenu",
+      "method": "GET",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "旧版获取播放清晰度菜单",
+      "observed_parameters": "play_env,video_codec=hevc,h264,mpeg4,support_format=3,file_path OR encrypted_path/from",
+      "observed_response_fields": "data.play_format_list[].mod/name/resolution/transcoded",
+      "alias": "ra",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4749864,
+        "utf8_offset": 5399620,
+        "wrapper_utf16_offset": 4749794
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/transcode/decrypt/format",
+      "method": "GET",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "请求转码/格式信息",
+      "observed_parameters": "encrypted_path,file_path,play_env,dest_fmt,video_codec=hevc,h264,mpeg4",
+      "observed_response_fields": "success/code/data (consult callsite)",
+      "alias": "ia",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4750050,
+        "utf8_offset": 5399806,
+        "wrapper_utf16_offset": 4750012
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/transcode/format",
+      "method": "GET",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "请求转码/格式信息",
+      "observed_parameters": "encrypted_path,file_path,play_env,dest_fmt,video_codec=hevc,h264,mpeg4",
+      "observed_response_fields": "success/code/data (consult callsite)",
+      "alias": "ia",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4750078,
+        "utf8_offset": 5399834,
+        "wrapper_utf16_offset": 4750012
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/zvideo/share/v4/collection/info",
+      "method": "POST",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "加密共享合集详情(旧版回退)",
+      "observed_parameters": "collection_id,classification_id,get_type=all",
+      "observed_response_fields": "data.list,data.play_chapter,data.skip",
+      "alias": "sa",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4750304,
+        "utf8_offset": 5400060,
+        "wrapper_utf16_offset": 4750222
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/subs/searchsub",
+      "method": "POST",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "旧版搜索字幕",
+      "observed_parameters": "q",
+      "observed_response_fields": "data.subs",
+      "alias": "aa",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4750534,
+        "utf8_offset": 5400290,
+        "wrapper_utf16_offset": 4750449
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/subs/getsub",
+      "method": "POST",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "旧版字幕文件列表",
+      "observed_parameters": "sub_id",
+      "observed_response_fields": "data.filelist",
+      "alias": "ca",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4750680,
+        "utf8_offset": 5400436,
+        "wrapper_utf16_offset": 4750595
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/subs/downloadsub",
+      "method": "POST",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "旧版下载字幕到 NAS",
+      "observed_parameters": "sub_url,file_name OR encrypted_path/from",
+      "observed_response_fields": "success/code/message",
+      "alias": "ua",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4750805,
+        "utf8_offset": 5400561,
+        "wrapper_utf16_offset": 4750738
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/v2/file/remove",
+      "method": "POST",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "file-delete-used-by-player",
+      "purpose": "删除字幕文件（不等同回收站管理）",
+      "observed_parameters": "paths(array)",
+      "observed_response_fields": "code/message",
+      "alias": "la",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4751087,
+        "utf8_offset": 5400843,
+        "wrapper_utf16_offset": 4751002
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/subs/v2/searchsub",
+      "method": "POST",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "新版搜索字幕",
+      "observed_parameters": "q",
+      "observed_response_fields": "data.subs",
+      "alias": "ha",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4751450,
+        "utf8_offset": 5401206,
+        "wrapper_utf16_offset": 4751319
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/subs/v2/preview",
+      "method": "POST",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "新版字幕预览",
+      "observed_parameters": "sub_id,download_url; wrapper also accepts encrypted_path/from",
+      "observed_response_fields": "data.subs",
+      "alias": "pa",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4751581,
+        "utf8_offset": 5401337,
+        "wrapper_utf16_offset": 4751514
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/subs/v2/downloadsub",
+      "method": "POST",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "新版下载字幕到 NAS",
+      "observed_parameters": "download_url,file_name,sub_id,sub_title; encrypted version removes file_name and adds encrypted_path/from",
+      "observed_response_fields": "success/code/message",
+      "alias": "fa",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4751852,
+        "utf8_offset": 5401608,
+        "wrapper_utf16_offset": 4751785
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/transcode/decrypt/thumb",
+      "method": "URL builder; HTTP method not observed here",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "剧集缩略图 URL 构造",
+      "observed_parameters": "is_extdev,file_path,s,encrypted_path,dest_fmt=small,request_purpose=5,device_type=pcClient",
+      "observed_response_fields": "image response not statically observed",
+      "alias": "uc",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4769073,
+        "utf8_offset": 5419059,
+        "wrapper_utf16_offset": 4768817
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    },
+    {
+      "path": "/transcode/thumb",
+      "method": "URL builder; HTTP method not observed here",
+      "base": "global.ApiHost (NAS/proxy origin)",
+      "module": "video",
+      "purpose": "剧集缩略图 URL 构造",
+      "observed_parameters": "is_extdev,file_path,s,encrypted_path,dest_fmt=small,request_purpose=5,device_type=pcClient",
+      "observed_response_fields": "image response not statically observed",
+      "alias": "uc",
+      "source": {
+        "file": "background.js",
+        "utf16_offset": 4769118,
+        "utf8_offset": 5419104,
+        "wrapper_utf16_offset": 4768817
+      },
+      "evidence_type": "static-code",
+      "runtime_verified": false
+    }
+  ]
+}
