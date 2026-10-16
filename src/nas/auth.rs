@@ -110,36 +110,92 @@ pub enum AuthError {
     MalformedResponse(String),
 }
 
+/// Removes secrets and query strings from text that may be written to logs.
+pub fn sanitize_log_message(message: &str) -> String {
+    message
+        .split_whitespace()
+        .map(sanitize_log_token)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn sanitize_log_token(token: &str) -> String {
+    if token.starts_with("http://") || token.starts_with("https://") {
+        return token
+            .split('?')
+            .next()
+            .map(|base| format!("{} [REDACTED_QUERY]", base.trim_end_matches(',')))
+            .unwrap_or_else(|| "[REDACTED_URL]".to_string());
+    }
+
+    let lower = token.to_ascii_lowercase();
+    for key in ["token=", "password=", "cookie=", "authorization="] {
+        if let Some(start) = lower.find(key) {
+            let value_start = start + key.len();
+            let value_end = token[value_start..]
+                .find(['&', ';', ','])
+                .map(|offset| value_start + offset)
+                .unwrap_or(token.len());
+            return format!(
+                "{}{}[REDACTED]{}",
+                &token[..value_start],
+                "",
+                &token[value_end..]
+            );
+        }
+    }
+    token.to_string()
+}
+
 impl AuthError {
     /// Formats a user-friendly recovery guidance string for UI display.
     pub fn user_recovery_hint(&self) -> String {
         match self {
             AuthError::MfaRequired { message, .. } => {
-                format!("安全验证: {}。请输入短信/安全验证码后重试。", message)
+                format!(
+                    "安全验证: {}。请输入短信/安全验证码后重试。",
+                    sanitize_log_message(message)
+                )
             }
             AuthError::AuthFailed { code, message } => {
                 if code == "N150061" {
-                    format!("密码错误: {}。请仔细核对账号和密码。", message)
+                    format!(
+                        "密码错误: {}。请仔细核对账号和密码。",
+                        sanitize_log_message(message)
+                    )
                 } else if code == "N001100" {
-                    format!("账号状态异常: {}。请先在极空间官方移动 App 中确认。", message)
+                    format!(
+                        "账号状态异常: {}。请先在极空间官方移动 App 中确认。",
+                        sanitize_log_message(message)
+                    )
                 } else {
-                    format!("登录失败: {} (错误码: {})", message, code)
+                    format!(
+                        "登录失败: {} (错误码: {})",
+                        sanitize_log_message(message),
+                        code
+                    )
                 }
             }
             AuthError::Network(err) => {
-                format!("网络连接超时或无法访问 NAS ({})。请检查局域网是否畅通、端口 5055 是否开启。", err)
+                format!(
+                    "网络连接超时或无法访问 NAS ({})。请检查局域网是否畅通、端口 5055 是否开启。",
+                    sanitize_log_message(err)
+                )
             }
             AuthError::InvalidUrl(err) => {
-                format!("NAS 地址格式错误: {}。示例: 192.168.1.100 或 http://192.168.1.100:5055", err)
+                format!(
+                    "NAS 地址格式错误: {}。示例: 192.168.1.100 或 http://192.168.1.100:5055",
+                    sanitize_log_message(err)
+                )
             }
             AuthError::Http { status, message } => {
-                format!("NAS HTTP 服务异常 [{status}]: {message}")
+                format!("NAS HTTP 服务异常 [{status}]: {}", sanitize_log_message(message))
             }
             AuthError::Crypto(err) => {
-                format!("安全加密协商失败: {err}")
+                format!("安全加密协商失败: {}", sanitize_log_message(err))
             }
             AuthError::MalformedResponse(err) => {
-                format!("无法解析 NAS 响应: {err}")
+                format!("无法解析 NAS 响应: {}", sanitize_log_message(err))
             }
         }
     }

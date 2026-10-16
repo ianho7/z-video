@@ -8,7 +8,7 @@ pub mod playback;
 pub mod storage;
 
 pub use app::AppCoordinator;
-pub use media::ImageCache;
+pub use media::{ImageCache, ImageRequestGate};
 pub use nas::{
     ApiResponse, AuthError, ClassificationItem, CollectionDetail, CollectionItem, CollectionPage,
     Episode, HttpNasClient, LoginResponseData, MockNasClient, NasClient, NasError, NasPubKeyData,
