@@ -8,8 +8,9 @@ pub mod storage;
 pub use app::AppCoordinator;
 pub use media::ImageCache;
 pub use nas::{
-    ApiResponse, AuthError, ClassificationItem, CollectionItem, CollectionPage, HttpNasClient,
-    LoginResponseData, MockNasClient, NasClient, NasError, NasPubKeyData, NasSession,
+    ApiResponse, AuthError, ClassificationItem, CollectionDetail, CollectionItem, CollectionPage,
+    Episode, HttpNasClient, LoginResponseData, MockNasClient, NasClient, NasError, NasPubKeyData,
+    NasSession, Season,
 };
 pub use player::{
     create_player_probe, MockPlayer, MpvPlayer, PlaybackProgress, PlaybackState, Player,

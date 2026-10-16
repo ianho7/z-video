@@ -1,4 +1,5 @@
-use serde::{Deserialize, Serialize};
+use serde::{de::Error as _, Deserialize, Serialize};
+use serde_json::Value;
 use thiserror::Error;
 
 use crate::nas::auth::AuthError;
@@ -73,6 +74,331 @@ impl CollectionItem {
             _ => "影视",
         }
     }
+}
+
+/// A single playable unit returned by a collection detail response.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Episode {
+    #[serde(default)]
+    pub video_id: String,
+    #[serde(default)]
+    pub episode_number: u32,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub file_path: String,
+    #[serde(default)]
+    pub version_id: String,
+    #[serde(default)]
+    pub duration: Option<String>,
+}
+
+impl Episode {
+    /// Returns the stable identifier used by the UI for selection.
+    pub fn selection_id(&self) -> &str {
+        if !self.video_id.is_empty() {
+            &self.video_id
+        } else if !self.version_id.is_empty() {
+            &self.version_id
+        } else {
+            &self.file_path
+        }
+    }
+}
+
+/// Episodes grouped by season for presentation in the collection detail view.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Season {
+    #[serde(default)]
+    pub season_number: u32,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub episodes: Vec<Episode>,
+}
+
+/// Collection metadata and its normalized episode/season structure.
+///
+/// The NAS response is not a stable public schema: known responses put playable
+/// entries under `list[].version_list`, while other responses expose
+/// `video_list`/`episodes` directly. Deserialization accepts those variants and
+/// normalizes them into `seasons` without requiring optional metadata.
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+pub struct CollectionDetail {
+    #[serde(default)]
+    pub collection_id: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub cover: String,
+    #[serde(default)]
+    pub background: String,
+    #[serde(default)]
+    pub release_year: String,
+    #[serde(default)]
+    pub video_type: String,
+    #[serde(default)]
+    pub score: Option<String>,
+    #[serde(default)]
+    pub rating: Option<String>,
+    #[serde(default)]
+    pub storyline: Option<String>,
+    #[serde(default)]
+    pub seasons: Vec<Season>,
+}
+
+impl<'de> Deserialize<'de> for CollectionDetail {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        parse_collection_detail(&value).map_err(D::Error::custom)
+    }
+}
+
+impl CollectionDetail {
+    /// Returns the effective score/rating string, if the NAS supplied one.
+    pub fn display_score(&self) -> String {
+        first_non_empty([self.score.as_deref(), self.rating.as_deref()])
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    /// Returns a user-facing type label while retaining the raw NAS value.
+    pub fn display_type(&self) -> &str {
+        match self.video_type.to_ascii_lowercase().as_str() {
+            "movie" | "film" | "100" => "电影",
+            "tv" | "series" | "电视剧" => "剧集",
+            "anime" | "动漫" => "动漫",
+            "show" | "综艺" => "综艺",
+            "diy" => "自建合集",
+            _ => "影视",
+        }
+    }
+
+    pub fn is_movie(&self) -> bool {
+        matches!(
+            self.video_type.to_ascii_lowercase().as_str(),
+            "movie" | "film" | "100" | "电影"
+        )
+    }
+}
+
+fn parse_collection_detail(value: &Value) -> Result<CollectionDetail, String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| "详情响应 data 必须是对象".to_string())?;
+
+    let collection_id = first_string(object, &["collection_id", "id"]);
+    let title = first_string(object, &["title", "name"]);
+    let cover = first_string(object, &["cover", "poster", "cover_url", "cover_path"]);
+    let background = first_string(
+        object,
+        &[
+            "background",
+            "backdrop",
+            "background_image",
+            "background_url",
+            "bg",
+        ],
+    );
+    let release_year = first_string(object, &["release_year", "year", "pub_year"]);
+    let video_type = first_string(object, &["video_type", "type", "kind"]);
+    let score = optional_string(object, &["score"]);
+    let rating = optional_string(object, &["rating"]);
+    let storyline = optional_string(object, &["storyline", "plot", "description", "intro"]);
+
+    let mut raw_episodes = Vec::new();
+    if let Some(list) = object.get("list").and_then(Value::as_array) {
+        for item in list {
+            let Some(item_object) = item.as_object() else { continue };
+            let season_number = first_u32(
+                item_object,
+                &["season", "season_number", "season_num", "season_index"],
+            )
+            .unwrap_or(1)
+            .max(1);
+            let season_title = first_string(item_object, &["season_name", "season_title"]);
+            let mut found_nested = false;
+
+            for key in ["version_list", "episodes", "episode_list", "video_list"] {
+                if let Some(entries) = item_object.get(key).and_then(Value::as_array) {
+                    found_nested = true;
+                    for entry in entries {
+                        if let Some(episode) = parse_episode(entry, season_number, &collection_id) {
+                            raw_episodes.push((season_number, season_title.clone(), episode));
+                        }
+                    }
+                }
+            }
+
+            if !found_nested {
+                if let Some(episode) = parse_episode(item, season_number, &collection_id) {
+                    raw_episodes.push((season_number, season_title, episode));
+                }
+            }
+        }
+    }
+
+    for key in ["video_list", "episodes", "episode_list"] {
+        if let Some(entries) = object.get(key).and_then(Value::as_array) {
+            for entry in entries {
+                if let Some(episode) = parse_episode(entry, 1, &collection_id) {
+                    raw_episodes.push((1, String::new(), episode));
+                }
+            }
+        }
+    }
+
+    let mut seasons = Vec::new();
+    for (season_number, season_title, episode) in raw_episodes {
+        let Some(existing) = seasons
+            .iter_mut()
+            .find(|season: &&mut Season| season.season_number == season_number)
+        else {
+            seasons.push(Season {
+                season_number,
+                title: if season_title.is_empty() {
+                    format!("第{}季", season_number)
+                } else {
+                    season_title
+                },
+                episodes: Vec::new(),
+            });
+            let last = seasons.last_mut().expect("season was just inserted");
+            last.episodes.push(episode);
+            continue;
+        };
+
+        if existing.title.is_empty() || existing.title == format!("第{}季", season_number) {
+            if !season_title.is_empty() {
+                existing.title = season_title;
+            }
+        }
+        let duplicate = existing.episodes.iter().any(|item| {
+            (!episode.video_id.is_empty() && item.video_id == episode.video_id)
+                || (!episode.file_path.is_empty() && item.file_path == episode.file_path)
+        });
+        if !duplicate {
+            existing.episodes.push(episode);
+        }
+    }
+
+    for season in &mut seasons {
+        season
+            .episodes
+            .sort_by_key(|episode| episode.episode_number);
+    }
+    seasons.sort_by_key(|season| season.season_number);
+
+    if seasons.is_empty() && is_movie_type(&video_type) {
+        seasons.push(Season {
+            season_number: 1,
+            title: "正片".to_string(),
+            episodes: vec![Episode {
+                video_id: collection_id.clone(),
+                episode_number: 1,
+                title: if title.is_empty() { "正片".to_string() } else { title.clone() },
+                ..Episode::default()
+            }],
+        });
+    }
+
+    Ok(CollectionDetail {
+        collection_id,
+        title,
+        cover,
+        background,
+        release_year,
+        video_type,
+        score,
+        rating,
+        storyline,
+        seasons,
+    })
+}
+
+fn parse_episode(value: &Value, _parent_season: u32, collection_id: &str) -> Option<Episode> {
+    let object = value.as_object()?;
+    let video_id = first_string(object, &["video_id", "episode_id", "id"]);
+    let file_path = first_string(object, &["file_path", "episode_path", "path", "url"]);
+    let version_id = first_string(object, &["version_id"]);
+    let has_episode_data = !video_id.is_empty()
+        || !file_path.is_empty()
+        || object.contains_key("episode")
+        || object.contains_key("episode_number")
+        || object.contains_key("episode_num");
+    if !has_episode_data {
+        return None;
+    }
+
+    let episode_number = first_u32(object, &["episode", "episode_number", "episode_num", "number"])
+        .unwrap_or(1)
+        .max(1);
+    let title = first_string(object, &["title", "name", "episode_title", "episode_name", "version_name"]);
+    let duration = optional_string(object, &["video_duration", "duration", "duration_sec"]);
+    let stable_id = if video_id.is_empty() && version_id.is_empty() && file_path.is_empty() {
+        format!("{}-{}", collection_id, episode_number)
+    } else {
+        video_id.clone()
+    };
+
+    Some(Episode {
+        video_id: stable_id,
+        episode_number,
+        title: if title.is_empty() {
+            format!("第{}集", episode_number)
+        } else {
+            title
+        },
+        file_path,
+        version_id,
+        duration,
+    })
+}
+
+fn first_string(object: &serde_json::Map<String, Value>, keys: &[&str]) -> String {
+    keys.iter()
+        .find_map(|key| object.get(*key).and_then(value_as_string).filter(|value| !value.is_empty()))
+        .unwrap_or_default()
+}
+
+fn optional_string(object: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<String> {
+    let value = first_string(object, keys);
+    if value.is_empty() { None } else { Some(value) }
+}
+
+fn first_non_empty<'a>(values: impl IntoIterator<Item = Option<&'a str>>) -> Option<&'a str> {
+    values.into_iter().flatten().find(|value| !value.is_empty())
+}
+
+fn value_as_string(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        Value::Bool(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+fn first_u32(object: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<u32> {
+    keys.iter().find_map(|key| object.get(*key).and_then(value_as_u32))
+}
+
+fn value_as_u32(value: &Value) -> Option<u32> {
+    match value {
+        Value::Number(value) => value
+            .as_u64()
+            .and_then(|value| u32::try_from(value).ok())
+            .or_else(|| value.as_f64().map(|value| value as u32)),
+        Value::String(value) => value.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+fn is_movie_type(video_type: &str) -> bool {
+    matches!(video_type.to_ascii_lowercase().as_str(), "movie" | "film" | "100" | "电影")
 }
 
 /// Paginated collection list response data from `POST /zvideo/video/v2/list`.
@@ -211,5 +537,57 @@ mod tests {
         assert_eq!(page.list[0].display_score(), "9.7");
         assert_eq!(page.list[0].display_type(), "电影");
         assert_eq!(page.list[1].display_score(), "9.4");
+    }
+
+    #[test]
+    fn collection_detail_parses_movie_and_multi_season_episode_data() {
+        let json = r#"{
+            "collection_id": "series-01",
+            "title": "测试剧集",
+            "cover": "/zvideo/cover/series.jpg",
+            "background": "/zvideo/background/series.jpg",
+            "release_year": 2024,
+            "type": "tv",
+            "score": 8.8,
+            "storyline": "一段测试剧情。",
+            "list": [
+                {
+                    "season": 1,
+                    "season_name": "第一季",
+                    "version_list": [
+                        {"video_id": "s1e1", "episode": 1, "title": "开端", "file_path": "/media/s1e1.mkv"},
+                        {"video_id": "s1e2", "episode": 2, "title": "发展", "file_path": "/media/s1e2.mkv"}
+                    ]
+                },
+                {
+                    "season": 2,
+                    "season_name": "第二季",
+                    "version_list": [
+                        {"video_id": "s2e1", "episode": 1, "title": "新的开始", "file_path": "/media/s2e1.mkv"}
+                    ]
+                }
+            ]
+        }"#;
+
+        let detail: CollectionDetail = serde_json::from_str(json).expect("detail should parse");
+        assert_eq!(detail.collection_id, "series-01");
+        assert_eq!(detail.background, "/zvideo/background/series.jpg");
+        assert_eq!(detail.release_year, "2024");
+        assert_eq!(detail.display_score(), "8.8");
+        assert_eq!(detail.seasons.len(), 2);
+        assert_eq!(detail.seasons[0].season_number, 1);
+        assert_eq!(detail.seasons[0].title, "第一季");
+        assert_eq!(detail.seasons[0].episodes[1].episode_number, 2);
+        assert_eq!(detail.seasons[1].episodes[0].video_id, "s2e1");
+
+        let sparse: CollectionDetail = serde_json::from_str(
+            r#"{"collection_id":"movie-01","title":"只有标题","type":"movie"}"#,
+        )
+        .expect("missing optional detail fields should be safe");
+        assert_eq!(sparse.release_year, "");
+        assert_eq!(sparse.storyline, None);
+        assert_eq!(sparse.seasons.len(), 1);
+        assert_eq!(sparse.seasons[0].episodes.len(), 1);
+        assert_eq!(sparse.seasons[0].episodes[0].episode_number, 1);
     }
 }

@@ -1,9 +1,12 @@
+use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use log::info;
 
 use crate::nas::auth::{ApiResponse, AuthError, LoginResponseData, NasPubKeyData};
 use crate::nas::crypto::{encrypt_credential, parse_public_key};
-use crate::nas::models::{ClassificationItem, CollectionItem, CollectionPage, NasError};
+use crate::nas::models::{
+    ClassificationItem, CollectionDetail, CollectionItem, CollectionPage, Episode, NasError, Season,
+};
 use crate::nas::session::NasSession;
 
 /// Trait defining the core LAN authentication and media library protocol with a Z-Space NAS.
@@ -32,6 +35,14 @@ pub trait NasClient: Send + Sync {
         start: usize,
         limit: usize,
     ) -> Result<CollectionPage, NasError>;
+
+    /// Fetches full metadata and playable episodes for one collection (`POST /zvideo/collection/v2/info`).
+    fn get_collection_detail(
+        &self,
+        session: &NasSession,
+        collection_id: &str,
+        classification_id: &str,
+    ) -> Result<CollectionDetail, NasError>;
 
     /// Fetches image raw bytes from the NAS.
     fn fetch_image(&self, session: &NasSession, image_path: &str) -> Result<Vec<u8>, NasError>;
@@ -315,6 +326,52 @@ impl NasClient for HttpNasClient {
         body.data.ok_or_else(|| NasError::MalformedResponse("响应缺少影片列表数据".to_string()))
     }
 
+    fn get_collection_detail(
+        &self,
+        session: &NasSession,
+        collection_id: &str,
+        classification_id: &str,
+    ) -> Result<CollectionDetail, NasError> {
+        let base_url = session.base_url();
+        let token = session.token().ok_or(NasError::Unauthorized)?;
+        let url = format!("{}/zvideo/collection/v2/info?token={}", base_url, token);
+        let payload = serde_json::json!({
+            "collection_id": collection_id,
+            "get_type": "all",
+            "classification_id": classification_id,
+        });
+
+        let resp = self
+            .agent
+            .post(&url)
+            .set("token", &token)
+            .set("Cookie", &format!("token={}", token))
+            .send_json(payload)
+            .map_err(|e| NasError::Network(format!("获取影视详情失败: {}", e)))?;
+
+        let status = resp.status();
+        if status != 200 {
+            return Err(NasError::Http {
+                status,
+                message: format!("HTTP {}", status),
+            });
+        }
+
+        let body: ApiResponse<CollectionDetail> = resp
+            .into_json()
+            .map_err(|e| NasError::MalformedResponse(format!("解析影视详情失败: {}", e)))?;
+
+        if !body.is_success() {
+            return Err(NasError::Business {
+                code: body.code_str(),
+                message: body.error_message(),
+            });
+        }
+
+        body.data
+            .ok_or_else(|| NasError::MalformedResponse("响应缺少影视详情数据".to_string()))
+    }
+
     fn fetch_image(&self, session: &NasSession, image_path: &str) -> Result<Vec<u8>, NasError> {
         let base_url = session.base_url();
         let full_url = if image_path.starts_with("http://") || image_path.starts_with("https://") {
@@ -361,6 +418,7 @@ pub struct MockNasClient {
     pub mock_nas_name: String,
     pub mock_classifications: Vec<ClassificationItem>,
     pub mock_collections: Vec<CollectionItem>,
+    pub mock_collection_details: HashMap<String, CollectionDetail>,
 }
 
 impl Default for MockNasClient {
@@ -436,6 +494,84 @@ impl Default for MockNasClient {
             },
         ];
 
+        let mut mock_collection_details = HashMap::new();
+        mock_collection_details.insert(
+            "c01".to_string(),
+            CollectionDetail {
+                collection_id: "c01".to_string(),
+                title: "星际穿越".to_string(),
+                cover: "/zvideo/cover/interstellar.jpg".to_string(),
+                background: "/zvideo/background/interstellar.jpg".to_string(),
+                release_year: "2014".to_string(),
+                video_type: "movie".to_string(),
+                score: Some("9.4".to_string()),
+                rating: None,
+                storyline: Some("近未来的地球黄沙遍野，前NASA宇航员库珀穿过虫洞寻找人类新家园。".to_string()),
+                seasons: vec![Season {
+                    season_number: 1,
+                    title: "正片".to_string(),
+                    episodes: vec![Episode {
+                        video_id: "c01-video".to_string(),
+                        episode_number: 1,
+                        title: "正片".to_string(),
+                        file_path: "/media/interstellar.mkv".to_string(),
+                        version_id: "c01-version".to_string(),
+                        duration: Some("169m".to_string()),
+                    }],
+                }],
+            },
+        );
+        mock_collection_details.insert(
+            "series-demo".to_string(),
+            CollectionDetail {
+                collection_id: "series-demo".to_string(),
+                title: "测试剧集".to_string(),
+                cover: "/zvideo/cover/series.jpg".to_string(),
+                background: "/zvideo/background/series.jpg".to_string(),
+                release_year: "2024".to_string(),
+                video_type: "tv".to_string(),
+                score: Some("8.8".to_string()),
+                rating: None,
+                storyline: Some("一段用于验证选集的测试剧情。".to_string()),
+                seasons: vec![
+                    Season {
+                        season_number: 1,
+                        title: "第一季".to_string(),
+                        episodes: vec![
+                            Episode {
+                                video_id: "series-s1e1".to_string(),
+                                episode_number: 1,
+                                title: "第一季·第1集".to_string(),
+                                file_path: "/media/series-s1e1.mkv".to_string(),
+                                version_id: "series-s1e1-v1".to_string(),
+                                duration: None,
+                            },
+                            Episode {
+                                video_id: "series-s1e2".to_string(),
+                                episode_number: 2,
+                                title: "第一季·第2集".to_string(),
+                                file_path: "/media/series-s1e2.mkv".to_string(),
+                                version_id: "series-s1e2-v1".to_string(),
+                                duration: None,
+                            },
+                        ],
+                    },
+                    Season {
+                        season_number: 2,
+                        title: "第二季".to_string(),
+                        episodes: vec![Episode {
+                            video_id: "series-s2e1".to_string(),
+                            episode_number: 1,
+                            title: "第二季·第1集".to_string(),
+                            file_path: "/media/series-s2e1.mkv".to_string(),
+                            version_id: "series-s2e1-v1".to_string(),
+                            duration: None,
+                        }],
+                    },
+                ],
+            },
+        );
+
         Self {
             expected_username: "admin".to_string(),
             expected_password: "password123".to_string(),
@@ -446,6 +582,7 @@ impl Default for MockNasClient {
             mock_nas_name: "极空间-私有存储".to_string(),
             mock_classifications: classifications,
             mock_collections: collections,
+            mock_collection_details,
         }
     }
 }
@@ -584,6 +721,55 @@ impl NasClient for MockNasClient {
         })
     }
 
+    fn get_collection_detail(
+        &self,
+        session: &NasSession,
+        collection_id: &str,
+        _classification_id: &str,
+    ) -> Result<CollectionDetail, NasError> {
+        if self.network_error {
+            return Err(NasError::Network("无法获取影视详情，网络断开".to_string()));
+        }
+        if session.token().is_none() {
+            return Err(NasError::Unauthorized);
+        }
+
+        if let Some(detail) = self.mock_collection_details.get(collection_id) {
+            return Ok(detail.clone());
+        }
+
+        let collection = self
+            .mock_collections
+            .iter()
+            .find(|item| item.collection_id == collection_id)
+            .ok_or_else(|| NasError::Business {
+                code: "NOT_FOUND".to_string(),
+                message: "未找到该影视集合".to_string(),
+            })?;
+
+        Ok(CollectionDetail {
+            collection_id: collection.collection_id.clone(),
+            title: collection.title.clone(),
+            cover: collection.cover.clone(),
+            release_year: collection.release_year.clone(),
+            video_type: collection.video_type.clone(),
+            score: collection.score.clone(),
+            rating: collection.rating.clone(),
+            storyline: collection.storyline.clone(),
+            seasons: vec![Season {
+                season_number: 1,
+                title: "正片".to_string(),
+                episodes: vec![Episode {
+                    video_id: collection.collection_id.clone(),
+                    episode_number: 1,
+                    title: collection.title.clone(),
+                    ..Episode::default()
+                }],
+            }],
+            ..CollectionDetail::default()
+        })
+    }
+
     fn fetch_image(&self, session: &NasSession, _image_path: &str) -> Result<Vec<u8>, NasError> {
         if self.network_error {
             return Err(NasError::Network("图片下载失败，网络中断".to_string()));
@@ -694,5 +880,109 @@ mod tests {
             AuthError::Network(_) => {}
             other => panic!("Expected Network error, got: {:?}", other),
         }
+    }
+
+    #[test]
+    fn mock_client_returns_movie_and_multi_season_collection_details() {
+        let client = MockNasClient::new();
+        let session = NasSession::new("http://192.168.1.50:5055".to_string());
+        session.set_authenticated(
+            "mock-token".to_string(),
+            "admin".to_string(),
+            None,
+            None,
+            None,
+        );
+
+        let movie = client
+            .get_collection_detail(&session, "c01", "1")
+            .expect("mock movie detail should be available");
+        assert!(movie.is_movie());
+        assert_eq!(movie.seasons.len(), 1);
+        assert_eq!(movie.seasons[0].episodes.len(), 1);
+
+        let series = client
+            .get_collection_detail(&session, "series-demo", "2")
+            .expect("mock series detail should be available");
+        assert_eq!(series.seasons.len(), 2);
+        assert_eq!(series.seasons[0].episodes.len(), 2);
+        assert_eq!(series.seasons[1].episodes[0].title, "第二季·第1集");
+    }
+
+    #[test]
+    fn http_client_posts_collection_detail_with_session_auth_and_expected_parameters() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind local test server");
+        let address = listener.local_addr().expect("read local test address");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept detail request");
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            let header_end;
+            loop {
+                let read = stream.read(&mut buffer).expect("read detail request");
+                assert!(read > 0, "client closed before sending request");
+                request.extend_from_slice(&buffer[..read]);
+                if let Some(position) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                    header_end = position + 4;
+                    break;
+                }
+            }
+
+            let headers = String::from_utf8_lossy(&request[..header_end]);
+            assert!(headers.starts_with(&format!(
+                "POST /zvideo/collection/v2/info?token=detail-token HTTP/1.1"
+            )));
+            assert!(headers.to_ascii_lowercase().contains("token: detail-token"));
+            assert!(headers.to_ascii_lowercase().contains("cookie: token=detail-token"));
+
+            let content_length = headers
+                .lines()
+                .find_map(|line| line.strip_prefix("Content-Length: "))
+                .and_then(|value| value.trim().parse::<usize>().ok())
+                .expect("request should include content length");
+            while request.len() < header_end + content_length {
+                let read = stream.read(&mut buffer).expect("read detail request body");
+                assert!(read > 0, "client closed before sending request body");
+                request.extend_from_slice(&buffer[..read]);
+            }
+
+            let payload: serde_json::Value = serde_json::from_slice(
+                &request[header_end..header_end + content_length],
+            )
+            .expect("detail request body should be JSON");
+            assert_eq!(payload["collection_id"], "movie-01");
+            assert_eq!(payload["get_type"], "all");
+            assert_eq!(payload["classification_id"], "classification-01");
+
+            let response = r#"{"code":200,"data":{"collection_id":"movie-01","title":"本地测试电影","type":"movie","list":[{"version_list":[{"video_id":"movie-video","episode":1,"file_path":"/media/movie.mkv"}]}]}}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response.len(),
+                response
+            )
+            .expect("write detail response");
+        });
+
+        let session = NasSession::new(format!("http://{}", address));
+        session.set_authenticated(
+            "detail-token".to_string(),
+            "test-user".to_string(),
+            None,
+            None,
+            None,
+        );
+        let client = HttpNasClient::new(Duration::from_secs(2));
+        let detail = client
+            .get_collection_detail(&session, "movie-01", "classification-01")
+            .expect("HTTP detail response should parse");
+        server.join().expect("detail server should finish");
+
+        assert_eq!(detail.title, "本地测试电影");
+        assert_eq!(detail.seasons[0].episodes[0].video_id, "movie-video");
     }
 }

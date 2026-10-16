@@ -9,7 +9,7 @@ use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use crate::media::image_cache::{decode_to_slint_image, ImageCache};
 use crate::nas::auth::AuthError;
 use crate::nas::client::{HttpNasClient, NasClient};
-use crate::nas::models::{CollectionItem, NasError};
+use crate::nas::models::{CollectionDetail, CollectionItem, NasError};
 use crate::nas::session::NasSession;
 use crate::player::state::{PlaybackState, PlayerEvent};
 use crate::player::traits::Player;
@@ -317,6 +317,96 @@ impl AppCoordinator {
         }
     }
 
+    fn start_collection_detail_load(
+        ui_weak: slint::Weak<AppWindow>,
+        nas_client: Arc<dyn NasClient>,
+        session: Arc<NasSession>,
+        image_cache: ImageCache,
+        collection_id: String,
+        classification_id: String,
+    ) {
+        if let Some(ui) = ui_weak.upgrade() {
+            ui.set_current_view("detail".into());
+            ui.set_detail_collection_id(collection_id.clone().into());
+            ui.set_detail_title("".into());
+            ui.set_detail_release_year("".into());
+            ui.set_detail_video_type("".into());
+            ui.set_detail_score("".into());
+            ui.set_detail_storyline("".into());
+            ui.set_detail_cover_image(slint::Image::default());
+            ui.set_detail_background_image(slint::Image::default());
+            ui.set_detail_has_cover(false);
+            ui.set_detail_has_background(false);
+            ui.set_detail_is_movie(false);
+            ui.set_detail_seasons(ModelRc::new(VecModel::default()));
+            ui.set_selected_episode_id("".into());
+            ui.set_detail_loading(true);
+            ui.set_detail_error("".into());
+            ui.set_status_message("正在后台加载影视详情...".into());
+        }
+
+        let request_id = collection_id.clone();
+        let ui_weak_bg = ui_weak.clone();
+        std::thread::spawn(move || {
+            let detail_result = nas_client.get_collection_detail(
+                &session,
+                &collection_id,
+                &classification_id,
+            );
+
+            // Keep image work off the UI thread, but pass only raw bytes back to
+            // the event loop. `slint::Image` is created below on the UI thread.
+            let (cover_bytes, background_bytes) = if let Ok(detail) = &detail_result {
+                (
+                    fetch_detail_image(&nas_client, &session, &image_cache, &detail.cover),
+                    fetch_detail_image(&nas_client, &session, &image_cache, &detail.background),
+                )
+            } else {
+                (None, None)
+            };
+
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = ui_weak_bg.upgrade() else { return };
+                if ui.get_current_view() != "detail"
+                    || ui.get_detail_collection_id().as_str() != request_id
+                {
+                    return;
+                }
+
+                ui.set_detail_loading(false);
+                match detail_result {
+                    Ok(detail) => {
+                        apply_collection_detail(
+                            &ui,
+                            detail,
+                            cover_bytes.as_deref(),
+                            background_bytes.as_deref(),
+                        );
+                    }
+                    Err(err) => {
+                        ui.set_detail_error(err.user_recovery_hint().into());
+                        ui.set_status_message("影视详情加载失败，请返回片库后重试。".into());
+                    }
+                }
+            });
+        });
+    }
+
+    fn select_episode_in_ui(ui: &AppWindow, episode_id: &str) {
+        ui.set_selected_episode_id(episode_id.to_string().into());
+        let seasons = ui.get_detail_seasons();
+        for season_index in 0..seasons.row_count() {
+            let Some(season) = seasons.row_data(season_index) else { continue };
+            let episodes = season.episodes;
+            for episode_index in 0..episodes.row_count() {
+                if let Some(mut episode) = episodes.row_data(episode_index) {
+                    episode.is_selected = episode.episode_id.as_str() == episode_id;
+                    episodes.set_row_data(episode_index, episode);
+                }
+            }
+        }
+    }
+
     /// Spawns background threads to asynchronously fetch missing poster images.
     fn spawn_poster_fetching(&self, items: Vec<CollectionItem>) {
         let nas_client = Arc::clone(&self.nas_client);
@@ -516,10 +606,21 @@ impl AppCoordinator {
         });
 
         let ui_weak = self.ui.as_weak();
+        let nas_client = Arc::clone(&self.nas_client);
+        let session = Arc::clone(&self.session);
+        let image_cache = self.image_cache.clone();
         self.ui.on_collection_clicked(move |col_id| {
             let Some(ui) = ui_weak.upgrade() else { return };
-            info!("User clicked collection card: {}", col_id);
-            ui.set_status_message(format!("已选择影视集合 (ID: {})，准备进入详情及选集", col_id).into());
+            let classification_id = ui.get_selected_classification_id().to_string();
+            info!("User clicked collection card; opening detail view");
+            AppCoordinator::start_collection_detail_load(
+                ui_weak.clone(),
+                Arc::clone(&nas_client),
+                Arc::clone(&session),
+                image_cache.clone(),
+                col_id.to_string(),
+                classification_id,
+            );
         });
 
         let ui_weak = self.ui.as_weak();
@@ -527,6 +628,30 @@ impl AppCoordinator {
             let Some(ui) = ui_weak.upgrade() else { return };
             info!("Switching workspace view to: {}", view_name);
             ui.set_current_view(view_name);
+        });
+
+        let ui_weak = self.ui.as_weak();
+        self.ui.on_detail_back_clicked(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            ui.set_current_view("library".into());
+            ui.set_status_message("已返回片库，保留当前分类和浏览位置。".into());
+        });
+
+        let ui_weak = self.ui.as_weak();
+        self.ui.on_episode_selected(move |episode_id| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            AppCoordinator::select_episode_in_ui(&ui, episode_id.as_str());
+            ui.set_status_message("已切换选中剧集，可从详情页播放入口继续。".into());
+        });
+
+        let ui_weak = self.ui.as_weak();
+        self.ui.on_play_episode_clicked(move |episode_id| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            if episode_id.is_empty() {
+                ui.set_detail_error("当前详情没有可播放的 Episode。".into());
+            } else {
+                ui.set_status_message(format!("已选择 Episode {}，等待播放模块接入媒体流。", episode_id).into());
+            }
         });
     }
 
@@ -833,6 +958,102 @@ impl AppCoordinator {
             },
         );
     }
+}
+
+fn fetch_detail_image(
+    nas_client: &Arc<dyn NasClient>,
+    session: &Arc<NasSession>,
+    image_cache: &ImageCache,
+    image_path: &str,
+) -> Option<Vec<u8>> {
+    if image_path.is_empty() {
+        return None;
+    }
+    if let Some(bytes) = image_cache.get(image_path) {
+        return Some(bytes);
+    }
+
+    match nas_client.fetch_image(session, image_path) {
+        Ok(bytes) => {
+            image_cache.insert(image_path.to_string(), bytes.clone());
+            Some(bytes)
+        }
+        Err(err) => {
+            warn!("Failed to fetch detail image: {}", err);
+            None
+        }
+    }
+}
+
+fn apply_collection_detail(
+    ui: &AppWindow,
+    detail: CollectionDetail,
+    cover_bytes: Option<&[u8]>,
+    background_bytes: Option<&[u8]>,
+) {
+    let display_type = detail.display_type().to_string();
+    let is_movie = detail.is_movie();
+    ui.set_detail_title(detail.title.clone().into());
+    ui.set_detail_release_year(detail.release_year.clone().into());
+    ui.set_detail_video_type(display_type.into());
+    ui.set_detail_score(detail.display_score().into());
+    ui.set_detail_storyline(detail.storyline.clone().unwrap_or_default().into());
+    ui.set_detail_is_movie(is_movie);
+
+    if let Some(bytes) = cover_bytes {
+        match decode_to_slint_image(bytes) {
+            Ok(image) => {
+                ui.set_detail_cover_image(image);
+                ui.set_detail_has_cover(true);
+            }
+            Err(err) => warn!("Failed to decode collection detail cover: {}", err),
+        }
+    }
+    if let Some(bytes) = background_bytes {
+        match decode_to_slint_image(bytes) {
+            Ok(image) => {
+                ui.set_detail_background_image(image);
+                ui.set_detail_has_background(true);
+            }
+            Err(err) => warn!("Failed to decode collection detail background: {}", err),
+        }
+    }
+
+    let first_episode_id = detail
+        .seasons
+        .iter()
+        .flat_map(|season| season.episodes.iter())
+        .map(|episode| episode.selection_id().to_string())
+        .find(|episode_id| !episode_id.is_empty())
+        .unwrap_or_default();
+
+    let ui_seasons: Vec<SeasonUiItem> = detail
+        .seasons
+        .iter()
+        .map(|season| {
+            let episodes: Vec<EpisodeUiItem> = season
+                .episodes
+                .iter()
+                .map(|episode| EpisodeUiItem {
+                    episode_id: episode.selection_id().to_string().into(),
+                    episode_number: episode.episode_number as i32,
+                    title: episode.title.clone().into(),
+                    duration: episode.duration.clone().unwrap_or_default().into(),
+                    is_selected: episode.selection_id() == first_episode_id,
+                })
+                .collect();
+
+            SeasonUiItem {
+                season_number: season.season_number as i32,
+                title: season.title.clone().into(),
+                episodes: ModelRc::from(Rc::new(VecModel::from(episodes))),
+            }
+        })
+        .collect();
+
+    ui.set_detail_seasons(ModelRc::from(Rc::new(VecModel::from(ui_seasons))));
+    ui.set_selected_episode_id(first_episode_id.into());
+    ui.set_status_message("影视详情已加载，可选择剧集。".into());
 }
 
 pub fn find_sample_video_path() -> PathBuf {
