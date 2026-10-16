@@ -8,7 +8,9 @@ use z_video::player::MockPlayer;
 use z_video::storage::credentials::MemoryCredentialStore;
 
 fn pump_detail_event_loop() {
-    Timer::single_shot(Duration::from_millis(150), || slint::quit_event_loop());
+    Timer::single_shot(Duration::from_millis(150), || {
+        let _ = slint::quit_event_loop();
+    });
     slint::run_event_loop_until_quit().expect("detail event loop should run");
 }
 
