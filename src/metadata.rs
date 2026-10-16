@@ -182,7 +182,7 @@ impl<T> MetadataProviderResult<T> {
         Self { request_id, value }
     }
 
-    pub const fn applies_to(&self, current_request_id: MetadataRequestId) -> bool {
+    pub fn applies_to(&self, current_request_id: MetadataRequestId) -> bool {
         self.request_id == current_request_id
     }
 }
