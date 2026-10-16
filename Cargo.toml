@@ -22,3 +22,12 @@ windows-sys = { version = "0.59", features = [
 
 [build-dependencies]
 slint-build = "1.9.2"
+
+[profile.dev]
+debug = 1
+split-debuginfo = "unpacked"
+
+[profile.test]
+debug = 1
+split-debuginfo = "unpacked"
+

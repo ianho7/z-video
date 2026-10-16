@@ -165,6 +165,9 @@ pub fn find_mpv_library_path() -> Option<PathBuf> {
     for c in &candidates {
         let p = PathBuf::from(c);
         if p.exists() {
+            if let Ok(abs) = std::fs::canonicalize(&p) {
+                return Some(abs);
+            }
             return Some(p);
         }
     }

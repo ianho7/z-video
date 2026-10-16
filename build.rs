@@ -20,11 +20,22 @@ fn main() {
             if let Some(profile_dir) = out_path.ancestors().nth(3) {
                 let dest = profile_dir.join("libmpv-2.dll");
                 let dest_alias = profile_dir.join("mpv-2.dll");
+                let deps_dir = profile_dir.join("deps");
+                let _ = fs::create_dir_all(&deps_dir);
+                let dest_deps = deps_dir.join("libmpv-2.dll");
+                let dest_deps_alias = deps_dir.join("mpv-2.dll");
+
                 if !dest.exists() {
                     let _ = fs::copy(&mpv_dll, &dest);
                 }
                 if !dest_alias.exists() {
                     let _ = fs::copy(&mpv_dll, &dest_alias);
+                }
+                if !dest_deps.exists() {
+                    let _ = fs::copy(&mpv_dll, &dest_deps);
+                }
+                if !dest_deps_alias.exists() {
+                    let _ = fs::copy(&mpv_dll, &dest_deps_alias);
                 }
             }
         }
