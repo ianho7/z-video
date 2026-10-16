@@ -3,3 +3,7 @@
 **/*.rs.bk
 *.log
 .env
+vendor/*.7z
+vendor/**/*.dll
+vendor/**/*.dll.a
+
