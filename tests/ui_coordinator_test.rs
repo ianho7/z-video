@@ -11,6 +11,7 @@ fn test_app_coordinator_initialization() {
     let coordinator = coordinator_res.unwrap();
     let window = coordinator.window();
 
+    assert_eq!(window.get_is_logged_in(), false);
     assert_eq!(window.get_playback_status(), "Idle");
     assert_eq!(window.get_is_playing(), false);
     assert_eq!(window.get_engine_name(), "MockPlayer (Fallback / Verification)");
