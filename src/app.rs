@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use log::{error, info, warn};
@@ -9,10 +10,11 @@ use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use crate::media::image_cache::{decode_to_slint_image, ImageCache};
 use crate::nas::auth::AuthError;
 use crate::nas::client::{HttpNasClient, NasClient};
-use crate::nas::models::{CollectionDetail, CollectionItem, NasError};
+use crate::nas::models::{CollectionDetail, CollectionItem, Episode, NasError};
 use crate::nas::session::NasSession;
 use crate::player::state::{PlaybackState, PlayerEvent};
 use crate::player::traits::Player;
+use crate::playback::PlaybackSession;
 use crate::storage::credentials::{
     CredentialStore, KeyringCredentialStore, SavedCredentials,
 };
@@ -28,6 +30,10 @@ pub struct AppCoordinator {
     session: Arc<NasSession>,
     credential_store: Arc<dyn CredentialStore>,
     image_cache: ImageCache,
+    detail_state: Arc<Mutex<Option<CollectionDetail>>>,
+    detail_request_generation: Arc<AtomicU64>,
+    playback_request_generation: Arc<AtomicU64>,
+    playback_session: Arc<Mutex<Option<PlaybackSession>>>,
     #[cfg(windows)]
     video_surface: Arc<Mutex<Option<Win32VideoSurface>>>,
     timer: slint::Timer,
@@ -62,6 +68,7 @@ impl AppCoordinator {
 
         let session = Arc::new(NasSession::default());
         let image_cache = ImageCache::default();
+        let detail_state = Arc::new(Mutex::new(None));
 
         let coordinator = Self {
             ui,
@@ -70,6 +77,10 @@ impl AppCoordinator {
             session,
             credential_store,
             image_cache,
+            detail_state,
+            detail_request_generation: Arc::new(AtomicU64::new(0)),
+            playback_request_generation: Arc::new(AtomicU64::new(0)),
+            playback_session: Arc::new(Mutex::new(None)),
             #[cfg(windows)]
             video_surface,
             timer: slint::Timer::default(),
@@ -95,6 +106,10 @@ impl AppCoordinator {
 
     pub fn image_cache(&self) -> &ImageCache {
         &self.image_cache
+    }
+
+    pub fn playback_session(&self) -> Option<PlaybackSession> {
+        self.playback_session.lock().unwrap().clone()
     }
 
     /// Synchronously performs login and updates session & UI state.
@@ -124,11 +139,17 @@ impl AppCoordinator {
     pub fn perform_logout(&self) {
         let _ = self.player.stop();
         self.session.clear();
+        self.detail_request_generation.fetch_add(1, Ordering::SeqCst);
+        self.playback_request_generation.fetch_add(1, Ordering::SeqCst);
+        *self.detail_state.lock().unwrap() = None;
+        *self.playback_session.lock().unwrap() = None;
 
         self.ui.set_is_logged_in(false);
         self.ui.set_login_status_hint("已安全退出会话。可重新输入凭据登录。".into());
         self.ui.set_classifications(ModelRc::new(VecModel::default()));
         self.ui.set_collections(ModelRc::new(VecModel::default()));
+        self.ui.set_playback_loading(false);
+        self.ui.set_playback_error("".into());
 
         #[cfg(windows)]
         if let Some(surface) = self.video_surface.lock().unwrap().as_ref() {
@@ -322,9 +343,18 @@ impl AppCoordinator {
         nas_client: Arc<dyn NasClient>,
         session: Arc<NasSession>,
         image_cache: ImageCache,
+        detail_state: Arc<Mutex<Option<CollectionDetail>>>,
+        detail_request_generation: Arc<AtomicU64>,
+        playback_request_generation: Arc<AtomicU64>,
+        playback_session: Arc<Mutex<Option<PlaybackSession>>>,
         collection_id: String,
         classification_id: String,
     ) {
+        let request_generation = detail_request_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        playback_request_generation.fetch_add(1, Ordering::SeqCst);
+        *detail_state.lock().unwrap() = None;
+        *playback_session.lock().unwrap() = None;
+
         if let Some(ui) = ui_weak.upgrade() {
             ui.set_current_view("detail".into());
             ui.set_detail_collection_id(collection_id.clone().into());
@@ -342,11 +372,15 @@ impl AppCoordinator {
             ui.set_selected_episode_id("".into());
             ui.set_detail_loading(true);
             ui.set_detail_error("".into());
+            ui.set_playback_loading(false);
+            ui.set_playback_error("".into());
             ui.set_status_message("正在后台加载影视详情...".into());
         }
 
         let request_id = collection_id.clone();
         let ui_weak_bg = ui_weak.clone();
+        let detail_state_bg = Arc::clone(&detail_state);
+        let detail_request_generation_bg = Arc::clone(&detail_request_generation);
         std::thread::spawn(move || {
             let detail_result = nas_client.get_collection_detail(
                 &session,
@@ -367,7 +401,8 @@ impl AppCoordinator {
 
             let _ = slint::invoke_from_event_loop(move || {
                 let Some(ui) = ui_weak_bg.upgrade() else { return };
-                if ui.get_current_view() != "detail"
+                if detail_request_generation_bg.load(Ordering::SeqCst) != request_generation
+                    || ui.get_current_view() != "detail"
                     || ui.get_detail_collection_id().as_str() != request_id
                 {
                     return;
@@ -376,6 +411,7 @@ impl AppCoordinator {
                 ui.set_detail_loading(false);
                 match detail_result {
                     Ok(detail) => {
+                        *detail_state_bg.lock().unwrap() = Some(detail.clone());
                         apply_collection_detail(
                             &ui,
                             detail,
@@ -384,8 +420,111 @@ impl AppCoordinator {
                         );
                     }
                     Err(err) => {
+                        *detail_state_bg.lock().unwrap() = None;
                         ui.set_detail_error(err.user_recovery_hint().into());
                         ui.set_status_message("影视详情加载失败，请返回片库后重试。".into());
+                    }
+                }
+            });
+        });
+    }
+
+    fn find_episode(
+        detail_state: &Arc<Mutex<Option<CollectionDetail>>>,
+        episode_id: &str,
+    ) -> Option<Episode> {
+        let detail = detail_state.lock().ok()?;
+        detail.as_ref()?.seasons.iter().flat_map(|season| season.episodes.iter()).find(
+            |episode| episode.selection_id() == episode_id,
+        ).cloned()
+    }
+
+    fn start_playback_load(
+        ui_weak: slint::Weak<AppWindow>,
+        nas_client: Arc<dyn NasClient>,
+        session: Arc<NasSession>,
+        player: Arc<dyn Player>,
+        detail_state: Arc<Mutex<Option<CollectionDetail>>>,
+        playback_session: Arc<Mutex<Option<PlaybackSession>>>,
+        playback_request_generation: Arc<AtomicU64>,
+        collection_id: String,
+        classification_id: String,
+        episode_id: String,
+    ) {
+        let Some(ui) = ui_weak.upgrade() else { return };
+        let Some(episode) = Self::find_episode(&detail_state, &episode_id) else {
+            ui.set_playback_loading(false);
+            ui.set_playback_error("当前详情没有可播放的 Episode。".into());
+            return;
+        };
+
+        let request_generation =
+            playback_request_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        *playback_session.lock().unwrap() = None;
+        ui.set_playback_loading(true);
+        ui.set_playback_error("".into());
+        ui.set_status_message("正在后台获取媒体流地址...".into());
+
+        let ui_weak_bg = ui_weak.clone();
+        let playback_request_generation_bg = Arc::clone(&playback_request_generation);
+        std::thread::spawn(move || {
+            let playback_result = match nas_client.get_playback_stream(&session, &episode) {
+                Ok(stream) => {
+                    if playback_request_generation_bg.load(Ordering::SeqCst) != request_generation {
+                        return;
+                    }
+
+                    match player.load_media(&stream.uri) {
+                        Ok(()) => {
+                            let state = player.state();
+                            if playback_request_generation_bg.load(Ordering::SeqCst)
+                                != request_generation
+                            {
+                                return;
+                            }
+                            Ok((stream, state))
+                        }
+                        Err(_) => Err("播放器加载媒体失败，请重试。".to_string()),
+                    }
+                }
+                Err(err) => Err(format!(
+                    "播放地址加载失败：{}",
+                    err.user_recovery_hint()
+                )),
+            };
+
+            if playback_request_generation_bg.load(Ordering::SeqCst) != request_generation {
+                return;
+            }
+
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = ui_weak_bg.upgrade() else { return };
+                if playback_request_generation_bg.load(Ordering::SeqCst) != request_generation
+                    || ui.get_current_view() != "detail"
+                    || ui.get_detail_collection_id().as_str() != collection_id
+                    || ui.get_selected_episode_id().as_str() != episode_id
+                {
+                    return;
+                }
+
+                ui.set_playback_loading(false);
+                match playback_result {
+                    Ok((stream, state)) => {
+                        *playback_session.lock().unwrap() = Some(PlaybackSession::new(
+                            collection_id,
+                            classification_id,
+                            episode_id,
+                            stream,
+                            state,
+                        ));
+                        ui.set_playback_error("".into());
+                        ui.set_current_view("player".into());
+                        ui.set_status_message("媒体流已加载，已进入播放器。".into());
+                    }
+                    Err(error) => {
+                        *playback_session.lock().unwrap() = None;
+                        ui.set_playback_error(error.into());
+                        ui.set_status_message("播放加载失败，请重试。".into());
                     }
                 }
             });
@@ -609,6 +748,10 @@ impl AppCoordinator {
         let nas_client = Arc::clone(&self.nas_client);
         let session = Arc::clone(&self.session);
         let image_cache = self.image_cache.clone();
+        let detail_state = Arc::clone(&self.detail_state);
+        let detail_request_generation = Arc::clone(&self.detail_request_generation);
+        let playback_request_generation = Arc::clone(&self.playback_request_generation);
+        let playback_session = Arc::clone(&self.playback_session);
         self.ui.on_collection_clicked(move |col_id| {
             let Some(ui) = ui_weak.upgrade() else { return };
             let classification_id = ui.get_selected_classification_id().to_string();
@@ -618,40 +761,90 @@ impl AppCoordinator {
                 Arc::clone(&nas_client),
                 Arc::clone(&session),
                 image_cache.clone(),
+                Arc::clone(&detail_state),
+                Arc::clone(&detail_request_generation),
+                Arc::clone(&playback_request_generation),
+                Arc::clone(&playback_session),
                 col_id.to_string(),
                 classification_id,
             );
         });
 
         let ui_weak = self.ui.as_weak();
+        let detail_state = Arc::clone(&self.detail_state);
+        let detail_request_generation = Arc::clone(&self.detail_request_generation);
+        let playback_request_generation = Arc::clone(&self.playback_request_generation);
+        let playback_session = Arc::clone(&self.playback_session);
+        let player = Arc::clone(&self.player);
         self.ui.on_switch_view(move |view_name| {
             let Some(ui) = ui_weak.upgrade() else { return };
             info!("Switching workspace view to: {}", view_name);
+            if view_name.as_str() != "detail" {
+                detail_request_generation.fetch_add(1, Ordering::SeqCst);
+                playback_request_generation.fetch_add(1, Ordering::SeqCst);
+                *detail_state.lock().unwrap() = None;
+                *playback_session.lock().unwrap() = None;
+                ui.set_playback_loading(false);
+                ui.set_playback_error("".into());
+            }
+            if view_name.as_str() != "player" && ui.get_current_view() == "player" {
+                let _ = player.stop();
+            }
             ui.set_current_view(view_name);
         });
 
         let ui_weak = self.ui.as_weak();
+        let detail_state = Arc::clone(&self.detail_state);
+        let detail_request_generation = Arc::clone(&self.detail_request_generation);
+        let playback_request_generation = Arc::clone(&self.playback_request_generation);
+        let playback_session = Arc::clone(&self.playback_session);
         self.ui.on_detail_back_clicked(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
+            detail_request_generation.fetch_add(1, Ordering::SeqCst);
+            playback_request_generation.fetch_add(1, Ordering::SeqCst);
+            *detail_state.lock().unwrap() = None;
+            *playback_session.lock().unwrap() = None;
+            ui.set_playback_loading(false);
+            ui.set_playback_error("".into());
             ui.set_current_view("library".into());
             ui.set_status_message("已返回片库，保留当前分类和浏览位置。".into());
         });
 
         let ui_weak = self.ui.as_weak();
+        let playback_request_generation = Arc::clone(&self.playback_request_generation);
         self.ui.on_episode_selected(move |episode_id| {
             let Some(ui) = ui_weak.upgrade() else { return };
+            playback_request_generation.fetch_add(1, Ordering::SeqCst);
             AppCoordinator::select_episode_in_ui(&ui, episode_id.as_str());
+            ui.set_playback_loading(false);
+            ui.set_playback_error("".into());
             ui.set_status_message("已切换选中剧集，可从详情页播放入口继续。".into());
         });
 
         let ui_weak = self.ui.as_weak();
+        let nas_client = Arc::clone(&self.nas_client);
+        let session = Arc::clone(&self.session);
+        let player = Arc::clone(&self.player);
+        let detail_state = Arc::clone(&self.detail_state);
+        let playback_session = Arc::clone(&self.playback_session);
+        let playback_request_generation = Arc::clone(&self.playback_request_generation);
         self.ui.on_play_episode_clicked(move |episode_id| {
             let Some(ui) = ui_weak.upgrade() else { return };
-            if episode_id.is_empty() {
-                ui.set_detail_error("当前详情没有可播放的 Episode。".into());
-            } else {
-                ui.set_status_message(format!("已选择 Episode {}，等待播放模块接入媒体流。", episode_id).into());
-            }
+            let episode_id = episode_id.to_string();
+            let collection_id = ui.get_detail_collection_id().to_string();
+            let classification_id = ui.get_selected_classification_id().to_string();
+            AppCoordinator::start_playback_load(
+                ui_weak.clone(),
+                Arc::clone(&nas_client),
+                Arc::clone(&session),
+                Arc::clone(&player),
+                Arc::clone(&detail_state),
+                Arc::clone(&playback_session),
+                Arc::clone(&playback_request_generation),
+                collection_id,
+                classification_id,
+                episode_id,
+            );
         });
     }
 
@@ -754,6 +947,10 @@ impl AppCoordinator {
         let ui_weak = self.ui.as_weak();
         let session = Arc::clone(&self.session);
         let player = Arc::clone(&self.player);
+        let detail_state = Arc::clone(&self.detail_state);
+        let detail_request_generation = Arc::clone(&self.detail_request_generation);
+        let playback_request_generation = Arc::clone(&self.playback_request_generation);
+        let playback_session = Arc::clone(&self.playback_session);
 
         #[cfg(windows)]
         let surface_mutex = Arc::clone(&self.video_surface);
@@ -764,11 +961,17 @@ impl AppCoordinator {
 
             let _ = player.stop();
             session.clear();
+            detail_request_generation.fetch_add(1, Ordering::SeqCst);
+            playback_request_generation.fetch_add(1, Ordering::SeqCst);
+            *detail_state.lock().unwrap() = None;
+            *playback_session.lock().unwrap() = None;
 
             ui.set_is_logged_in(false);
             ui.set_login_status_hint("已安全退出会话。可重新输入凭据登录。".into());
             ui.set_classifications(ModelRc::new(VecModel::default()));
             ui.set_collections(ModelRc::new(VecModel::default()));
+            ui.set_playback_loading(false);
+            ui.set_playback_error("".into());
 
             #[cfg(windows)]
             if let Some(surface) = surface_mutex.lock().unwrap().as_ref() {
@@ -779,18 +982,23 @@ impl AppCoordinator {
 
     fn setup_player_events(&self) {
         let ui_weak = self.ui.as_weak();
+        let playback_session = Arc::clone(&self.playback_session);
 
         self.player.add_event_listener(Box::new(move |event| {
             let ui_weak = ui_weak.clone();
+            let playback_session = Arc::clone(&playback_session);
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = ui_weak.upgrade() {
                     match event {
                         PlayerEvent::StateChanged(state) => {
+                            if let Some(session) = playback_session.lock().unwrap().as_mut() {
+                                session.state = state;
+                            }
                             ui.set_playback_status(state.to_string().into());
                             ui.set_is_playing(state == PlaybackState::Playing);
                             match state {
                                 PlaybackState::Playing => {
-                                    ui.set_status_message("正在播放测试视频... UI 交互保持完全非阻塞".into());
+                                    ui.set_status_message("正在播放当前媒体... UI 交互保持完全非阻塞".into());
                                 }
                                 PlaybackState::Paused => {
                                     ui.set_status_message("已暂停播放。可点击继续播放。".into());

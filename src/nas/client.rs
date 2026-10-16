@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use log::info;
+use serde::Deserialize;
 
 use crate::nas::auth::{ApiResponse, AuthError, LoginResponseData, NasPubKeyData};
 use crate::nas::crypto::{encrypt_credential, parse_public_key};
@@ -8,6 +9,7 @@ use crate::nas::models::{
     ClassificationItem, CollectionDetail, CollectionItem, CollectionPage, Episode, NasError, Season,
 };
 use crate::nas::session::NasSession;
+use crate::playback::PlaybackStream;
 
 /// Trait defining the core LAN authentication and media library protocol with a Z-Space NAS.
 pub trait NasClient: Send + Sync {
@@ -43,6 +45,13 @@ pub trait NasClient: Send + Sync {
         collection_id: &str,
         classification_id: &str,
     ) -> Result<CollectionDetail, NasError>;
+
+    /// Resolves a selected Episode into a NAS-provided media URI.
+    fn get_playback_stream(
+        &self,
+        session: &NasSession,
+        episode: &Episode,
+    ) -> Result<PlaybackStream, NasError>;
 
     /// Fetches image raw bytes from the NAS.
     fn fetch_image(&self, session: &NasSession, image_path: &str) -> Result<Vec<u8>, NasError>;
@@ -372,6 +381,88 @@ impl NasClient for HttpNasClient {
             .ok_or_else(|| NasError::MalformedResponse("响应缺少影视详情数据".to_string()))
     }
 
+    fn get_playback_stream(
+        &self,
+        session: &NasSession,
+        episode: &Episode,
+    ) -> Result<PlaybackStream, NasError> {
+        let base_url = session.base_url();
+        let token = session.token().filter(|value| !value.trim().is_empty()).ok_or(NasError::Unauthorized)?;
+        let file_path = episode.file_path.trim();
+        if file_path.is_empty() {
+            return Err(NasError::MalformedResponse(
+                "Episode 缺少 file_path，无法请求播放地址".to_string(),
+            ));
+        }
+
+        let encrypted_path = episode
+            .encrypted_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let route = if encrypted_path.is_some() {
+            "/transcode/decrypt/play"
+        } else {
+            "/transcode/play"
+        };
+        let url = format!("{}{}", base_url.trim_end_matches('/'), route);
+
+        let mut request = self
+            .agent
+            .get(&url)
+            .query("token", &token)
+            .query("file_path", file_path)
+            .query("play_env", "1")
+            .query("video_codec", "hevc,h264,mpeg4")
+            .query("support_format", "3")
+            .query("audio_index", "0")
+            .query("subtitle_index", "0")
+            .query("dest_fmt", "OP")
+            .set("token", &token)
+            .set("Cookie", &format!("token={}", token));
+
+        if let Some(encrypted_path) = encrypted_path {
+            request = request.query("encrypted_path", encrypted_path);
+        }
+        if let Some(from) = episode.from.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+            request = request.query("from", from);
+        }
+
+        let response = request
+            .call()
+            .map_err(|_| NasError::Network("获取播放地址请求失败".to_string()))?;
+
+        let status = response.status();
+        if status != 200 {
+            return Err(NasError::Http {
+                status,
+                message: "播放地址服务返回异常".to_string(),
+            });
+        }
+
+        let body: ApiResponse<PlaybackResponseData> = response
+            .into_json()
+            .map_err(|_| NasError::MalformedResponse("无法解析播放地址响应".to_string()))?;
+
+        if !body.is_success() {
+            return Err(NasError::Business {
+                code: body.code_str(),
+                message: body.error_message(),
+            });
+        }
+
+        let data = body
+            .data
+            .ok_or_else(|| NasError::MalformedResponse("播放地址响应缺少 data".to_string()))?;
+        let uri = data
+            .uri
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| NasError::MalformedResponse("播放地址响应缺少有效 URI".to_string()))?;
+        Ok(PlaybackStream {
+            uri: resolve_playback_uri(&base_url, &uri)?,
+        })
+    }
+
     fn fetch_image(&self, session: &NasSession, image_path: &str) -> Result<Vec<u8>, NasError> {
         let base_url = session.base_url();
         let full_url = if image_path.starts_with("http://") || image_path.starts_with("https://") {
@@ -419,6 +510,7 @@ pub struct MockNasClient {
     pub mock_classifications: Vec<ClassificationItem>,
     pub mock_collections: Vec<CollectionItem>,
     pub mock_collection_details: HashMap<String, CollectionDetail>,
+    pub mock_playback_uri: Option<String>,
 }
 
 impl Default for MockNasClient {
@@ -517,6 +609,8 @@ impl Default for MockNasClient {
                         file_path: "/media/interstellar.mkv".to_string(),
                         version_id: "c01-version".to_string(),
                         duration: Some("169m".to_string()),
+                        encrypted_path: None,
+                        from: None,
                     }],
                 }],
             },
@@ -545,6 +639,8 @@ impl Default for MockNasClient {
                                 file_path: "/media/series-s1e1.mkv".to_string(),
                                 version_id: "series-s1e1-v1".to_string(),
                                 duration: None,
+                                encrypted_path: None,
+                                from: None,
                             },
                             Episode {
                                 video_id: "series-s1e2".to_string(),
@@ -553,6 +649,8 @@ impl Default for MockNasClient {
                                 file_path: "/media/series-s1e2.mkv".to_string(),
                                 version_id: "series-s1e2-v1".to_string(),
                                 duration: None,
+                                encrypted_path: None,
+                                from: None,
                             },
                         ],
                     },
@@ -566,6 +664,8 @@ impl Default for MockNasClient {
                             file_path: "/media/series-s2e1.mkv".to_string(),
                             version_id: "series-s2e1-v1".to_string(),
                             duration: None,
+                            encrypted_path: None,
+                            from: None,
                         }],
                     },
                 ],
@@ -583,6 +683,7 @@ impl Default for MockNasClient {
             mock_classifications: classifications,
             mock_collections: collections,
             mock_collection_details,
+            mock_playback_uri: Some("/mock/playback/stream".to_string()),
         }
     }
 }
@@ -604,6 +705,16 @@ impl MockNasClient {
 
     pub fn with_empty_library(mut self) -> Self {
         self.mock_collections.clear();
+        self
+    }
+
+    pub fn with_playback_uri(mut self, uri: impl Into<String>) -> Self {
+        self.mock_playback_uri = Some(uri.into());
+        self
+    }
+
+    pub fn without_playback_uri(mut self) -> Self {
+        self.mock_playback_uri = None;
         self
     }
 }
@@ -770,6 +881,33 @@ impl NasClient for MockNasClient {
         })
     }
 
+    fn get_playback_stream(
+        &self,
+        session: &NasSession,
+        episode: &Episode,
+    ) -> Result<PlaybackStream, NasError> {
+        if self.network_error {
+            return Err(NasError::Network("无法获取播放地址，网络断开".to_string()));
+        }
+        if !session.is_authenticated() {
+            return Err(NasError::Unauthorized);
+        }
+        if episode.file_path.trim().is_empty() {
+            return Err(NasError::MalformedResponse(
+                "Episode 缺少 file_path，无法请求播放地址".to_string(),
+            ));
+        }
+
+        let uri = self
+            .mock_playback_uri
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| NasError::MalformedResponse("播放地址响应缺少有效 URI".to_string()))?;
+        Ok(PlaybackStream {
+            uri: uri.to_string(),
+        })
+    }
+
     fn fetch_image(&self, session: &NasSession, _image_path: &str) -> Result<Vec<u8>, NasError> {
         if self.network_error {
             return Err(NasError::Network("图片下载失败，网络中断".to_string()));
@@ -788,6 +926,32 @@ impl NasClient for MockNasClient {
         ];
         Ok(dummy_png)
     }
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct PlaybackResponseData {
+    #[serde(default, alias = "url", alias = "play_addr", alias = "play_url", alias = "address")]
+    uri: Option<String>,
+}
+
+fn resolve_playback_uri(base_url: &str, uri: &str) -> Result<String, NasError> {
+    let uri = uri.trim();
+    if uri.is_empty() {
+        return Err(NasError::MalformedResponse("播放地址响应缺少有效 URI".to_string()));
+    }
+    if uri.starts_with("http://") || uri.starts_with("https://") {
+        return Ok(uri.to_string());
+    }
+    let base_url = base_url.trim_end_matches('/');
+    if base_url.is_empty() {
+        return Err(NasError::MalformedResponse("NAS 会话缺少有效地址".to_string()));
+    }
+    let path = if uri.starts_with('/') {
+        uri.to_string()
+    } else {
+        format!("/{}", uri)
+    };
+    Ok(format!("{}{}", base_url, path))
 }
 
 #[cfg(test)]
