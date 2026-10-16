@@ -1,14 +1,34 @@
-import { Button, Slider } from "std-widgets.slint";
+import { Button, Slider, LineEdit, CheckBox } from "std-widgets.slint";
 
 export component AppWindow inherits Window {
     title: app_title;
-    min_width: 800px;
-    min_height: 600px;
-    preferred_width: 960px;
-    preferred_height: 680px;
+    min_width: 860px;
+    min_height: 640px;
+    preferred_width: 980px;
+    preferred_height: 700px;
     background: #121418;
 
-    in-out property <string> app_title: "z-video — Windows 原生播放引擎嵌入探针";
+    // View state
+    in-out property <bool> is_logged_in: false;
+
+    // Login Form State
+    in-out property <string> server_url_input: "192.168.1.100";
+    in-out property <string> username_input: "";
+    in-out property <string> password_input: "";
+    in-out property <string> sms_code_input: "";
+    in-out property <bool> show_sms_field: false;
+    in-out property <bool> remember_credentials: true;
+    in-out property <bool> login_loading: false;
+    in-out property <string> login_error_message: "";
+    in-out property <string> login_status_hint: "请输入极空间局域网 IP (默认端口 5055) 与管理账号密码";
+
+    // Active Authenticated Session Profile
+    in-out property <string> session_user: "";
+    in-out property <string> session_nas_name: "";
+    in-out property <string> session_base_url: "";
+
+    // App & Player Diagnostic Info
+    in-out property <string> app_title: "z-video — 极空间影视客户端 (局域网 NAS 认证与原生播放)";
     in-out property <string> engine_name: "libmpv 2.6 (Direct3D 11 / HWDEC)";
     in-out property <string> playback_status: "Idle";
     in-out property <string> media_path: "未载入测试视频";
@@ -16,14 +36,20 @@ export component AppWindow inherits Window {
     in-out property <float> progress_value: 0.0;
     in-out property <float> duration_value: 100.0;
     in-out property <bool> is_playing: false;
-    in-out property <string> status_message: "就绪。点击下方【载入样本视频】开始测试原生渲染。";
+    in-out property <string> status_message: "就绪。已通过局域网安全鉴权。";
     in-out property <int> ui_heartbeat_count: 0;
 
-    out property <length> video_area_x: video_container.x;
-    out property <length> video_area_y: video_container.y;
-    out property <length> video_area_width: video_container.width;
-    out property <length> video_area_height: video_container.height;
+    // Video surface layout geometry for Win32 child HWND embedding
+    out property <length> video_area_x: root.is_logged_in ? video_container.x : 0px;
+    out property <length> video_area_y: root.is_logged_in ? video_container.y : 0px;
+    out property <length> video_area_width: root.is_logged_in ? video_container.width : 0px;
+    out property <length> video_area_height: root.is_logged_in ? video_container.height : 0px;
 
+    // Authentication Callbacks
+    callback login_requested(string, string, string, string, bool);
+    callback logout_requested();
+
+    // Player Callbacks
     callback play_clicked();
     callback pause_clicked();
     callback toggle_pause_clicked();
@@ -32,13 +58,284 @@ export component AppWindow inherits Window {
     callback seek_absolute(float);
     callback load_sample_clicked();
 
+    // ==========================================
+    // 1. LOGIN VIEW (Visible when !is_logged_in)
+    // ==========================================
+    if !root.is_logged_in: VerticalLayout {
+        padding: 24px;
+        spacing: 16px;
+        alignment: center;
+
+        // Top Status Line
+        HorizontalLayout {
+            alignment: space_between;
+
+            HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    text: "z-video 极空间影视客户端";
+                    color: #ffffff;
+                    font_size: 16px;
+                    font_weight: 700;
+                    vertical_alignment: center;
+                }
+                Rectangle {
+                    background: #2a3340;
+                    border_radius: 4px;
+                    height: 22px;
+                    HorizontalLayout {
+                        padding_left: 6px;
+                        padding_right: 6px;
+                        Text {
+                            text: root.engine_name;
+                            color: #64b5f6;
+                            font_size: 11px;
+                            vertical_alignment: center;
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                background: #232830;
+                border_radius: 4px;
+                height: 22px;
+                HorizontalLayout {
+                    padding_left: 8px;
+                    padding_right: 8px;
+                    Text {
+                        text: "UI 线程活跃 (tick: " + root.ui_heartbeat_count + ")";
+                        color: #81c784;
+                        font_size: 11px;
+                        vertical_alignment: center;
+                    }
+                }
+            }
+        }
+
+        // Center Login Card
+        Rectangle {
+            horizontal_stretch: 0;
+            width: 480px;
+            background: #1c2026;
+            border_radius: 12px;
+            border_color: #2e3846;
+            border_width: 1px;
+
+            VerticalLayout {
+                padding: 28px;
+                spacing: 16px;
+
+                // Card Header
+                VerticalLayout {
+                    spacing: 4px;
+                    Text {
+                        text: "局域网 NAS 安全登录";
+                        color: #ffffff;
+                        font_size: 18px;
+                        font_weight: 700;
+                        horizontal_alignment: center;
+                    }
+                    Text {
+                        text: root.login_status_hint;
+                        color: #90a4ae;
+                        font_size: 12px;
+                        horizontal_alignment: center;
+                        wrap: word-wrap;
+                    }
+                }
+
+                // Error Banner (Visible when error message present)
+                if root.login_error_message != "": Rectangle {
+                    background: #381a1d;
+                    border_color: #e53935;
+                    border_width: 1px;
+                    border_radius: 6px;
+
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 4px;
+
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Text {
+                                text: "⚠ 认证或连接异常";
+                                color: #ff8a80;
+                                font_size: 12px;
+                                font_weight: 700;
+                            }
+                        }
+
+                        Text {
+                            text: root.login_error_message;
+                            color: #ffebee;
+                            font_size: 12px;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+
+                // Field 1: NAS Address
+                VerticalLayout {
+                    spacing: 4px;
+                    Text {
+                        text: "极空间访问地址 (LAN IP / Host)";
+                        color: #cfd8dc;
+                        font_size: 12px;
+                        font_weight: 500;
+                    }
+                    LineEdit {
+                        text: root.server_url_input;
+                        placeholder_text: "例如: 192.168.1.100 或 192.168.1.100:5055";
+                        enabled: !root.login_loading;
+                        edited(val) => { root.server_url_input = val; }
+                    }
+                }
+
+                // Field 2: Username
+                VerticalLayout {
+                    spacing: 4px;
+                    Text {
+                        text: "账号 (Username)";
+                        color: #cfd8dc;
+                        font_size: 12px;
+                        font_weight: 500;
+                    }
+                    LineEdit {
+                        text: root.username_input;
+                        placeholder_text: "请输入极空间账号 / 手机号";
+                        enabled: !root.login_loading;
+                        edited(val) => { root.username_input = val; }
+                    }
+                }
+
+                // Field 3: Password
+                VerticalLayout {
+                    spacing: 4px;
+                    Text {
+                        text: "密码 (Password - RSA 公钥独立加密传输)";
+                        color: #cfd8dc;
+                        font_size: 12px;
+                        font_weight: 500;
+                    }
+                    LineEdit {
+                        text: root.password_input;
+                        placeholder_text: "请输入登录密码";
+                        input_type: password;
+                        enabled: !root.login_loading;
+                        edited(val) => { root.password_input = val; }
+                        accepted => {
+                            if !root.login_loading && root.server_url_input != "" && root.username_input != "" {
+                                root.login_requested(
+                                    root.server_url_input,
+                                    root.username_input,
+                                    root.password_input,
+                                    root.sms_code_input,
+                                    root.remember_credentials
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // Field 4: SMS / MFA Code (Highlighted if required, or optional)
+                VerticalLayout {
+                    spacing: 4px;
+                    HorizontalLayout {
+                        alignment: space_between;
+                        Text {
+                            text: "短信/安全验证码 (SMS Code)";
+                            color: root.show_sms_field ? #ffb74d : #90a4ae;
+                            font_size: 12px;
+                            font_weight: root.show_sms_field ? 700 : 400;
+                        }
+                        if root.show_sms_field: Text {
+                            text: "【必须输入验证码以完成二次鉴权】";
+                            color: #ffb74d;
+                            font_size: 11px;
+                        }
+                    }
+                    LineEdit {
+                        text: root.sms_code_input;
+                        placeholder_text: root.show_sms_field ? "请输入收到的短信/邮件验证码" : "如开启两步验证或遇到新设备验证时输入";
+                        enabled: !root.login_loading;
+                        edited(val) => { root.sms_code_input = val; }
+                        accepted => {
+                            if !root.login_loading && root.server_url_input != "" && root.username_input != "" {
+                                root.login_requested(
+                                    root.server_url_input,
+                                    root.username_input,
+                                    root.password_input,
+                                    root.sms_code_input,
+                                    root.remember_credentials
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // Options Row: Remember Credentials
+                HorizontalLayout {
+                    alignment: space_between;
+                    CheckBox {
+                        text: "记住登录凭证 (安全存储至系统凭据管理器)";
+                        checked: root.remember_credentials;
+                        toggled => {
+                            root.remember_credentials = !root.remember_credentials;
+                        }
+                    }
+                }
+
+                // Submit Login Button
+                Button {
+                    text: root.login_loading ? "正在连接 NAS 并验证身份..." : "登 录 (Login)";
+                    primary: true;
+                    enabled: !root.login_loading && root.server_url_input != "" && root.username_input != "";
+                    clicked => {
+                        root.login_requested(
+                            root.server_url_input,
+                            root.username_input,
+                            root.password_input,
+                            root.sms_code_input,
+                            root.remember_credentials
+                        );
+                    }
+                }
+
+                // Loading Diagnostic note
+                if root.login_loading: HorizontalLayout {
+                    alignment: center;
+                    Text {
+                        text: "正在执行局域网 RSA 密钥握手与独立加密校验...";
+                        color: #64b5f6;
+                        font_size: 12px;
+                    }
+                }
+            }
+        }
+
+        // Bottom Footer
+        HorizontalLayout {
+            alignment: center;
+            Text {
+                text: "极空间原生轻量客户端 — 凭据通过系统安全凭据管理器加密保存，绝不明文输出";
+                color: #546e7a;
+                font_size: 11px;
+            }
+        }
+    }
+
+    // ==========================================
+    // 2. PLAYER VIEW (Visible when is_logged_in)
+    // ==========================================
     VerticalLayout {
+        visible: root.is_logged_in;
         padding: 16px;
         spacing: 12px;
 
         // Top Header Bar
         Rectangle {
-            height: 50px;
+            height: 52px;
             background: #1c2026;
             border_radius: 8px;
 
@@ -47,13 +344,15 @@ export component AppWindow inherits Window {
                 padding_right: 16px;
                 alignment: space_between;
 
-                // Left: Title and Engine Info
+                // Left: Title, Engine, and Active Session Badge
                 HorizontalLayout {
-                    spacing: 12px;
+                    spacing: 10px;
+                    y: 13px;
+
                     Text {
                         text: "z-video 极空间影视客户端";
                         color: #ffffff;
-                        font_size: 16px;
+                        font_size: 15px;
                         font_weight: 700;
                         vertical_alignment: center;
                     }
@@ -62,7 +361,6 @@ export component AppWindow inherits Window {
                         background: #2a3340;
                         border_radius: 4px;
                         height: 24px;
-                        y: 13px;
 
                         HorizontalLayout {
                             padding_left: 8px;
@@ -75,14 +373,34 @@ export component AppWindow inherits Window {
                             }
                         }
                     }
+
+                    // Authenticated Session Indicator
+                    Rectangle {
+                        background: #1e3a2f;
+                        border_color: #2e7d32;
+                        border_width: 1px;
+                        border_radius: 4px;
+                        height: 24px;
+
+                        HorizontalLayout {
+                            padding_left: 8px;
+                            padding_right: 8px;
+                            Text {
+                                text: "NAS: " + (root.session_nas_name != "" ? root.session_nas_name : root.session_base_url) + " (" + root.session_user + ")";
+                                color: #a5d6a7;
+                                font_size: 11px;
+                                font_weight: 600;
+                                vertical_alignment: center;
+                            }
+                        }
+                    }
                 }
 
-                // Right: Status Badge & UI heartbeat
+                // Right: Status Badge, Heartbeat & Logout
                 HorizontalLayout {
-                    spacing: 12px;
+                    spacing: 10px;
                     y: 13px;
 
-                    // Heartbeat indicator showing UI thread is non-blocking and active
                     Rectangle {
                         background: #232830;
                         border_radius: 4px;
@@ -100,7 +418,6 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    // Playback Status Badge
                     Rectangle {
                         background: root.playback_status == "Playing" ? #1b5e20 :
                                     root.playback_status == "Paused" ? #e65100 :
@@ -120,6 +437,13 @@ export component AppWindow inherits Window {
                             }
                         }
                     }
+
+                    Button {
+                        text: "注销会话";
+                        clicked => {
+                            root.logout_requested();
+                        }
+                    }
                 }
             }
         }
@@ -131,7 +455,6 @@ export component AppWindow inherits Window {
             border_radius: 6px;
             clip: true;
 
-            // Placeholder hint shown when no video is rendered or before surface attachment
             VerticalLayout {
                 alignment: center;
                 spacing: 8px;
