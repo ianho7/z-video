@@ -18,9 +18,7 @@ use crate::nas::session::NasSession;
 #[cfg(windows)]
 use crate::platform::Win32VideoSurface;
 use crate::playback::{PlaybackSession, PlaybackStream};
-use crate::player::state::{
-    PlaybackControlState, PlaybackProgress, PlaybackState, PlayerError, PlayerEvent,
-};
+use crate::player::state::{PlaybackControlState, PlaybackProgress, PlaybackState, PlayerEvent};
 use crate::player::traits::Player;
 use crate::storage::credentials::{CredentialStore, KeyringCredentialStore, SavedCredentials};
 
@@ -1368,19 +1366,13 @@ impl AppCoordinator {
             let duration = ui.get_duration_value() as f64;
             let target = (cur + offset as f64).max(0.0);
             info!("UI: seek relative by {}, target: {}", offset, target);
-            match request_seek(&player, &controls, target, duration) {
-                Ok(target) => {
-                    ui.set_progress_value(target as f32);
-                    ui.set_time_label(
-                        PlaybackProgress::new(target, duration)
-                            .formatted_time()
-                            .into(),
-                    );
-                }
-                Err(e) => {
-                    warn!("seek error: {}", e);
-                }
-            }
+            let target = request_seek(&player, &controls, ui_weak.clone(), target, duration);
+            ui.set_progress_value(target as f32);
+            ui.set_time_label(
+                PlaybackProgress::new(target, duration)
+                    .formatted_time()
+                    .into(),
+            );
         });
 
         let player = Arc::clone(&self.player);
@@ -1390,9 +1382,7 @@ impl AppCoordinator {
             let Some(ui) = ui_weak.upgrade() else { return };
             let duration = ui.get_duration_value() as f64;
             info!("UI: seek absolute to {}", target);
-            if let Err(e) = request_seek(&player, &controls, target as f64, duration) {
-                warn!("seek error: {}", e);
-            }
+            request_seek(&player, &controls, ui_weak.clone(), target as f64, duration);
         });
 
         let player = Arc::clone(&self.player);
@@ -1521,9 +1511,10 @@ fn fetch_detail_image(
 fn request_seek(
     player: &Arc<dyn Player>,
     controls: &Arc<Mutex<PlaybackControlState>>,
+    ui_weak: slint::Weak<AppWindow>,
     position_secs: f64,
     duration_secs: f64,
-) -> Result<f64, PlayerError> {
+) -> f64 {
     let (generation, target) = {
         let mut controls = controls.lock().unwrap();
         let generation = controls.preview_seek(position_secs, duration_secs);
@@ -1531,21 +1522,31 @@ fn request_seek(
         (generation, target)
     };
 
-    match player.seek(target) {
-        Ok(()) => {
-            let controls = Arc::clone(controls);
-            // The target ProgressChanged normally ends the guard. This fixed
-            // timer is only a fallback for engines that never report it.
-            slint::Timer::single_shot(Duration::from_millis(150), move || {
-                controls.lock().unwrap().finish_seek(generation);
-            });
-            Ok(target)
-        }
-        Err(err) => {
-            controls.lock().unwrap().finish_seek(generation);
-            Err(err)
-        }
-    }
+    let player = Arc::clone(player);
+    let controls = Arc::clone(controls);
+    std::thread::spawn(move || {
+        let seek_result = player.seek(target);
+        let _ = slint::invoke_from_event_loop(move || match seek_result {
+            Ok(()) => {
+                let controls = Arc::clone(&controls);
+                // The target ProgressChanged normally ends the guard. This fixed
+                // timer is only a fallback for engines that never report it.
+                slint::Timer::single_shot(Duration::from_millis(150), move || {
+                    controls.lock().unwrap().finish_seek(generation);
+                });
+            }
+            Err(error) => {
+                // Only the current generation may clear the guard or report an error.
+                if controls.lock().unwrap().finish_seek(generation) {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        ui.set_status_message(format!("seek error: {}", error).into());
+                    }
+                }
+            }
+        });
+    });
+
+    target
 }
 
 fn apply_collection_detail(
