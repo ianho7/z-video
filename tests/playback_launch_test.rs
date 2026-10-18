@@ -47,7 +47,6 @@ fn logged_in_coordinator(nas_client: MockNasClient) -> (AppCoordinator, Arc<Mock
     (coordinator, player)
 }
 
-#[test]
 fn coordinator_launches_playback_and_reports_stream_failure() {
     let (coordinator, player) = logged_in_coordinator(MockNasClient::new());
     coordinator
@@ -102,7 +101,6 @@ fn coordinator_launches_playback_and_reports_stream_failure() {
     assert!(coordinator.playback_session().is_none());
 }
 
-#[test]
 fn playback_returns_to_preserved_detail_and_can_start_again() {
     let (coordinator, player) = logged_in_coordinator(MockNasClient::new());
     coordinator
@@ -132,7 +130,6 @@ fn playback_returns_to_preserved_detail_and_can_start_again() {
     assert_eq!(coordinator.window().get_current_view(), "player");
 }
 
-#[test]
 fn playback_progress_updates_session_and_emits_mock_receipt() {
     let player = Arc::new(MockPlayer::new());
     let nas_client = Arc::new(MockNasClient::new());
@@ -183,4 +180,11 @@ fn playback_progress_updates_session_and_emits_mock_receipt() {
     assert_eq!(receipt.audio_index, 0);
     assert_eq!(receipt.subtitle_index, 0);
     assert_eq!(receipt.video_duration, 120);
+}
+
+#[test]
+fn playback_launch_integration_suite() {
+    coordinator_launches_playback_and_reports_stream_failure();
+    playback_returns_to_preserved_detail_and_can_start_again();
+    playback_progress_updates_session_and_emits_mock_receipt();
 }

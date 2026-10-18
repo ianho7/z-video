@@ -3,7 +3,6 @@ use slint::ComponentHandle;
 use z_video::app::AppCoordinator;
 use z_video::player::MockPlayer;
 
-#[test]
 fn test_app_coordinator_initialization() {
     let mock_player = Arc::new(MockPlayer::new());
     let coordinator_res = AppCoordinator::new(mock_player, false);
@@ -18,7 +17,6 @@ fn test_app_coordinator_initialization() {
     assert_eq!(window.get_engine_name(), "MockPlayer (Fallback / Verification)");
 }
 
-#[test]
 fn test_app_coordinator_fullscreen_callback_toggles_window_state() {
     let mock_player = Arc::new(MockPlayer::new());
     let coordinator = AppCoordinator::new(mock_player, false).unwrap();
@@ -29,4 +27,10 @@ fn test_app_coordinator_fullscreen_callback_toggles_window_state() {
     assert!(window.window().is_fullscreen());
     window.invoke_fullscreen_clicked();
     assert!(!window.window().is_fullscreen());
+}
+
+#[test]
+fn app_coordinator_ui_suite() {
+    test_app_coordinator_initialization();
+    test_app_coordinator_fullscreen_callback_toggles_window_state();
 }

@@ -186,9 +186,13 @@ fn test_nas_auth_integration_comprehensive_suite() {
             err_msg
         );
     }
+
+    // -------------------------------------------------------------
+    // Scenario 6: Bare IP login stores a normalized session base URL
+    // -------------------------------------------------------------
+    successful_bare_ip_login_stores_normalized_session_base_url();
 }
 
-#[test]
 fn successful_bare_ip_login_stores_normalized_session_base_url() {
     let coordinator = AppCoordinator::with_deps(
         Arc::new(MockPlayer::new()),
