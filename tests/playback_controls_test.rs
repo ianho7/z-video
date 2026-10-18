@@ -30,6 +30,17 @@ fn stale_seek_release_cannot_clear_a_new_seek() {
 }
 
 #[test]
+fn target_progress_finishes_seek_but_old_progress_does_not() {
+    let mut controls = PlaybackControlState::default();
+
+    controls.preview_seek(80.0, 120.0);
+    assert!(!controls.finish_seek_from_progress(10.0));
+    assert!(controls.is_seek_in_progress());
+    assert!(controls.finish_seek_from_progress(80.0));
+    assert!(!controls.is_seek_in_progress());
+}
+
+#[test]
 fn fullscreen_state_toggles_without_creating_another_window() {
     let mut controls = PlaybackControlState::default();
 

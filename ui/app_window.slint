@@ -92,6 +92,7 @@ export component AppWindow inherits Window {
     in-out property <string> app_title: "z-video — 极空间影视客户端";
     in-out property <string> engine_name: "libmpv 2.6 (D3D11 / hwdec=auto-safe; runtime unverified)";
     in-out property <string> playback_status: "Idle";
+    in-out property <string> playback_track_status: "";
     in-out property <string> media_path: "未载入测试视频";
     in-out property <string> time_label: "00:00 / 00:00";
     in-out property <float> progress_value: 0.0;
@@ -130,6 +131,7 @@ export component AppWindow inherits Window {
     callback seek_absolute(float);
     callback fullscreen_clicked();
     callback load_sample_clicked();
+    callback return_to_detail_clicked();
 
     property <bool> osd_visible: true;
     osd_hide_timer := Timer {
@@ -1192,6 +1194,13 @@ export component AppWindow inherits Window {
                                 font_size: 12px;
                                 overflow: elide;
                             }
+
+                            Text {
+                                text: root.playback_track_status;
+                                color: #ffcc80;
+                                font_size: 11px;
+                                overflow: elide;
+                            }
                         }
 
                         HorizontalLayout {
@@ -1250,6 +1259,14 @@ export component AppWindow inherits Window {
                                 clicked => {
                                     root.show_osd();
                                     root.stop_clicked();
+                                }
+                            }
+
+                            Button {
+                                text: "返回详情";
+                                clicked => {
+                                    root.show_osd();
+                                    root.return_to_detail_clicked();
                                 }
                             }
 
