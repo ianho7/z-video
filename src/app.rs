@@ -1,28 +1,28 @@
+use log::{error, info, warn};
+use raw_window_handle::HasWindowHandle;
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use log::{error, info, warn};
-use raw_window_handle::HasWindowHandle;
-use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
-use crate::media::image_cache::{decode_to_slint_image, ImageCache, ImageRequestGate};
+use crate::media::image_cache::{
+    decode_image_pixels, slint_image_from_decoded, DecodedImage, ImageCache, ImageRequestGate,
+};
 use crate::nas::auth::sanitize_log_message;
 use crate::nas::auth::AuthError;
-use crate::nas::client::{HttpNasClient, NasClient};
+use crate::nas::client::{normalize_lan_url, HttpNasClient, NasClient};
 use crate::nas::models::{CollectionDetail, CollectionItem, Episode, NasError};
 use crate::nas::session::NasSession;
+#[cfg(windows)]
+use crate::platform::Win32VideoSurface;
+use crate::playback::{PlaybackSession, PlaybackStream};
 use crate::player::state::{
     PlaybackControlState, PlaybackProgress, PlaybackState, PlayerError, PlayerEvent,
 };
 use crate::player::traits::Player;
-use crate::playback::PlaybackSession;
-use crate::storage::credentials::{
-    CredentialStore, KeyringCredentialStore, SavedCredentials,
-};
-#[cfg(windows)]
-use crate::platform::Win32VideoSurface;
+use crate::storage::credentials::{CredentialStore, KeyringCredentialStore, SavedCredentials};
 
 slint::include_modules!();
 
@@ -46,7 +46,10 @@ pub struct AppCoordinator {
 
 impl AppCoordinator {
     /// Creates a new AppCoordinator with standard HTTP NAS client and OS keyring storage.
-    pub fn new(player: Arc<dyn Player>, is_native: bool) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(
+        player: Arc<dyn Player>,
+        is_native: bool,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let client = Arc::new(HttpNasClient::default());
         let store = Arc::new(KeyringCredentialStore::default());
         Self::with_deps(player, is_native, client, store)
@@ -72,11 +75,8 @@ impl AppCoordinator {
         let video_surface: Arc<Mutex<Option<Win32VideoSurface>>> = Arc::new(Mutex::new(None));
 
         let session = Arc::new(NasSession::default());
-        let image_cache = ImageCache::with_disk_cache(
-            default_image_cache_dir(),
-            100,
-            64 * 1024 * 1024,
-        );
+        let image_cache =
+            ImageCache::with_disk_cache(default_image_cache_dir(), 100, 64 * 1024 * 1024);
         let detail_state = Arc::new(Mutex::new(None));
 
         let coordinator = Self {
@@ -135,7 +135,9 @@ impl AppCoordinator {
         self.ui.set_login_loading(true);
         self.ui.set_login_error_message("".into());
 
-        let res = self.nas_client.login(server_url, username, password, sms_proof);
+        let res = self
+            .nas_client
+            .login(server_url, username, password, sms_proof);
         self.ui.set_login_loading(false);
         self.apply_login_result(server_url, username, password, remember, &res);
 
@@ -150,15 +152,19 @@ impl AppCoordinator {
     pub fn perform_logout(&self) {
         let _ = self.player.stop();
         self.session.clear();
-        self.detail_request_generation.fetch_add(1, Ordering::SeqCst);
-        self.playback_request_generation.fetch_add(1, Ordering::SeqCst);
+        self.detail_request_generation
+            .fetch_add(1, Ordering::SeqCst);
+        self.playback_request_generation
+            .fetch_add(1, Ordering::SeqCst);
         self.image_request_gate.cancel();
         *self.detail_state.lock().unwrap() = None;
         *self.playback_session.lock().unwrap() = None;
 
         self.ui.set_is_logged_in(false);
-        self.ui.set_login_status_hint("已安全退出会话。可重新输入凭据登录。".into());
-        self.ui.set_classifications(ModelRc::new(VecModel::default()));
+        self.ui
+            .set_login_status_hint("已安全退出会话。可重新输入凭据登录。".into());
+        self.ui
+            .set_classifications(ModelRc::new(VecModel::default()));
         self.ui.set_collections(ModelRc::new(VecModel::default()));
         self.ui.set_playback_loading(false);
         self.ui.set_playback_error("".into());
@@ -182,7 +188,8 @@ impl AppCoordinator {
             Ok(data) => {
                 info!("NAS authentication successful for user: {}", username);
 
-                self.session.set_base_url(server_url.to_string());
+                let normalized_base_url = normalized_session_base_url(server_url);
+                self.session.set_base_url(normalized_base_url.clone());
                 self.session.set_authenticated(
                     data.token.clone(),
                     username.to_string(),
@@ -205,25 +212,34 @@ impl AppCoordinator {
                     let _ = self.credential_store.delete();
                 }
 
-                let nas_display_name = data.nas_name.clone().unwrap_or_else(|| "极空间 NAS".to_string());
+                let nas_display_name = data
+                    .nas_name
+                    .clone()
+                    .unwrap_or_else(|| "极空间 NAS".to_string());
                 self.ui.set_session_user(username.into());
                 self.ui.set_session_nas_name(nas_display_name.into());
-                self.ui.set_session_base_url(server_url.into());
+                self.ui.set_session_base_url(normalized_base_url.into());
                 self.ui.set_show_sms_field(false);
                 self.ui.set_login_error_message("".into());
                 self.ui.set_is_logged_in(true);
                 self.ui.set_current_view("library".into());
-                self.ui.set_status_message("局域网鉴权成功，正在拉取极影视片库...".into());
+                self.ui
+                    .set_status_message("局域网鉴权成功，正在拉取极影视片库...".into());
             }
             Err(err) => {
-                warn!("NAS login error: {}", sanitize_log_message(&err.to_string()));
+                warn!(
+                    "NAS login error: {}",
+                    sanitize_log_message(&err.to_string())
+                );
                 let recovery_hint = err.user_recovery_hint();
                 self.ui.set_login_error_message(recovery_hint.into());
                 self.ui.set_requires_relogin(false);
 
                 if let AuthError::MfaRequired { .. } = err {
                     self.ui.set_show_sms_field(true);
-                    self.ui.set_login_status_hint("安全两步验证：请输入极空间验证码后点击登录。".into());
+                    self.ui.set_login_status_hint(
+                        "安全两步验证：请输入极空间验证码后点击登录。".into(),
+                    );
                 }
             }
         }
@@ -244,7 +260,9 @@ impl AppCoordinator {
                     self.ui.set_password_input(pass.into());
                 }
                 self.ui.set_remember_credentials(true);
-                self.ui.set_login_status_hint("已从系统安全凭证库载入账号信息。点击登录直连 NAS。".into());
+                self.ui.set_login_status_hint(
+                    "已从系统安全凭证库载入账号信息。点击登录直连 NAS。".into(),
+                );
             }
             Ok(None) => {
                 info!("No previous credentials stored in keyring");
@@ -265,7 +283,10 @@ impl AppCoordinator {
         match res {
             Ok(cats) => {
                 let first_id = cats.first().map(|c| c.id.clone()).unwrap_or_default();
-                let first_name = cats.first().map(|c| c.name.clone()).unwrap_or_else(|| "全部".to_string());
+                let first_name = cats
+                    .first()
+                    .map(|c| c.name.clone())
+                    .unwrap_or_else(|| "全部".to_string());
 
                 let ui_items: Vec<ClassificationUiItem> = cats
                     .iter()
@@ -280,7 +301,8 @@ impl AppCoordinator {
 
                 let model = Rc::new(VecModel::from(ui_items));
                 self.ui.set_classifications(ModelRc::from(model));
-                self.ui.set_selected_classification_id(first_id.clone().into());
+                self.ui
+                    .set_selected_classification_id(first_id.clone().into());
                 self.ui.set_selected_classification_name(first_name.into());
 
                 if !first_id.is_empty() {
@@ -293,7 +315,8 @@ impl AppCoordinator {
             Err(err) => {
                 self.ui.set_library_loading(false);
                 self.ui.set_library_error(err.user_recovery_hint().into());
-                self.ui.set_requires_relogin(err.requires_reauthentication());
+                self.ui
+                    .set_requires_relogin(err.requires_reauthentication());
                 Err(err)
             }
         }
@@ -306,7 +329,9 @@ impl AppCoordinator {
         self.ui.set_library_error("".into());
         self.ui.set_requires_relogin(false);
 
-        let res = self.nas_client.get_collections(&self.session, classification_id, 1, 50);
+        let res = self
+            .nas_client
+            .get_collections(&self.session, classification_id, 1, 50);
         self.ui.set_library_loading(false);
 
         match res {
@@ -320,32 +345,21 @@ impl AppCoordinator {
                 let ui_items: Vec<CollectionUiItem> = page
                     .list
                     .iter()
-                    .map(|item| {
-                        let decoded = if !item.cover.is_empty() {
-                            self.image_cache
-                                .get(&item.cover)
-                                .and_then(|bytes| decode_to_slint_image(&bytes).ok())
-                        } else {
-                            None
-                        };
-                        let has_cover = decoded.is_some();
-                        let cover_image = decoded.unwrap_or_default();
-
-                        CollectionUiItem {
-                            collection_id: item.collection_id.clone().into(),
-                            title: item.title.clone().into(),
-                            release_year: item.release_year.clone().into(),
-                            video_type: item.display_type().to_string().into(),
-                            score: item.display_score().into(),
-                            cover_image,
-                            has_cover,
-                        }
+                    .map(|item| CollectionUiItem {
+                        collection_id: item.collection_id.clone().into(),
+                        title: item.title.clone().into(),
+                        release_year: item.release_year.clone().into(),
+                        video_type: item.display_type().to_string().into(),
+                        score: item.display_score().into(),
+                        cover_image: slint::Image::default(),
+                        has_cover: false,
                     })
                     .collect();
 
                 let model = Rc::new(VecModel::from(ui_items));
                 self.ui.set_collections(ModelRc::from(model));
-                self.ui.set_status_message(format!("片库已就绪，已加载 {} 部影片", count).into());
+                self.ui
+                    .set_status_message(format!("片库已就绪，已加载 {} 部影片", count).into());
 
                 // Trigger background poster fetching for items without cover in cache
                 Self::spawn_poster_fetching(
@@ -362,7 +376,8 @@ impl AppCoordinator {
             }
             Err(err) => {
                 self.ui.set_library_error(err.user_recovery_hint().into());
-                self.ui.set_requires_relogin(err.requires_reauthentication());
+                self.ui
+                    .set_requires_relogin(err.requires_reauthentication());
                 Err(err)
             }
         }
@@ -415,15 +430,12 @@ impl AppCoordinator {
         let detail_request_generation_bg = Arc::clone(&detail_request_generation);
         let image_request_gate_bg = image_request_gate.clone();
         std::thread::spawn(move || {
-            let detail_result = nas_client.get_collection_detail(
-                &session,
-                &collection_id,
-                &classification_id,
-            );
+            let detail_result =
+                nas_client.get_collection_detail(&session, &collection_id, &classification_id);
 
-            // Keep image work off the UI thread, but pass only raw bytes back to
-            // the event loop. `slint::Image` is created below on the UI thread.
-            let (cover_bytes, background_bytes) = if let Ok(detail) = &detail_result {
+            // Fetch and CPU-decode images in this worker. The event loop only
+            // creates the Slint image object from already-decoded pixels.
+            let (cover_image, background_image) = if let Ok(detail) = &detail_result {
                 (
                     fetch_detail_image(
                         &nas_client,
@@ -447,7 +459,9 @@ impl AppCoordinator {
             };
 
             let _ = slint::invoke_from_event_loop(move || {
-                let Some(ui) = ui_weak_bg.upgrade() else { return };
+                let Some(ui) = ui_weak_bg.upgrade() else {
+                    return;
+                };
                 if detail_request_generation_bg.load(Ordering::SeqCst) != request_generation
                     || !image_request_gate_bg.is_current(image_request_id)
                     || ui.get_current_view() != "detail"
@@ -460,12 +474,7 @@ impl AppCoordinator {
                 match detail_result {
                     Ok(detail) => {
                         *detail_state_bg.lock().unwrap() = Some(detail.clone());
-                        apply_collection_detail(
-                            &ui,
-                            detail,
-                            cover_bytes.as_deref(),
-                            background_bytes.as_deref(),
-                        );
+                        apply_collection_detail(&ui, detail, cover_image, background_image);
                     }
                     Err(err) => {
                         *detail_state_bg.lock().unwrap() = None;
@@ -483,9 +492,13 @@ impl AppCoordinator {
         episode_id: &str,
     ) -> Option<Episode> {
         let detail = detail_state.lock().ok()?;
-        detail.as_ref()?.seasons.iter().flat_map(|season| season.episodes.iter()).find(
-            |episode| episode.selection_id() == episode_id,
-        ).cloned()
+        detail
+            .as_ref()?
+            .seasons
+            .iter()
+            .flat_map(|season| season.episodes.iter())
+            .find(|episode| episode.selection_id() == episode_id)
+            .cloned()
     }
 
     fn start_playback_load(
@@ -507,11 +520,11 @@ impl AppCoordinator {
             return;
         };
 
-        let request_generation =
-            playback_request_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let request_generation = playback_request_generation.fetch_add(1, Ordering::SeqCst) + 1;
         *playback_session.lock().unwrap() = None;
         ui.set_playback_loading(true);
         ui.set_playback_error("".into());
+        ui.set_playback_track_status("".into());
         ui.set_status_message("正在后台获取媒体流地址...".into());
 
         let ui_weak_bg = ui_weak.clone();
@@ -536,10 +549,7 @@ impl AppCoordinator {
                         Err(_) => Err("播放器加载媒体失败，请重试。".to_string()),
                     }
                 }
-                Err(err) => Err(format!(
-                    "播放地址加载失败：{}",
-                    err.user_recovery_hint()
-                )),
+                Err(err) => Err(format!("播放地址加载失败：{}", err.user_recovery_hint())),
             };
 
             if playback_request_generation_bg.load(Ordering::SeqCst) != request_generation {
@@ -547,7 +557,9 @@ impl AppCoordinator {
             }
 
             let _ = slint::invoke_from_event_loop(move || {
-                let Some(ui) = ui_weak_bg.upgrade() else { return };
+                let Some(ui) = ui_weak_bg.upgrade() else {
+                    return;
+                };
                 if playback_request_generation_bg.load(Ordering::SeqCst) != request_generation
                     || ui.get_current_view() != "detail"
                     || ui.get_detail_collection_id().as_str() != collection_id
@@ -559,6 +571,7 @@ impl AppCoordinator {
                 ui.set_playback_loading(false);
                 match playback_result {
                     Ok((stream, state)) => {
+                        let track_status = playback_track_status(&stream);
                         *playback_session.lock().unwrap() = Some(PlaybackSession::new(
                             collection_id,
                             classification_id,
@@ -567,12 +580,14 @@ impl AppCoordinator {
                             state,
                         ));
                         ui.set_playback_error("".into());
+                        ui.set_playback_track_status(track_status.into());
                         ui.set_current_view("player".into());
                         ui.set_status_message("媒体流已加载，已进入播放器。".into());
                     }
                     Err(error) => {
                         *playback_session.lock().unwrap() = None;
                         ui.set_playback_error(error.into());
+                        ui.set_playback_track_status("".into());
                         ui.set_status_message("播放加载失败，请重试。".into());
                     }
                 }
@@ -584,7 +599,9 @@ impl AppCoordinator {
         ui.set_selected_episode_id(episode_id.to_string().into());
         let seasons = ui.get_detail_seasons();
         for season_index in 0..seasons.row_count() {
-            let Some(season) = seasons.row_data(season_index) else { continue };
+            let Some(season) = seasons.row_data(season_index) else {
+                continue;
+            };
             let episodes = season.episodes;
             for episode_index in 0..episodes.row_count() {
                 if let Some(mut episode) = episodes.row_data(episode_index) {
@@ -610,17 +627,31 @@ impl AppCoordinator {
                 if !image_request_gate.is_current(request_id) {
                     return;
                 }
-                if item.cover.is_empty() || image_cache.contains(&item.cover) {
+                if item.cover.is_empty() {
                     continue;
                 }
 
                 let cover_path = item.cover.clone();
-                match nas_client.fetch_image(&session, &cover_path) {
+                let image_result = if let Some(bytes) = image_cache.get(&cover_path) {
+                    Ok(bytes)
+                } else {
+                    nas_client.fetch_image(&session, &cover_path)
+                };
+                match image_result {
                     Ok(raw_bytes) => {
                         if !image_request_gate.is_current(request_id) {
                             return;
                         }
-                        image_cache.insert(cover_path.clone(), raw_bytes.clone());
+                        if !image_cache.contains(&cover_path) {
+                            image_cache.insert(cover_path.clone(), raw_bytes.clone());
+                        }
+                        let decoded = match decode_image_pixels(&raw_bytes) {
+                            Ok(decoded) => decoded,
+                            Err(error) => {
+                                warn!("Failed to decode cover image: {}", error);
+                                continue;
+                            }
+                        };
 
                         let cid = item.collection_id.clone();
                         let ui_weak = ui_weak.clone();
@@ -631,19 +662,18 @@ impl AppCoordinator {
                                 return;
                             }
                             if let Some(ui) = ui_weak.upgrade() {
-                                if let Ok(slint_img) = decode_to_slint_image(&raw_bytes) {
-                                    if !image_request_gate.is_current(request_id) {
-                                        return;
-                                    }
-                                    let model = ui.get_collections();
-                                    for i in 0..model.row_count() {
-                                        if let Some(mut row) = model.row_data(i) {
-                                            if row.collection_id.as_str() == cid {
-                                                row.cover_image = slint_img;
-                                                row.has_cover = true;
-                                                model.set_row_data(i, row);
-                                                break;
-                                            }
+                                let slint_img = slint_image_from_decoded(decoded);
+                                if !image_request_gate.is_current(request_id) {
+                                    return;
+                                }
+                                let model = ui.get_collections();
+                                for i in 0..model.row_count() {
+                                    if let Some(mut row) = model.row_data(i) {
+                                        if row.collection_id.as_str() == cid {
+                                            row.cover_image = slint_img;
+                                            row.has_cover = true;
+                                            model.set_row_data(i, row);
+                                            break;
                                         }
                                     }
                                 }
@@ -721,7 +751,9 @@ impl AppCoordinator {
                 let res = client_for_thread.get_collections(&session_for_thread, &target_id, 1, 50);
 
                 let _ = slint::invoke_from_event_loop(move || {
-                    let Some(ui) = ui_weak_bg.upgrade() else { return };
+                    let Some(ui) = ui_weak_bg.upgrade() else {
+                        return;
+                    };
                     if !image_request_gate_for_thread.is_current(request_id) {
                         return;
                     }
@@ -735,32 +767,22 @@ impl AppCoordinator {
                             let ui_items: Vec<CollectionUiItem> = page
                                 .list
                                 .iter()
-                                .map(|col| {
-                                    let decoded = if !col.cover.is_empty() {
-                                        image_cache_for_thread
-                                            .get(&col.cover)
-                                            .and_then(|bytes| decode_to_slint_image(&bytes).ok())
-                                    } else {
-                                        None
-                                    };
-                                    let has_cover = decoded.is_some();
-                                    let cover_image = decoded.unwrap_or_default();
-
-                                    CollectionUiItem {
-                                        collection_id: col.collection_id.clone().into(),
-                                        title: col.title.clone().into(),
-                                        release_year: col.release_year.clone().into(),
-                                        video_type: col.display_type().to_string().into(),
-                                        score: col.display_score().into(),
-                                        cover_image,
-                                        has_cover,
-                                    }
+                                .map(|col| CollectionUiItem {
+                                    collection_id: col.collection_id.clone().into(),
+                                    title: col.title.clone().into(),
+                                    release_year: col.release_year.clone().into(),
+                                    video_type: col.display_type().to_string().into(),
+                                    score: col.display_score().into(),
+                                    cover_image: slint::Image::default(),
+                                    has_cover: false,
                                 })
                                 .collect();
 
                             let model = Rc::new(VecModel::from(ui_items));
                             ui.set_collections(ModelRc::from(model));
-                            ui.set_status_message(format!("分类切换完成，加载 {} 部影视作品", total).into());
+                            ui.set_status_message(
+                                format!("分类切换完成，加载 {} 部影视作品", total).into(),
+                            );
                             AppCoordinator::spawn_poster_fetching(
                                 ui.as_weak(),
                                 nas_client_for_posters,
@@ -809,7 +831,9 @@ impl AppCoordinator {
                 };
 
                 let _ = slint::invoke_from_event_loop(move || {
-                    let Some(ui) = ui_weak_bg.upgrade() else { return };
+                    let Some(ui) = ui_weak_bg.upgrade() else {
+                        return;
+                    };
                     if !image_request_gate_for_thread.is_current(request_id) {
                         return;
                     }
@@ -919,6 +943,26 @@ impl AppCoordinator {
         });
 
         let ui_weak = self.ui.as_weak();
+        let playback_request_generation = Arc::clone(&self.playback_request_generation);
+        let playback_session = Arc::clone(&self.playback_session);
+        let player = Arc::clone(&self.player);
+        self.ui.on_return_to_detail_clicked(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            if ui.get_current_view() != "player" {
+                return;
+            }
+
+            let _ = player.stop();
+            playback_request_generation.fetch_add(1, Ordering::SeqCst);
+            *playback_session.lock().unwrap() = None;
+            ui.set_playback_loading(false);
+            ui.set_playback_error("".into());
+            ui.set_playback_track_status("".into());
+            ui.set_current_view("detail".into());
+            ui.set_status_message("已停止播放并返回影视详情。".into());
+        });
+
+        let ui_weak = self.ui.as_weak();
         let detail_state = Arc::clone(&self.detail_state);
         let detail_request_generation = Arc::clone(&self.detail_request_generation);
         let playback_request_generation = Arc::clone(&self.playback_request_generation);
@@ -982,97 +1026,109 @@ impl AppCoordinator {
         let session = Arc::clone(&self.session);
         let credential_store = Arc::clone(&self.credential_store);
 
-        self.ui.on_login_requested(move |server_url_slint, username_slint, password_slint, sms_code_slint, remember| {
-            let Some(ui) = ui_weak.upgrade() else { return };
+        self.ui.on_login_requested(
+            move |server_url_slint, username_slint, password_slint, sms_code_slint, remember| {
+                let Some(ui) = ui_weak.upgrade() else { return };
 
-            let server_url = server_url_slint.to_string();
-            let username = username_slint.to_string();
-            let password = password_slint.to_string();
-            let sms_code_str = sms_code_slint.to_string();
-            let sms_proof = if sms_code_str.trim().is_empty() {
-                None
-            } else {
-                Some(sms_code_str.trim().to_string())
-            };
+                let server_url = server_url_slint.to_string();
+                let username = username_slint.to_string();
+                let password = password_slint.to_string();
+                let sms_code_str = sms_code_slint.to_string();
+                let sms_proof = if sms_code_str.trim().is_empty() {
+                    None
+                } else {
+                    Some(sms_code_str.trim().to_string())
+                };
 
-            ui.set_login_loading(true);
-            ui.set_login_error_message("".into());
-            ui.set_requires_relogin(false);
+                ui.set_login_loading(true);
+                ui.set_login_error_message("".into());
+                ui.set_requires_relogin(false);
 
-            info!("Initiating LAN NAS authentication for user: {}", username);
+                info!("Initiating LAN NAS authentication for user: {}", username);
 
-            let nas_client = Arc::clone(&nas_client);
-            let session = Arc::clone(&session);
-            let credential_store = Arc::clone(&credential_store);
-            let ui_weak_bg = ui_weak.clone();
+                let nas_client = Arc::clone(&nas_client);
+                let session = Arc::clone(&session);
+                let credential_store = Arc::clone(&credential_store);
+                let ui_weak_bg = ui_weak.clone();
 
-            std::thread::spawn(move || {
-                let login_result = nas_client.login(
-                    &server_url,
-                    &username,
-                    &password,
-                    sms_proof.as_deref(),
-                );
+                std::thread::spawn(move || {
+                    let login_result =
+                        nas_client.login(&server_url, &username, &password, sms_proof.as_deref());
 
-                let _ = slint::invoke_from_event_loop(move || {
-                    let Some(ui) = ui_weak_bg.upgrade() else { return };
-                    ui.set_login_loading(false);
+                    let _ = slint::invoke_from_event_loop(move || {
+                        let Some(ui) = ui_weak_bg.upgrade() else {
+                            return;
+                        };
+                        ui.set_login_loading(false);
 
-                    match login_result {
-                        Ok(data) => {
-                            info!("NAS authentication successful for user: {}", username);
+                        match login_result {
+                            Ok(data) => {
+                                info!("NAS authentication successful for user: {}", username);
 
-                            session.set_base_url(server_url.clone());
-                            session.set_authenticated(
-                                data.token.clone(),
-                                username.clone(),
-                                data.qcname.clone(),
-                                data.nas_name.clone(),
-                                data.nas_id.clone(),
-                            );
+                                let normalized_base_url = normalized_session_base_url(&server_url);
+                                session.set_base_url(normalized_base_url.clone());
+                                session.set_authenticated(
+                                    data.token.clone(),
+                                    username.clone(),
+                                    data.qcname.clone(),
+                                    data.nas_name.clone(),
+                                    data.nas_id.clone(),
+                                );
 
-                            if remember {
-                                let creds = SavedCredentials {
-                                    server_url: server_url.clone(),
-                                    username: username.clone(),
-                                    password: Some(password),
-                                    token: Some(data.token),
-                                };
-                                if let Err(e) = credential_store.save(&creds) {
-                                    warn!("Failed to persist credentials to secure storage: {}", e);
+                                if remember {
+                                    let creds = SavedCredentials {
+                                        server_url: server_url.clone(),
+                                        username: username.clone(),
+                                        password: Some(password),
+                                        token: Some(data.token),
+                                    };
+                                    if let Err(e) = credential_store.save(&creds) {
+                                        warn!(
+                                            "Failed to persist credentials to secure storage: {}",
+                                            e
+                                        );
+                                    }
+                                } else {
+                                    let _ = credential_store.delete();
                                 }
-                            } else {
-                                let _ = credential_store.delete();
+
+                                let nas_display_name =
+                                    data.nas_name.unwrap_or_else(|| "极空间 NAS".to_string());
+                                ui.set_session_user(username.into());
+                                ui.set_session_nas_name(nas_display_name.into());
+                                ui.set_session_base_url(normalized_base_url.into());
+                                ui.set_show_sms_field(false);
+                                ui.set_login_error_message("".into());
+                                ui.set_requires_relogin(false);
+                                ui.set_is_logged_in(true);
+                                ui.set_current_view("library".into());
+                                ui.set_status_message(
+                                    "局域网鉴权成功，正在拉取极影视片库...".into(),
+                                );
+
+                                ui.invoke_refresh_library_clicked();
                             }
+                            Err(err) => {
+                                warn!(
+                                    "NAS login error: {}",
+                                    sanitize_log_message(&err.to_string())
+                                );
+                                let recovery_hint = err.user_recovery_hint();
+                                ui.set_login_error_message(recovery_hint.into());
+                                ui.set_requires_relogin(false);
 
-                            let nas_display_name = data.nas_name.unwrap_or_else(|| "极空间 NAS".to_string());
-                            ui.set_session_user(username.into());
-                            ui.set_session_nas_name(nas_display_name.into());
-                            ui.set_session_base_url(server_url.into());
-                            ui.set_show_sms_field(false);
-                            ui.set_login_error_message("".into());
-                            ui.set_requires_relogin(false);
-                            ui.set_is_logged_in(true);
-                            ui.set_current_view("library".into());
-                            ui.set_status_message("局域网鉴权成功，正在拉取极影视片库...".into());
-
-                            ui.invoke_refresh_library_clicked();
-                        }
-                        Err(err) => {
-                            warn!("NAS login error: {}", sanitize_log_message(&err.to_string()));
-                            let recovery_hint = err.user_recovery_hint();
-                            ui.set_login_error_message(recovery_hint.into());
-                            ui.set_requires_relogin(false);
-
-                            if let AuthError::MfaRequired { .. } = err {
-                                ui.set_show_sms_field(true);
-                                ui.set_login_status_hint("安全两步验证：请输入极空间验证码后点击登录。".into());
+                                if let AuthError::MfaRequired { .. } = err {
+                                    ui.set_show_sms_field(true);
+                                    ui.set_login_status_hint(
+                                        "安全两步验证：请输入极空间验证码后点击登录。".into(),
+                                    );
+                                }
                             }
                         }
-                    }
+                    });
                 });
-            });
-        });
+            },
+        );
 
         let ui_weak = self.ui.as_weak();
         let session = Arc::clone(&self.session);
@@ -1144,11 +1200,15 @@ impl AppCoordinator {
         let ui_weak = self.ui.as_weak();
         let playback_session = Arc::clone(&self.playback_session);
         let playback_controls = Arc::clone(&self.playback_controls);
+        let nas_client = Arc::clone(&self.nas_client);
+        let nas_session = Arc::clone(&self.session);
 
         self.player.add_event_listener(Box::new(move |event| {
             let ui_weak = ui_weak.clone();
             let playback_session = Arc::clone(&playback_session);
             let playback_controls = Arc::clone(&playback_controls);
+            let nas_client = Arc::clone(&nas_client);
+            let nas_session = Arc::clone(&nas_session);
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = ui_weak.upgrade() {
                     match event {
@@ -1160,7 +1220,9 @@ impl AppCoordinator {
                             ui.set_is_playing(state == PlaybackState::Playing);
                             match state {
                                 PlaybackState::Playing => {
-                                    ui.set_status_message("正在播放当前媒体... UI 交互保持完全非阻塞".into());
+                                    ui.set_status_message(
+                                        "正在播放当前媒体... UI 交互保持完全非阻塞".into(),
+                                    );
                                 }
                                 PlaybackState::Paused => {
                                     ui.set_status_message("已暂停播放。可点击继续播放。".into());
@@ -1175,15 +1237,44 @@ impl AppCoordinator {
                             }
                         }
                         PlayerEvent::ProgressChanged(prog) => {
+                            let progress_update = {
+                                let mut session = playback_session.lock().unwrap();
+                                session.as_mut().map(|session| {
+                                    session.update_progress(prog);
+                                    session.progress_update()
+                                })
+                            };
+                            if let Some(progress_update) = progress_update {
+                                let nas_client = Arc::clone(&nas_client);
+                                let nas_session = Arc::clone(&nas_session);
+                                std::thread::spawn(move || {
+                                    if let Err(error) = nas_client
+                                        .update_playback_progress(&nas_session, &progress_update)
+                                    {
+                                        warn!(
+                                            "Failed to report playback progress: {}",
+                                            sanitize_log_message(&error.to_string())
+                                        );
+                                    }
+                                });
+                            }
                             if prog.duration_secs > 0.0 {
                                 ui.set_duration_value(prog.duration_secs as f32);
                             }
-                            if playback_controls.lock().unwrap().accepts_progress_event() {
+                            let progress_is_current = {
+                                let mut controls = playback_controls.lock().unwrap();
+                                controls.finish_seek_from_progress(prog.position_secs)
+                                    || controls.accepts_progress_event()
+                            };
+                            if progress_is_current {
                                 ui.set_progress_value(prog.position_secs as f32);
                                 ui.set_time_label(prog.formatted_time().into());
                             }
                         }
-                        PlayerEvent::MediaLoaded { path, duration_secs } => {
+                        PlayerEvent::MediaLoaded {
+                            path,
+                            duration_secs,
+                        } => {
                             playback_controls.lock().unwrap().cancel_seek();
                             ui.set_media_path(path.into());
                             ui.set_duration_value(duration_secs as f32);
@@ -1241,11 +1332,14 @@ impl AppCoordinator {
             let Some(ui) = ui_weak.upgrade() else { return };
             let is_fullscreen = controls.lock().unwrap().toggle_fullscreen();
             ui.window().set_fullscreen(is_fullscreen);
-            ui.set_status_message(if is_fullscreen {
-                "已进入全屏模式。视频表面和控制层会随窗口尺寸更新。"
-            } else {
-                "已退出全屏模式。"
-            }.into());
+            ui.set_status_message(
+                if is_fullscreen {
+                    "已进入全屏模式。视频表面和控制层会随窗口尺寸更新。"
+                } else {
+                    "已退出全屏模式。"
+                }
+                .into(),
+            );
         });
 
         let controls = Arc::clone(&self.playback_controls);
@@ -1258,7 +1352,11 @@ impl AppCoordinator {
             let target = controls.seek_target_secs().unwrap_or(0.0);
             drop(controls);
             ui.set_progress_value(target as f32);
-            ui.set_time_label(PlaybackProgress::new(target, duration).formatted_time().into());
+            ui.set_time_label(
+                PlaybackProgress::new(target, duration)
+                    .formatted_time()
+                    .into(),
+            );
         });
 
         let player = Arc::clone(&self.player);
@@ -1273,7 +1371,11 @@ impl AppCoordinator {
             match request_seek(&player, &controls, target, duration) {
                 Ok(target) => {
                     ui.set_progress_value(target as f32);
-                    ui.set_time_label(PlaybackProgress::new(target, duration).formatted_time().into());
+                    ui.set_time_label(
+                        PlaybackProgress::new(target, duration)
+                            .formatted_time()
+                            .into(),
+                    );
                 }
                 Err(e) => {
                     warn!("seek error: {}", e);
@@ -1381,27 +1483,36 @@ fn fetch_detail_image(
     image_request_gate: &ImageRequestGate,
     request_id: u64,
     image_path: &str,
-) -> Option<Vec<u8>> {
+) -> Option<DecodedImage> {
     if image_path.is_empty() || !image_request_gate.is_current(request_id) {
         return None;
     }
-    if let Some(bytes) = image_cache.get(image_path) {
-        return Some(bytes);
-    }
-
-    match nas_client.fetch_image(session, image_path) {
-        Ok(bytes) => {
-            if !image_request_gate.is_current(request_id) {
+    let bytes = match image_cache.get(image_path) {
+        Some(bytes) => bytes,
+        None => match nas_client.fetch_image(session, image_path) {
+            Ok(bytes) => {
+                if !image_request_gate.is_current(request_id) {
+                    return None;
+                }
+                image_cache.insert(image_path.to_string(), bytes.clone());
+                bytes
+            }
+            Err(err) => {
+                warn!(
+                    "Failed to fetch detail image: {}",
+                    sanitize_log_message(&err.to_string())
+                );
                 return None;
             }
-            image_cache.insert(image_path.to_string(), bytes.clone());
-            Some(bytes)
-        }
+        },
+    };
+    if !image_request_gate.is_current(request_id) {
+        return None;
+    }
+    match decode_image_pixels(&bytes) {
+        Ok(decoded) => Some(decoded),
         Err(err) => {
-            warn!(
-                "Failed to fetch detail image: {}",
-                sanitize_log_message(&err.to_string())
-            );
+            warn!("Failed to decode detail image: {}", err);
             None
         }
     }
@@ -1423,6 +1534,8 @@ fn request_seek(
     match player.seek(target) {
         Ok(()) => {
             let controls = Arc::clone(controls);
+            // The target ProgressChanged normally ends the guard. This fixed
+            // timer is only a fallback for engines that never report it.
             slint::Timer::single_shot(Duration::from_millis(150), move || {
                 controls.lock().unwrap().finish_seek(generation);
             });
@@ -1438,8 +1551,8 @@ fn request_seek(
 fn apply_collection_detail(
     ui: &AppWindow,
     detail: CollectionDetail,
-    cover_bytes: Option<&[u8]>,
-    background_bytes: Option<&[u8]>,
+    cover_image: Option<DecodedImage>,
+    background_image: Option<DecodedImage>,
 ) {
     let display_type = detail.display_type().to_string();
     let is_movie = detail.is_movie();
@@ -1450,23 +1563,13 @@ fn apply_collection_detail(
     ui.set_detail_storyline(detail.storyline.clone().unwrap_or_default().into());
     ui.set_detail_is_movie(is_movie);
 
-    if let Some(bytes) = cover_bytes {
-        match decode_to_slint_image(bytes) {
-            Ok(image) => {
-                ui.set_detail_cover_image(image);
-                ui.set_detail_has_cover(true);
-            }
-            Err(err) => warn!("Failed to decode collection detail cover: {}", err),
-        }
+    if let Some(decoded) = cover_image {
+        ui.set_detail_cover_image(slint_image_from_decoded(decoded));
+        ui.set_detail_has_cover(true);
     }
-    if let Some(bytes) = background_bytes {
-        match decode_to_slint_image(bytes) {
-            Ok(image) => {
-                ui.set_detail_background_image(image);
-                ui.set_detail_has_background(true);
-            }
-            Err(err) => warn!("Failed to decode collection detail background: {}", err),
-        }
+    if let Some(decoded) = background_image {
+        ui.set_detail_background_image(slint_image_from_decoded(decoded));
+        ui.set_detail_has_background(true);
     }
 
     let first_episode_id = detail
@@ -1504,6 +1607,33 @@ fn apply_collection_detail(
     ui.set_detail_seasons(ModelRc::from(Rc::new(VecModel::from(ui_seasons))));
     ui.set_selected_episode_id(first_episode_id.into());
     ui.set_status_message("影视详情已加载，可选择剧集。".into());
+}
+
+fn playback_track_status(stream: &PlaybackStream) -> String {
+    let audio_count = stream.audio_tracks.len();
+    let subtitle_count = stream.subtitle_tracks.len();
+    if audio_count > 1 || subtitle_count > 1 {
+        format!(
+            "服务端提供 {} 条音轨、{} 条字幕；轨道切换暂未支持。",
+            audio_count, subtitle_count
+        )
+    } else if audio_count > 0 || subtitle_count > 0 {
+        "已保留服务端音轨/字幕信息；轨道切换暂未支持。".to_string()
+    } else {
+        "服务端未提供音轨/字幕列表；未猜测切换能力。".to_string()
+    }
+}
+
+fn normalized_session_base_url(input: &str) -> String {
+    match normalize_lan_url(input) {
+        Ok(url) => url,
+        Err(error) => {
+            // Real login implementations validate this first; keep a mock or
+            // future client from turning a successful result into a panic.
+            warn!("Successful login returned an invalid base URL: {}", error);
+            input.trim().trim_end_matches('/').to_string()
+        }
+    }
 }
 
 fn default_image_cache_dir() -> PathBuf {

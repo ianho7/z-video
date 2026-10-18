@@ -11,8 +11,8 @@ const DISK_HEADER_LEN: usize = DISK_MAGIC.len() + std::mem::size_of::<u64>();
 
 /// A small request-generation gate used by image workers.
 ///
-/// Workers may still finish an in-flight network operation, but callers can
-/// reject its result after a newer page/view request starts.
+/// Canceling rejects a result; it does not interrupt an already in-flight
+/// synchronous request. Callers must check the generation before applying it.
 #[derive(Clone, Default)]
 pub struct ImageRequestGate {
     current: Arc<AtomicU64>,
@@ -113,7 +113,9 @@ impl ImageCache {
         let mut inner = self.inner.lock().unwrap();
         insert_memory(&mut inner, key.clone(), bytes.clone());
 
-        let Some(disk_dir) = inner.disk_dir.clone() else { return };
+        let Some(disk_dir) = inner.disk_dir.clone() else {
+            return;
+        };
         if bytes.len() as u64 > inner.disk_capacity_bytes || inner.disk_capacity_bytes == 0 {
             let _ = fs::remove_file(disk_path(&disk_dir, &key));
             return;
@@ -153,7 +155,12 @@ impl ImageCache {
         inner
             .disk_dir
             .as_ref()
-            .map(|dir| disk_entries(dir).into_iter().map(|entry| entry.bytes as u64).sum())
+            .map(|dir| {
+                disk_entries(dir)
+                    .into_iter()
+                    .map(|entry| entry.bytes as u64)
+                    .sum()
+            })
             .unwrap_or(0)
     }
 
@@ -185,7 +192,9 @@ fn insert_memory(inner: &mut CacheInner, key: String, bytes: Vec<u8>) {
         return;
     }
     while inner.entries.len() >= inner.capacity {
-        let Some(oldest) = inner.order.first().cloned() else { break };
+        let Some(oldest) = inner.order.first().cloned() else {
+            break;
+        };
         inner.order.remove(0);
         inner.entries.remove(&oldest);
     }
@@ -299,7 +308,9 @@ fn write_disk_record(path: &Path, sequence: u64, bytes: &[u8]) -> std::io::Resul
 }
 
 fn disk_entries(dir: &Path) -> Vec<DiskEntry> {
-    let Ok(entries) = fs::read_dir(dir) else { return Vec::new() };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
     entries
         .filter_map(Result::ok)
         .map(|entry| entry.path())
@@ -329,19 +340,41 @@ fn evict_disk_entries(dir: &Path, capacity_bytes: u64) {
     }
 }
 
-/// Decodes raw image bytes (JPEG, PNG, etc.) into a Slint-compatible `slint::Image`.
-pub fn decode_to_slint_image(bytes: &[u8]) -> Result<Image, String> {
+/// CPU-decoded image data that can cross from a worker to the UI event loop.
+#[derive(Debug, Clone)]
+pub struct DecodedImage {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+/// Decodes raw image bytes (JPEG, PNG, etc.) without creating a Slint object.
+pub fn decode_image_pixels(bytes: &[u8]) -> Result<DecodedImage, String> {
     let img = image::load_from_memory(bytes)
         .map_err(|e| format!("Failed to decode image from bytes: {}", e))?;
 
     let rgba = img.to_rgba8();
     let (width, height) = rgba.dimensions();
 
-    let mut pixel_buffer = SharedPixelBuffer::<Rgba8Pixel>::new(width, height);
-    let buffer_slice = pixel_buffer.make_mut_bytes();
-    buffer_slice.copy_from_slice(&rgba);
+    Ok(DecodedImage {
+        width,
+        height,
+        rgba: rgba.into_raw(),
+    })
+}
 
-    Ok(Image::from_rgba8(pixel_buffer))
+/// Creates the Slint image object at the UI boundary after worker decoding.
+pub fn slint_image_from_decoded(decoded: DecodedImage) -> Image {
+    let mut pixel_buffer = SharedPixelBuffer::<Rgba8Pixel>::new(decoded.width, decoded.height);
+    let buffer_slice = pixel_buffer.make_mut_bytes();
+    buffer_slice.copy_from_slice(&decoded.rgba);
+
+    Image::from_rgba8(pixel_buffer)
+}
+
+/// Compatibility helper retained for callers that own the UI boundary.
+pub fn decode_to_slint_image(bytes: &[u8]) -> Result<Image, String> {
+    Ok(slint_image_from_decoded(decode_image_pixels(bytes)?))
 }
 
 #[cfg(test)]
@@ -377,6 +410,10 @@ mod tests {
         ];
 
         let img_res = decode_to_slint_image(&valid_png);
-        assert!(img_res.is_ok(), "Decoding minimal 1x1 PNG should succeed: {:?}", img_res.err());
+        assert!(
+            img_res.is_ok(),
+            "Decoding minimal 1x1 PNG should succeed: {:?}",
+            img_res.err()
+        );
     }
 }

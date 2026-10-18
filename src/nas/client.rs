@@ -1,15 +1,19 @@
-use std::collections::HashMap;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use log::info;
 use serde::Deserialize;
+use serde_json::{Map, Value};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::nas::auth::{sanitize_log_message, ApiResponse, AuthError, LoginResponseData, NasPubKeyData};
+use crate::nas::auth::{
+    sanitize_log_message, ApiResponse, AuthError, LoginResponseData, NasPubKeyData,
+};
 use crate::nas::crypto::{encrypt_credential, parse_public_key};
 use crate::nas::models::{
     ClassificationItem, CollectionDetail, CollectionItem, CollectionPage, Episode, NasError, Season,
 };
 use crate::nas::session::NasSession;
-use crate::playback::PlaybackStream;
+use crate::playback::{PlaybackProgressUpdate, PlaybackStream};
 
 /// Trait defining the core LAN authentication and media library protocol with a Z-Space NAS.
 pub trait NasClient: Send + Sync {
@@ -27,7 +31,10 @@ pub trait NasClient: Send + Sync {
     ) -> Result<LoginResponseData, AuthError>;
 
     /// Fetches the classification categories of the Z-Video library (`POST /zvideo/classification/list`).
-    fn get_classifications(&self, session: &NasSession) -> Result<Vec<ClassificationItem>, NasError>;
+    fn get_classifications(
+        &self,
+        session: &NasSession,
+    ) -> Result<Vec<ClassificationItem>, NasError>;
 
     /// Fetches paginated collection items for a specific classification (`POST /zvideo/video/v2/list`).
     fn get_collections(
@@ -52,6 +59,13 @@ pub trait NasClient: Send + Sync {
         session: &NasSession,
         episode: &Episode,
     ) -> Result<PlaybackStream, NasError>;
+
+    /// Sends the known personal playback-progress payload to NAS.
+    fn update_playback_progress(
+        &self,
+        session: &NasSession,
+        progress: &PlaybackProgressUpdate,
+    ) -> Result<(), NasError>;
 
     /// Fetches image raw bytes from the NAS.
     fn fetch_image(&self, session: &NasSession, image_path: &str) -> Result<Vec<u8>, NasError>;
@@ -82,7 +96,10 @@ pub fn normalize_lan_url(input: &str) -> Result<String, AuthError> {
     // If rest has a path, extract host_port only
     let host_port = rest.split('/').next().unwrap_or(rest);
     if host_port.is_empty() {
-        return Err(AuthError::InvalidUrl(format!("未识别到主机或 IP: {}", input)));
+        return Err(AuthError::InvalidUrl(format!(
+            "未识别到主机或 IP: {}",
+            input
+        )));
     }
 
     // Check if port is specified
@@ -111,9 +128,7 @@ impl Default for HttpNasClient {
 
 impl HttpNasClient {
     pub fn new(timeout: Duration) -> Self {
-        let agent = ureq::AgentBuilder::new()
-            .timeout(timeout)
-            .build();
+        let agent = ureq::AgentBuilder::new().timeout(timeout).build();
         Self { timeout, agent }
     }
 
@@ -135,7 +150,10 @@ impl NasClient for HttpNasClient {
     fn fetch_public_key(&self, base_url: &str) -> Result<NasPubKeyData, AuthError> {
         let normalized_base = normalize_lan_url(base_url)?;
         let url = format!("{}/key/pub?signme=1", normalized_base);
-        info!("Fetching NAS public key from: {}", sanitize_log_message(&url));
+        info!(
+            "Fetching NAS public key from: {}",
+            sanitize_log_message(&url)
+        );
 
         let resp = self
             .agent
@@ -226,9 +244,9 @@ impl NasClient for HttpNasClient {
             });
         }
 
-        let body: ApiResponse<LoginResponseData> = resp
-            .into_json()
-            .map_err(|e| AuthError::MalformedResponse(format!("解析 /auth/login 响应失败: {}", e)))?;
+        let body: ApiResponse<LoginResponseData> = resp.into_json().map_err(|e| {
+            AuthError::MalformedResponse(format!("解析 /auth/login 响应失败: {}", e))
+        })?;
 
         let code = body.code_str();
         if body.is_success() {
@@ -253,7 +271,10 @@ impl NasClient for HttpNasClient {
         }
     }
 
-    fn get_classifications(&self, session: &NasSession) -> Result<Vec<ClassificationItem>, NasError> {
+    fn get_classifications(
+        &self,
+        session: &NasSession,
+    ) -> Result<Vec<ClassificationItem>, NasError> {
         let base_url = session.base_url();
         let token = session.token().ok_or(NasError::Unauthorized)?;
         let url = format!("{}/zvideo/classification/list?token={}", base_url, token);
@@ -341,7 +362,8 @@ impl NasClient for HttpNasClient {
             });
         }
 
-        body.data.ok_or_else(|| NasError::MalformedResponse("响应缺少影片列表数据".to_string()))
+        body.data
+            .ok_or_else(|| NasError::MalformedResponse("响应缺少影片列表数据".to_string()))
     }
 
     fn get_collection_detail(
@@ -399,7 +421,10 @@ impl NasClient for HttpNasClient {
         episode: &Episode,
     ) -> Result<PlaybackStream, NasError> {
         let base_url = session.base_url();
-        let token = session.token().filter(|value| !value.trim().is_empty()).ok_or(NasError::Unauthorized)?;
+        let token = session
+            .token()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or(NasError::Unauthorized)?;
         let file_path = episode.file_path.trim();
         if file_path.is_empty() {
             return Err(NasError::MalformedResponse(
@@ -436,7 +461,12 @@ impl NasClient for HttpNasClient {
         if let Some(encrypted_path) = encrypted_path {
             request = request.query("encrypted_path", encrypted_path);
         }
-        if let Some(from) = episode.from.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        if let Some(from) = episode
+            .from
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
             request = request.query("from", from);
         }
 
@@ -475,7 +505,56 @@ impl NasClient for HttpNasClient {
             .ok_or_else(|| NasError::MalformedResponse("播放地址响应缺少有效 URI".to_string()))?;
         Ok(PlaybackStream {
             uri: resolve_playback_uri(&base_url, &uri)?,
+            audio_tracks: data.audio_list,
+            subtitle_tracks: data.subtitle_list,
+            extra_fields: data.extra_fields,
         })
+    }
+
+    fn update_playback_progress(
+        &self,
+        session: &NasSession,
+        progress: &PlaybackProgressUpdate,
+    ) -> Result<(), NasError> {
+        let base_url = session.base_url();
+        let token = session
+            .token()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or(NasError::Unauthorized)?;
+        let url = format!("{}/zvideo/video/updateplaytime?token={}", base_url, token);
+        let payload = serde_json::to_value(progress).map_err(|error| {
+            NasError::MalformedResponse(format!("构造播放进度请求失败: {}", error))
+        })?;
+
+        let response = self
+            .agent
+            .post(&url)
+            .set("token", &token)
+            .set("Cookie", &format!("token={}", token))
+            .send_json(payload)
+            .map_err(|_| NasError::Network("上报播放进度请求失败".to_string()))?;
+
+        let status = response.status();
+        if status == 401 || status == 403 {
+            return Err(NasError::Unauthorized);
+        }
+        if status != 200 {
+            return Err(NasError::Http {
+                status,
+                message: "播放进度服务返回异常".to_string(),
+            });
+        }
+
+        let body: ApiResponse<Value> = response
+            .into_json()
+            .map_err(|_| NasError::MalformedResponse("无法解析播放进度响应".to_string()))?;
+        if !body.is_success() {
+            return Err(NasError::Business {
+                code: body.code_str(),
+                message: body.error_message(),
+            });
+        }
+        Ok(())
     }
 
     fn fetch_image(&self, session: &NasSession, image_path: &str) -> Result<Vec<u8>, NasError> {
@@ -536,6 +615,7 @@ pub struct MockNasClient {
     pub mock_collections: Vec<CollectionItem>,
     pub mock_collection_details: HashMap<String, CollectionDetail>,
     pub mock_playback_uri: Option<String>,
+    progress_receipts: Arc<Mutex<Vec<PlaybackProgressUpdate>>>,
 }
 
 impl Default for MockNasClient {
@@ -574,7 +654,9 @@ impl Default for MockNasClient {
                 score: Some("9.4".to_string()),
                 rating: None,
                 episode_count: Some(1),
-                storyline: Some("近未来的地球黄沙遍野，前NASA宇航员库珀穿过虫洞寻找人类新家园。".to_string()),
+                storyline: Some(
+                    "近未来的地球黄沙遍野，前NASA宇航员库珀穿过虫洞寻找人类新家园。".to_string(),
+                ),
             },
             CollectionItem {
                 collection_id: "c02".to_string(),
@@ -585,7 +667,9 @@ impl Default for MockNasClient {
                 score: Some("8.8".to_string()),
                 rating: None,
                 episode_count: Some(1),
-                storyline: Some("讲述美国“原子弹之父”罗伯特·奥本海默主导曼哈顿计划的故事。".to_string()),
+                storyline: Some(
+                    "讲述美国“原子弹之父”罗伯特·奥本海默主导曼哈顿计划的故事。".to_string(),
+                ),
             },
             CollectionItem {
                 collection_id: "c03".to_string(),
@@ -623,7 +707,9 @@ impl Default for MockNasClient {
                 video_type: "movie".to_string(),
                 score: Some("9.4".to_string()),
                 rating: None,
-                storyline: Some("近未来的地球黄沙遍野，前NASA宇航员库珀穿过虫洞寻找人类新家园。".to_string()),
+                storyline: Some(
+                    "近未来的地球黄沙遍野，前NASA宇航员库珀穿过虫洞寻找人类新家园。".to_string(),
+                ),
                 seasons: vec![Season {
                     season_number: 1,
                     title: "正片".to_string(),
@@ -709,6 +795,7 @@ impl Default for MockNasClient {
             mock_collections: collections,
             mock_collection_details,
             mock_playback_uri: Some("/mock/playback/stream".to_string()),
+            progress_receipts: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -716,6 +803,10 @@ impl Default for MockNasClient {
 impl MockNasClient {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn progress_receipts(&self) -> Vec<PlaybackProgressUpdate> {
+        self.progress_receipts.lock().unwrap().clone()
     }
 
     pub fn with_mfa(mut self, require_mfa: bool) -> Self {
@@ -767,7 +858,9 @@ impl NasClient for MockNasClient {
         sms_proof: Option<&str>,
     ) -> Result<LoginResponseData, AuthError> {
         if self.network_error {
-            return Err(AuthError::Network("无法连接到指定 NAS，请检查网络".to_string()));
+            return Err(AuthError::Network(
+                "无法连接到指定 NAS，请检查网络".to_string(),
+            ));
         }
         let _ = normalize_lan_url(base_url)?;
 
@@ -813,9 +906,14 @@ impl NasClient for MockNasClient {
         })
     }
 
-    fn get_classifications(&self, session: &NasSession) -> Result<Vec<ClassificationItem>, NasError> {
+    fn get_classifications(
+        &self,
+        session: &NasSession,
+    ) -> Result<Vec<ClassificationItem>, NasError> {
         if self.network_error {
-            return Err(NasError::Network("无法连接至 NAS 片库，网络断开".to_string()));
+            return Err(NasError::Network(
+                "无法连接至 NAS 片库，网络断开".to_string(),
+            ));
         }
         if session.token().is_none() {
             return Err(NasError::Unauthorized);
@@ -841,7 +939,11 @@ impl NasClient for MockNasClient {
         }
 
         let total = self.mock_collections.len();
-        let skip = if start > 0 { start.saturating_sub(1) } else { 0 };
+        let skip = if start > 0 {
+            start.saturating_sub(1)
+        } else {
+            0
+        };
         let slice = self
             .mock_collections
             .iter()
@@ -930,7 +1032,28 @@ impl NasClient for MockNasClient {
             .ok_or_else(|| NasError::MalformedResponse("播放地址响应缺少有效 URI".to_string()))?;
         Ok(PlaybackStream {
             uri: uri.to_string(),
+            audio_tracks: Vec::new(),
+            subtitle_tracks: Vec::new(),
+            extra_fields: Map::new(),
         })
+    }
+
+    fn update_playback_progress(
+        &self,
+        session: &NasSession,
+        progress: &PlaybackProgressUpdate,
+    ) -> Result<(), NasError> {
+        if self.network_error {
+            return Err(NasError::Network("播放进度上报失败，网络断开".to_string()));
+        }
+        if !session.is_authenticated() {
+            return Err(NasError::Unauthorized);
+        }
+        self.progress_receipts
+            .lock()
+            .unwrap()
+            .push(progress.clone());
+        Ok(())
     }
 
     fn fetch_image(&self, session: &NasSession, _image_path: &str) -> Result<Vec<u8>, NasError> {
@@ -955,21 +1078,37 @@ impl NasClient for MockNasClient {
 
 #[derive(Debug, Default, Deserialize)]
 struct PlaybackResponseData {
-    #[serde(default, alias = "url", alias = "play_addr", alias = "play_url", alias = "address")]
+    #[serde(
+        default,
+        alias = "url",
+        alias = "play_addr",
+        alias = "play_url",
+        alias = "address"
+    )]
     uri: Option<String>,
+    #[serde(default)]
+    audio_list: Vec<Value>,
+    #[serde(default)]
+    subtitle_list: Vec<Value>,
+    #[serde(flatten)]
+    extra_fields: Map<String, Value>,
 }
 
 fn resolve_playback_uri(base_url: &str, uri: &str) -> Result<String, NasError> {
     let uri = uri.trim();
     if uri.is_empty() {
-        return Err(NasError::MalformedResponse("播放地址响应缺少有效 URI".to_string()));
+        return Err(NasError::MalformedResponse(
+            "播放地址响应缺少有效 URI".to_string(),
+        ));
     }
     if uri.starts_with("http://") || uri.starts_with("https://") {
         return Ok(uri.to_string());
     }
     let base_url = base_url.trim_end_matches('/');
     if base_url.is_empty() {
-        return Err(NasError::MalformedResponse("NAS 会话缺少有效地址".to_string()));
+        return Err(NasError::MalformedResponse(
+            "NAS 会话缺少有效地址".to_string(),
+        ));
     }
     let path = if uri.starts_with('/') {
         uri.to_string()
@@ -1115,7 +1254,8 @@ mod tests {
                 let read = stream.read(&mut buffer).expect("read detail request");
                 assert!(read > 0, "client closed before sending request");
                 request.extend_from_slice(&buffer[..read]);
-                if let Some(position) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                if let Some(position) = request.windows(4).position(|window| window == b"\r\n\r\n")
+                {
                     header_end = position + 4;
                     break;
                 }
@@ -1126,7 +1266,9 @@ mod tests {
                 "POST /zvideo/collection/v2/info?token=detail-token HTTP/1.1"
             )));
             assert!(headers.to_ascii_lowercase().contains("token: detail-token"));
-            assert!(headers.to_ascii_lowercase().contains("cookie: token=detail-token"));
+            assert!(headers
+                .to_ascii_lowercase()
+                .contains("cookie: token=detail-token"));
 
             let content_length = headers
                 .lines()
@@ -1139,10 +1281,9 @@ mod tests {
                 request.extend_from_slice(&buffer[..read]);
             }
 
-            let payload: serde_json::Value = serde_json::from_slice(
-                &request[header_end..header_end + content_length],
-            )
-            .expect("detail request body should be JSON");
+            let payload: serde_json::Value =
+                serde_json::from_slice(&request[header_end..header_end + content_length])
+                    .expect("detail request body should be JSON");
             assert_eq!(payload["collection_id"], "movie-01");
             assert_eq!(payload["get_type"], "all");
             assert_eq!(payload["classification_id"], "classification-01");

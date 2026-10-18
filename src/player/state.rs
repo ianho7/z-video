@@ -95,6 +95,22 @@ impl PlaybackControlState {
         }
     }
 
+    /// Ends the seek guard when the player reports the requested position.
+    /// Older callbacks remain ignored; the timer fallback still calls
+    /// `finish_seek` for engines that never report the target.
+    pub fn finish_seek_from_progress(&mut self, position_secs: f64) -> bool {
+        let Some(target) = self.seek_target_secs else {
+            return false;
+        };
+        if position_secs.is_finite() && (position_secs - target).abs() <= 0.5 {
+            self.seek_in_progress = false;
+            self.seek_target_secs = None;
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn cancel_seek(&mut self) {
         self.seek_in_progress = false;
         self.seek_target_secs = None;
@@ -128,10 +144,7 @@ fn clamp_seek_position(position_secs: f64, duration_secs: f64) -> f64 {
 pub enum PlayerEvent {
     StateChanged(PlaybackState),
     ProgressChanged(PlaybackProgress),
-    MediaLoaded {
-        path: String,
-        duration_secs: f64,
-    },
+    MediaLoaded { path: String, duration_secs: f64 },
     PlaybackFinished,
     Error(String),
 }
