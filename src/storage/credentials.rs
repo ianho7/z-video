@@ -15,6 +15,35 @@ pub enum StorageError {
     Other(String),
 }
 
+impl StorageError {
+    /// Stable, secret-free classification for diagnostics and recovery UI.
+    pub fn class(&self) -> &'static str {
+        match self {
+            Self::Keyring(_) => "keyring",
+            Self::Serialization(_) => "serialization",
+            Self::Other(_) => "other",
+        }
+    }
+
+    /// Actionable guidance that never includes the underlying OS error text.
+    pub fn user_recovery_hint(&self, operation: &str) -> String {
+        match self {
+            Self::Keyring(_) => format!(
+                "无法{}系统安全凭据。请检查 Windows 凭据管理器权限后重试。",
+                operation
+            ),
+            Self::Serialization(_) => format!(
+                "无法{}保存的登录信息。请删除损坏的 z-video 凭据后重试。",
+                operation
+            ),
+            Self::Other(_) => format!(
+                "无法{}登录信息。请检查系统存储权限后重试。",
+                operation
+            ),
+        }
+    }
+}
+
 /// Persisted login credentials saved into the OS secure storage (Windows Credential Manager / macOS Keychain).
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SavedCredentials {
@@ -24,6 +53,10 @@ pub struct SavedCredentials {
     pub password: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nas_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nas_sign: Option<String>,
 }
 
 // Custom Debug implementation ensuring sensitive fields (password, raw token) are NEVER logged
@@ -34,6 +67,8 @@ impl std::fmt::Debug for SavedCredentials {
             .field("username", &self.username)
             .field("password", &self.password.as_ref().map(|_| "[REDACTED_PASSWORD]"))
             .field("token", &self.token.as_ref().map(|t| mask_token(t)))
+            .field("nas_id", &self.nas_id.as_ref().map(|id| mask_token(id)))
+            .field("nas_sign", &self.nas_sign.as_ref().map(|sign| mask_token(sign)))
             .finish()
     }
 }
@@ -212,6 +247,8 @@ mod tests {
             username: "admin".to_string(),
             password: Some("secret123".to_string()),
             token: Some("token_abc_xyz_123456".to_string()),
+            nas_id: None,
+            nas_sign: None,
         };
 
         store.save(&creds).unwrap();
@@ -232,6 +269,8 @@ mod tests {
             username: "alice".to_string(),
             password: Some("SuperSecretPassword999!".to_string()),
             token: Some("zenith_token_live_abcdef123456".to_string()),
+            nas_id: None,
+            nas_sign: None,
         };
 
         let debug_str = format!("{:?}", creds);

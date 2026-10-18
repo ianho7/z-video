@@ -3,16 +3,21 @@ use raw_window_handle::HasWindowHandle;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::media::image_cache::{
     decode_image_pixels, slint_image_from_decoded, DecodedImage, ImageCache, ImageRequestGate,
 };
+use crate::diagnostics;
 use crate::nas::auth::sanitize_log_message;
-use crate::nas::auth::AuthError;
+use crate::nas::auth::{AuthError, MfaProof};
 use crate::nas::client::{normalize_lan_url, HttpNasClient, NasClient};
+use crate::nas::discovery::{
+    discover_local_nas, DiscoveryCancellation, DiscoveryConfig, DiscoveryError,
+    NasDiscoveryResult,
+};
 use crate::nas::models::{CollectionDetail, CollectionItem, Episode, NasError};
 use crate::nas::session::NasSession;
 #[cfg(windows)]
@@ -20,7 +25,9 @@ use crate::platform::Win32VideoSurface;
 use crate::playback::{PlaybackSession, PlaybackStream};
 use crate::player::state::{PlaybackControlState, PlaybackProgress, PlaybackState, PlayerEvent};
 use crate::player::traits::Player;
-use crate::storage::credentials::{CredentialStore, KeyringCredentialStore, SavedCredentials};
+use crate::storage::credentials::{
+    CredentialStore, KeyringCredentialStore, SavedCredentials,
+};
 
 slint::include_modules!();
 
@@ -30,6 +37,8 @@ pub struct AppCoordinator {
     nas_client: Arc<dyn NasClient>,
     session: Arc<NasSession>,
     credential_store: Arc<dyn CredentialStore>,
+    startup_restore_pending: Arc<AtomicBool>,
+    discovery_cancellation: Arc<Mutex<Option<DiscoveryCancellation>>>,
     image_cache: ImageCache,
     image_request_gate: ImageRequestGate,
     detail_state: Arc<Mutex<Option<CollectionDetail>>>,
@@ -60,6 +69,7 @@ impl AppCoordinator {
         nas_client: Arc<dyn NasClient>,
         credential_store: Arc<dyn CredentialStore>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        let startup = diagnostics::start_event("app", "coordinator.init");
         let ui = AppWindow::new()?;
 
         let engine_label = if is_native {
@@ -73,6 +83,7 @@ impl AppCoordinator {
         let video_surface: Arc<Mutex<Option<Win32VideoSurface>>> = Arc::new(Mutex::new(None));
 
         let session = Arc::new(NasSession::default());
+        let startup_restore_pending = Arc::new(AtomicBool::new(false));
         let image_cache =
             ImageCache::with_disk_cache(default_image_cache_dir(), 100, 64 * 1024 * 1024);
         let detail_state = Arc::new(Mutex::new(None));
@@ -83,6 +94,8 @@ impl AppCoordinator {
             nas_client,
             session,
             credential_store,
+            startup_restore_pending,
+            discovery_cancellation: Arc::new(Mutex::new(None)),
             image_cache,
             image_request_gate: ImageRequestGate::new(),
             detail_state,
@@ -95,12 +108,14 @@ impl AppCoordinator {
             timer: slint::Timer::default(),
         };
 
-        coordinator.autoload_credentials();
         coordinator.setup_auth_callbacks();
+        coordinator.setup_discovery_callbacks();
         coordinator.setup_library_callbacks();
         coordinator.setup_player_events();
         coordinator.setup_ui_callbacks();
         coordinator.setup_lifecycle();
+        coordinator.autoload_credentials();
+        startup.finish("success", &[]);
 
         Ok(coordinator)
     }
@@ -127,9 +142,10 @@ impl AppCoordinator {
         server_url: &str,
         username: &str,
         password: &str,
-        sms_proof: Option<&str>,
+        sms_proof: Option<&MfaProof>,
         remember: bool,
     ) -> Result<crate::nas::auth::LoginResponseData, AuthError> {
+        let operation = diagnostics::start_event("ui", "auth.login");
         self.ui.set_login_loading(true);
         self.ui.set_login_error_message("".into());
 
@@ -143,11 +159,114 @@ impl AppCoordinator {
             let _ = self.load_classifications_sync();
         }
 
+        operation.finish(
+            if res.is_ok() { "success" } else { "error" },
+            &[("remember", remember.to_string())],
+        );
+
         res
+    }
+
+    /// Synchronously requests the SMS code for a pending MFA challenge.
+    /// UI callbacks use the same client operation from a background thread.
+    pub fn perform_send_mfa_code(
+        &self,
+        server_url: &str,
+        username: &str,
+        challenge_type: Option<&str>,
+    ) -> Result<(), AuthError> {
+        let operation = diagnostics::start_event("ui", "auth.mfa.send_code");
+        self.ui.set_mfa_code_sending(true);
+        self.ui.set_mfa_code_sent(false);
+        self.ui.set_login_error_message("".into());
+        self.ui
+            .set_mfa_status_hint("正在发送验证码，请稍候...".into());
+
+        let result = self
+            .nas_client
+            .send_mfa_code(server_url, username, challenge_type);
+        self.ui.set_mfa_code_sending(false);
+        match &result {
+            Ok(()) => {
+                self.ui.set_mfa_code_sent(true);
+                self.ui.set_mfa_status_hint(
+                    "验证码已发送，请输入收到的验证码，再点击“验证登录”。".into(),
+                );
+            }
+            Err(error) => {
+                self.ui.set_mfa_code_sent(false);
+                self.ui
+                    .set_login_error_message(error.user_recovery_hint().into());
+                self.ui
+                    .set_mfa_status_hint("验证码发送失败，请检查网络后重试。".into());
+            }
+        }
+        operation.finish(
+            if result.is_ok() { "success" } else { "error" },
+            &[(
+                "challenge_type",
+                challenge_type.unwrap_or("default").to_string(),
+            )],
+        );
+        result
+    }
+
+    /// Synchronously verifies the user-entered code and retries NAS login
+    /// with only the opaque proof returned by `/sms/ucheck`.
+    pub fn perform_mfa_login(
+        &self,
+        server_url: &str,
+        username: &str,
+        password: &str,
+        code: &str,
+        remember: bool,
+    ) -> Result<crate::nas::auth::LoginResponseData, AuthError> {
+        let operation = diagnostics::start_event("ui", "auth.mfa.login");
+        self.ui.set_login_loading(true);
+        self.ui.set_mfa_verifying(true);
+        self.ui.set_login_error_message("".into());
+        self.ui
+            .set_mfa_status_hint("正在验证验证码并登录 NAS...".into());
+
+        let result = self
+            .nas_client
+            .verify_mfa_code(server_url, username, code)
+            .and_then(|proof| {
+                self.nas_client
+                    .login(server_url, username, password, Some(&proof))
+            });
+
+        self.ui.set_login_loading(false);
+        self.ui.set_mfa_verifying(false);
+        apply_login_result_to_ui(
+            &self.ui,
+            &self.session,
+            self.credential_store.as_ref(),
+            server_url,
+            username,
+            password,
+            remember,
+            &result,
+        );
+
+        if result.is_ok() {
+            let _ = self.load_classifications_sync();
+        } else {
+            self.ui
+                .set_mfa_status_hint("验证码验证失败，请检查验证码后重试。".into());
+        }
+
+        operation.finish(
+            if result.is_ok() { "success" } else { "error" },
+            &[("remember", remember.to_string())],
+        );
+
+        result
     }
 
     /// Logs out from the active session, stopping playback and returning to login view.
     pub fn perform_logout(&self) {
+        let operation = diagnostics::start_event("ui", "session.logout");
         let _ = self.player.stop();
         self.session.clear();
         self.detail_request_generation
@@ -167,11 +286,20 @@ impl AppCoordinator {
         self.ui.set_playback_loading(false);
         self.ui.set_playback_error("".into());
         self.ui.set_requires_relogin(false);
+        self.ui.set_show_sms_field(false);
+        self.ui.set_mfa_challenge_type("".into());
+        self.ui.set_mfa_code_sent(false);
+        self.ui.set_mfa_code_sending(false);
+        self.ui.set_mfa_verifying(false);
+        self.ui.set_mfa_status_hint("".into());
+        self.ui.set_sms_code_input("".into());
 
         #[cfg(windows)]
         if let Some(surface) = self.video_surface.lock().unwrap().as_ref() {
             surface.set_bounds(-9999, -9999, 0, 0);
         }
+
+        operation.finish("success", &[]);
     }
 
     fn apply_login_result(
@@ -182,65 +310,16 @@ impl AppCoordinator {
         remember: bool,
         result: &Result<crate::nas::auth::LoginResponseData, AuthError>,
     ) {
-        match result {
-            Ok(data) => {
-                info!("NAS authentication successful for user: {}", username);
-
-                let normalized_base_url = normalized_session_base_url(server_url);
-                self.session.set_base_url(normalized_base_url.clone());
-                self.session.set_authenticated(
-                    data.token.clone(),
-                    username.to_string(),
-                    data.qcname.clone(),
-                    data.nas_name.clone(),
-                    data.nas_id.clone(),
-                );
-
-                if remember {
-                    let creds = SavedCredentials {
-                        server_url: server_url.to_string(),
-                        username: username.to_string(),
-                        password: Some(password.to_string()),
-                        token: Some(data.token.clone()),
-                    };
-                    if let Err(e) = self.credential_store.save(&creds) {
-                        warn!("Failed to persist credentials to secure storage: {}", e);
-                    }
-                } else {
-                    let _ = self.credential_store.delete();
-                }
-
-                let nas_display_name = data
-                    .nas_name
-                    .clone()
-                    .unwrap_or_else(|| "极空间 NAS".to_string());
-                self.ui.set_session_user(username.into());
-                self.ui.set_session_nas_name(nas_display_name.into());
-                self.ui.set_session_base_url(normalized_base_url.into());
-                self.ui.set_show_sms_field(false);
-                self.ui.set_login_error_message("".into());
-                self.ui.set_is_logged_in(true);
-                self.ui.set_current_view("library".into());
-                self.ui
-                    .set_status_message("局域网鉴权成功，正在拉取极影视片库...".into());
-            }
-            Err(err) => {
-                warn!(
-                    "NAS login error: {}",
-                    sanitize_log_message(&err.to_string())
-                );
-                let recovery_hint = err.user_recovery_hint();
-                self.ui.set_login_error_message(recovery_hint.into());
-                self.ui.set_requires_relogin(false);
-
-                if let AuthError::MfaRequired { .. } = err {
-                    self.ui.set_show_sms_field(true);
-                    self.ui.set_login_status_hint(
-                        "安全两步验证：请输入极空间验证码后点击登录。".into(),
-                    );
-                }
-            }
-        }
+        apply_login_result_to_ui(
+            &self.ui,
+            &self.session,
+            self.credential_store.as_ref(),
+            server_url,
+            username,
+            password,
+            remember,
+            result,
+        );
     }
 
     pub fn run(self) -> Result<(), slint::PlatformError> {
@@ -249,30 +328,88 @@ impl AppCoordinator {
 
     /// Automatically restores saved credentials from secure storage on launch if present.
     fn autoload_credentials(&self) {
+        let operation = diagnostics::start_event("session", "session.restore");
         match self.credential_store.load() {
             Ok(Some(creds)) => {
                 info!("Auto-loaded saved credentials for user: {}", creds.username);
-                self.ui.set_server_url_input(creds.server_url.into());
-                self.ui.set_username_input(creds.username.into());
-                if let Some(pass) = creds.password {
+                self.ui
+                    .set_server_url_input(creds.server_url.clone().into());
+                self.ui.set_username_input(creds.username.clone().into());
+                if let Some(pass) = creds.password.as_deref() {
                     self.ui.set_password_input(pass.into());
                 }
                 self.ui.set_remember_credentials(true);
-                self.ui.set_login_status_hint(
-                    "已从系统安全凭证库载入账号信息。点击登录直连 NAS。".into(),
+
+                let Some(token) = creds
+                    .token
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|token| !token.is_empty())
+                else {
+                    self.ui.set_login_status_hint(
+                        "已从系统安全凭证库载入账号信息。点击登录直连 NAS。".into(),
+                    );
+                    operation.finish(
+                        "partial",
+                        &[("authenticated", "false".to_string()), ("storage", "secure_store".to_string())],
+                    );
+                    return;
+                };
+
+                let normalized_base_url = normalized_session_base_url(&creds.server_url);
+                self.session.set_base_url(normalized_base_url.clone());
+                self.session.set_authenticated_with_identity(
+                    token.to_string(),
+                    creds.username.clone(),
+                    None,
+                    None,
+                    creds.nas_id.clone(),
+                    creds.nas_sign.clone(),
+                );
+                self.ui.set_session_user(creds.username.into());
+                self.ui.set_session_nas_name("极空间 NAS".into());
+                self.ui
+                    .set_session_base_url(normalized_base_url.into());
+                self.ui.set_login_error_message("".into());
+                self.ui.set_requires_relogin(false);
+                self.ui.set_is_logged_in(true);
+                self.ui.set_current_view("library".into());
+                self.ui.set_login_status_hint("已恢复保存的 NAS 会话。".into());
+                self.ui
+                    .set_status_message("正在恢复保存的 NAS 会话并加载片库...".into());
+                self.startup_restore_pending.store(true, Ordering::SeqCst);
+
+                let ui_weak = self.ui.as_weak();
+                slint::Timer::single_shot(Duration::from_millis(0), move || {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        ui.invoke_refresh_library_clicked();
+                    }
+                });
+                operation.finish(
+                    "success",
+                    &[("authenticated", "true".to_string()), ("storage", "secure_store".to_string())],
                 );
             }
             Ok(None) => {
                 info!("No previous credentials stored in keyring");
+                operation.finish("skipped", &[("authenticated", "false".to_string())]);
             }
             Err(e) => {
                 warn!("Could not read credentials from secure storage: {}", e);
+                let hint = format!(
+                    "系统安全凭据读取失败。{}",
+                    e.user_recovery_hint("读取")
+                );
+                self.ui.set_login_error_message(hint.clone().into());
+                self.ui.set_login_status_hint(hint.into());
+                operation.finish("error", &[("storage", "secure_store".to_string())]);
             }
         }
     }
 
     /// Synchronously loads classifications from the NAS client into UI state.
     pub fn load_classifications_sync(&self) -> Result<(), NasError> {
+        let operation = diagnostics::start_event("ui", "library.refresh");
         self.ui.set_library_loading(true);
         self.ui.set_library_error("".into());
         self.ui.set_requires_relogin(false);
@@ -304,17 +441,25 @@ impl AppCoordinator {
                 self.ui.set_selected_classification_name(first_name.into());
 
                 if !first_id.is_empty() {
-                    self.load_collections_sync(&first_id)?;
+                    let result = self.load_collections_sync(&first_id);
+                    operation.finish(
+                        if result.is_ok() { "success" } else { "error" },
+                        &[("category_count", cats.len().to_string())],
+                    );
+                    result
                 } else {
                     self.ui.set_library_loading(false);
+                    operation.finish("success", &[("category_count", cats.len().to_string())]);
+                    Ok(())
                 }
-                Ok(())
             }
             Err(err) => {
                 self.ui.set_library_loading(false);
                 self.ui.set_library_error(err.user_recovery_hint().into());
-                self.ui
-                    .set_requires_relogin(err.requires_reauthentication());
+                let requires_relogin = err.requires_reauthentication();
+                self.ui.set_requires_relogin(requires_relogin);
+                record_reauthentication_required("library.refresh", requires_relogin);
+                operation.finish("error", &[]);
                 Err(err)
             }
         }
@@ -322,6 +467,7 @@ impl AppCoordinator {
 
     /// Synchronously loads collections for a specific classification into UI state.
     pub fn load_collections_sync(&self, classification_id: &str) -> Result<(), NasError> {
+        let operation = diagnostics::start_event("ui", "library.collections");
         let request_id = self.image_request_gate.begin();
         self.ui.set_library_loading(true);
         self.ui.set_library_error("".into());
@@ -370,12 +516,16 @@ impl AppCoordinator {
                     page.list,
                 );
 
+                operation.finish("success", &[("item_count", count.to_string())]);
+
                 Ok(())
             }
             Err(err) => {
                 self.ui.set_library_error(err.user_recovery_hint().into());
-                self.ui
-                    .set_requires_relogin(err.requires_reauthentication());
+                let requires_relogin = err.requires_reauthentication();
+                self.ui.set_requires_relogin(requires_relogin);
+                record_reauthentication_required("library.collections", requires_relogin);
+                operation.finish("error", &[]);
                 Err(err)
             }
         }
@@ -394,6 +544,7 @@ impl AppCoordinator {
         collection_id: String,
         classification_id: String,
     ) {
+        let operation = diagnostics::start_event("ui", "library.collection_detail");
         let request_generation = detail_request_generation.fetch_add(1, Ordering::SeqCst) + 1;
         let image_request_id = image_request_gate.begin();
         playback_request_generation.fetch_add(1, Ordering::SeqCst);
@@ -430,6 +581,13 @@ impl AppCoordinator {
         std::thread::spawn(move || {
             let detail_result =
                 nas_client.get_collection_detail(&session, &collection_id, &classification_id);
+            operation.finish(
+                if detail_result.is_ok() { "success" } else { "error" },
+                &[
+                    ("collection_id", collection_id.clone()),
+                    ("classification_id", classification_id.clone()),
+                ],
+            );
 
             // Fetch and CPU-decode images in this worker. The event loop only
             // creates the Slint image object from already-decoded pixels.
@@ -477,7 +635,12 @@ impl AppCoordinator {
                     Err(err) => {
                         *detail_state_bg.lock().unwrap() = None;
                         ui.set_detail_error(err.user_recovery_hint().into());
-                        ui.set_requires_relogin(err.requires_reauthentication());
+                        let requires_relogin = err.requires_reauthentication();
+                        ui.set_requires_relogin(requires_relogin);
+                        record_reauthentication_required(
+                            "library.collection_detail",
+                            requires_relogin,
+                        );
                         ui.set_status_message("影视详情加载失败，请返回片库后重试。".into());
                     }
                 }
@@ -511,10 +674,18 @@ impl AppCoordinator {
         classification_id: String,
         episode_id: String,
     ) {
-        let Some(ui) = ui_weak.upgrade() else { return };
+        let operation = diagnostics::start_event("ui", "playback.start");
+        let Some(ui) = ui_weak.upgrade() else {
+            operation.finish("cancelled", &[]);
+            return;
+        };
         let Some(episode) = Self::find_episode(&detail_state, &episode_id) else {
             ui.set_playback_loading(false);
             ui.set_playback_error("当前详情没有可播放的 Episode。".into());
+            operation.finish(
+                "error",
+                &[("reason", "episode_not_found".to_string())],
+            );
             return;
         };
 
@@ -547,8 +718,23 @@ impl AppCoordinator {
                         Err(_) => Err("播放器加载媒体失败，请重试。".to_string()),
                     }
                 }
-                Err(err) => Err(format!("播放地址加载失败：{}", err.user_recovery_hint())),
+                Err(err) => {
+                    record_reauthentication_required(
+                        "playback.stream",
+                        err.requires_reauthentication(),
+                    );
+                    Err(format!("播放地址加载失败：{}", err.user_recovery_hint()))
+                }
             };
+
+            operation.finish(
+                if playback_result.is_ok() { "success" } else { "error" },
+                &[
+                    ("collection_id", collection_id.clone()),
+                    ("classification_id", classification_id.clone()),
+                    ("episode_id", episode_id.clone()),
+                ],
+            );
 
             if playback_request_generation_bg.load(Ordering::SeqCst) != request_generation {
                 return;
@@ -694,6 +880,10 @@ impl AppCoordinator {
                                 if let Some(ui) = ui_weak.upgrade() {
                                     ui.set_library_error(hint.into());
                                     ui.set_requires_relogin(true);
+                                    record_reauthentication_required(
+                                        "library.image",
+                                        true,
+                                    );
                                 }
                             });
                         }
@@ -744,9 +934,23 @@ impl AppCoordinator {
             let nas_client_for_posters = Arc::clone(&nas_client);
             let session_for_posters = Arc::clone(&session);
             let ui_weak_bg = ui_weak.clone();
+            let operation = diagnostics::start_event("ui", "library.select_classification");
+            let selected_id_for_log = target_id.clone();
 
             std::thread::spawn(move || {
                 let res = client_for_thread.get_collections(&session_for_thread, &target_id, 1, 50);
+                let result = if res.is_ok() { "success" } else { "error" };
+                let item_count = res
+                    .as_ref()
+                    .map(|page| page.list.len().to_string())
+                    .unwrap_or_else(|_| "0".to_string());
+                operation.finish(
+                    result,
+                    &[
+                        ("classification_id", selected_id_for_log),
+                        ("item_count", item_count),
+                    ],
+                );
 
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = ui_weak_bg.upgrade() else {
@@ -793,7 +997,12 @@ impl AppCoordinator {
                         }
                         Err(err) => {
                             ui.set_library_error(err.user_recovery_hint().into());
-                            ui.set_requires_relogin(err.requires_reauthentication());
+                            let requires_relogin = err.requires_reauthentication();
+                            ui.set_requires_relogin(requires_relogin);
+                            record_reauthentication_required(
+                                "library.select_classification",
+                                requires_relogin,
+                            );
                         }
                     }
                 });
@@ -803,6 +1012,8 @@ impl AppCoordinator {
         let ui_weak = self.ui.as_weak();
         let nas_client = Arc::clone(&self.nas_client);
         let session = Arc::clone(&self.session);
+        let credential_store = Arc::clone(&self.credential_store);
+        let startup_restore_pending = Arc::clone(&self.startup_restore_pending);
         let image_cache = self.image_cache.clone();
         let image_request_gate = self.image_request_gate.clone();
 
@@ -816,17 +1027,75 @@ impl AppCoordinator {
 
             let client_for_thread = Arc::clone(&nas_client);
             let session_for_thread = Arc::clone(&session);
+            let credential_store_for_thread = Arc::clone(&credential_store);
+            let startup_restore_attempt = startup_restore_pending.load(Ordering::SeqCst);
             let image_cache_for_thread = image_cache.clone();
             let image_request_gate_for_thread = image_request_gate.clone();
             let ui_weak_bg = ui_weak.clone();
+            let startup_restore_pending_for_thread = Arc::clone(&startup_restore_pending);
+            let operation = diagnostics::start_event("ui", "library.refresh");
 
             std::thread::spawn(move || {
                 let cat_res = client_for_thread.get_classifications(&session_for_thread);
-                let col_res = if !sel_id.is_empty() {
-                    client_for_thread.get_collections(&session_for_thread, &sel_id, 1, 50)
-                } else {
-                    Ok(crate::nas::models::CollectionPage::default())
+                let effective_sel_id = cat_res
+                    .as_ref()
+                    .ok()
+                    .and_then(|cats| {
+                        cats.iter()
+                            .find(|cat| cat.id == sel_id)
+                            .or_else(|| cats.first())
+                    })
+                    .map(|cat| cat.id.clone())
+                    .unwrap_or_default();
+                let col_res = match cat_res.as_ref() {
+                    Err(_) => Err(NasError::MalformedResponse(
+                        "分类列表请求失败，未请求影视列表".to_string(),
+                    )),
+                    Ok(_) if effective_sel_id.is_empty() => Err(NasError::MalformedResponse(
+                        "NAS 未返回可用分类，未请求影视列表".to_string(),
+                    )),
+                    Ok(_) => client_for_thread.get_collections(
+                        &session_for_thread,
+                        &effective_sel_id,
+                        1,
+                        50,
+                    ),
                 };
+                let selected_id_for_ui = effective_sel_id.clone();
+                let category_count = cat_res
+                    .as_ref()
+                    .map(|categories| categories.len())
+                    .unwrap_or(0);
+                let item_count = col_res
+                    .as_ref()
+                    .map(|page| page.list.len())
+                    .unwrap_or(0);
+                let total_count = col_res.as_ref().map(|page| page.count).unwrap_or(0);
+                let category_item_count = cat_res
+                    .as_ref()
+                    .ok()
+                    .and_then(|categories| {
+                        categories
+                            .iter()
+                            .find(|category| category.id == effective_sel_id)
+                    })
+                    .map(|category| category.count.max(0) as usize)
+                    .unwrap_or(0);
+                let operation_result = if cat_res.is_ok() && col_res.is_ok() {
+                    "success"
+                } else {
+                    "error"
+                };
+                operation.finish(
+                    operation_result,
+                    &[
+                        ("selected_id", effective_sel_id.clone()),
+                        ("category_count", category_count.to_string()),
+                        ("category_item_count", category_item_count.to_string()),
+                        ("count", total_count.to_string()),
+                        ("item_count", item_count.to_string()),
+                    ],
+                );
 
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = ui_weak_bg.upgrade() else {
@@ -835,7 +1104,34 @@ impl AppCoordinator {
                     if !image_request_gate_for_thread.is_current(request_id) {
                         return;
                     }
+                    startup_restore_pending_for_thread.store(false, Ordering::SeqCst);
                     ui.set_library_loading(false);
+
+                    if let Err(err) = &cat_res {
+                        ui.set_library_error(err.user_recovery_hint().into());
+                        let requires_relogin = err.requires_reauthentication();
+                        if startup_restore_attempt && matches!(err, NasError::Unauthorized) {
+                            session_for_thread.clear();
+                            let _ = credential_store_for_thread.delete();
+                            ui.set_is_logged_in(false);
+                            ui.set_current_view("login".into());
+                            ui.set_requires_relogin(false);
+                            ui.set_login_error_message(
+                                "保存的登录凭据已失效，请重新输入凭据登录。".into(),
+                            );
+                            ui.set_login_status_hint(
+                                "已清除失效的保存凭据，请重新输入账号密码登录。".into(),
+                            );
+                            record_reauthentication_required("library.refresh", true);
+                            return;
+                        }
+                        ui.set_requires_relogin(requires_relogin);
+                        record_reauthentication_required(
+                            "library.refresh.classifications",
+                            requires_relogin,
+                        );
+                        return;
+                    }
 
                     if let Ok(cats) = cat_res {
                         let ui_cats: Vec<ClassificationUiItem> = cats
@@ -844,10 +1140,17 @@ impl AppCoordinator {
                                 id: c.id.clone().into(),
                                 name: c.name.clone().into(),
                                 count: c.count as i32,
-                                is_selected: c.id == sel_id,
+                                is_selected: c.id == selected_id_for_ui,
                             })
                             .collect();
                         ui.set_classifications(ModelRc::from(Rc::new(VecModel::from(ui_cats))));
+                        let selected_name = cats
+                            .iter()
+                            .find(|cat| cat.id == selected_id_for_ui)
+                            .map(|cat| cat.name.clone())
+                            .unwrap_or_else(|| "全部".to_string());
+                        ui.set_selected_classification_id(selected_id_for_ui.clone().into());
+                        ui.set_selected_classification_name(selected_name.into());
                     }
 
                     match col_res {
@@ -866,6 +1169,7 @@ impl AppCoordinator {
                                 })
                                 .collect();
                             ui.set_collections(ModelRc::from(Rc::new(VecModel::from(ui_cols))));
+                            ui.set_collection_count(page.list.len() as i32);
                             ui.set_status_message("片库已刷新完成。".into());
                             AppCoordinator::spawn_poster_fetching(
                                 ui.as_weak(),
@@ -880,7 +1184,23 @@ impl AppCoordinator {
                         }
                         Err(err) => {
                             ui.set_library_error(err.user_recovery_hint().into());
-                            ui.set_requires_relogin(err.requires_reauthentication());
+                            let requires_relogin = err.requires_reauthentication();
+                            if startup_restore_attempt && matches!(err, NasError::Unauthorized) {
+                                session_for_thread.clear();
+                                let _ = credential_store_for_thread.delete();
+                                ui.set_is_logged_in(false);
+                                ui.set_current_view("login".into());
+                                ui.set_requires_relogin(false);
+                                ui.set_login_error_message(
+                                    "保存的登录凭据已失效，请重新输入凭据登录。".into(),
+                                );
+                                ui.set_login_status_hint(
+                                    "已清除失效的保存凭据，请重新输入账号密码登录。".into(),
+                                );
+                            } else {
+                                ui.set_requires_relogin(requires_relogin);
+                            }
+                            record_reauthentication_required("library.refresh", requires_relogin);
                         }
                     }
                 });
@@ -1025,22 +1345,21 @@ impl AppCoordinator {
         let credential_store = Arc::clone(&self.credential_store);
 
         self.ui.on_login_requested(
-            move |server_url_slint, username_slint, password_slint, sms_code_slint, remember| {
+            move |server_url_slint, username_slint, password_slint, _sms_code_slint, remember| {
                 let Some(ui) = ui_weak.upgrade() else { return };
 
                 let server_url = server_url_slint.to_string();
                 let username = username_slint.to_string();
                 let password = password_slint.to_string();
-                let sms_code_str = sms_code_slint.to_string();
-                let sms_proof = if sms_code_str.trim().is_empty() {
-                    None
-                } else {
-                    Some(sms_code_str.trim().to_string())
-                };
 
                 ui.set_login_loading(true);
                 ui.set_login_error_message("".into());
                 ui.set_requires_relogin(false);
+                ui.set_show_sms_field(false);
+                ui.set_mfa_challenge_type("".into());
+                ui.set_mfa_code_sent(false);
+                ui.set_mfa_status_hint("".into());
+                let operation = diagnostics::start_event("ui", "auth.login");
 
                 info!("Initiating LAN NAS authentication for user: {}", username);
 
@@ -1050,78 +1369,148 @@ impl AppCoordinator {
                 let ui_weak_bg = ui_weak.clone();
 
                 std::thread::spawn(move || {
-                    let login_result =
-                        nas_client.login(&server_url, &username, &password, sms_proof.as_deref());
+                    let login_result = nas_client.login(&server_url, &username, &password, None);
+                    operation.finish(
+                        if login_result.is_ok() { "success" } else { "error" },
+                        &[("remember", remember.to_string())],
+                    );
 
                     let _ = slint::invoke_from_event_loop(move || {
                         let Some(ui) = ui_weak_bg.upgrade() else {
                             return;
                         };
                         ui.set_login_loading(false);
+                        apply_login_result_to_ui(
+                            &ui,
+                            &session,
+                            credential_store.as_ref(),
+                            &server_url,
+                            &username,
+                            &password,
+                            remember,
+                            &login_result,
+                        );
+                        if login_result.is_ok() {
+                            ui.invoke_refresh_library_clicked();
+                        }
+                    });
+                });
+            },
+        );
 
-                        match login_result {
-                            Ok(data) => {
-                                info!("NAS authentication successful for user: {}", username);
+        let ui_weak = self.ui.as_weak();
+        let nas_client = Arc::clone(&self.nas_client);
+        self.ui.on_send_mfa_code_requested(
+            move |server_url_slint, username_slint, challenge_type_slint| {
+                let Some(ui) = ui_weak.upgrade() else { return };
+                let server_url = server_url_slint.to_string();
+                let username = username_slint.to_string();
+                let challenge_type = challenge_type_slint.to_string();
 
-                                let normalized_base_url = normalized_session_base_url(&server_url);
-                                session.set_base_url(normalized_base_url.clone());
-                                session.set_authenticated(
-                                    data.token.clone(),
-                                    username.clone(),
-                                    data.qcname.clone(),
-                                    data.nas_name.clone(),
-                                    data.nas_id.clone(),
-                                );
+                ui.set_mfa_code_sending(true);
+                ui.set_mfa_code_sent(false);
+                ui.set_login_error_message("".into());
+                ui.set_mfa_status_hint("正在发送验证码，请稍候...".into());
+                let operation = diagnostics::start_event("ui", "auth.mfa.send_code");
 
-                                if remember {
-                                    let creds = SavedCredentials {
-                                        server_url: server_url.clone(),
-                                        username: username.clone(),
-                                        password: Some(password),
-                                        token: Some(data.token),
-                                    };
-                                    if let Err(e) = credential_store.save(&creds) {
-                                        warn!(
-                                            "Failed to persist credentials to secure storage: {}",
-                                            e
-                                        );
-                                    }
-                                } else {
-                                    let _ = credential_store.delete();
-                                }
+                let nas_client = Arc::clone(&nas_client);
+                let ui_weak_bg = ui_weak.clone();
+                std::thread::spawn(move || {
+                    let challenge_type_for_log = challenge_type.clone();
+                    let challenge_type = if challenge_type.trim().is_empty() {
+                        None
+                    } else {
+                        Some(challenge_type.as_str())
+                    };
+                    let result = nas_client.send_mfa_code(&server_url, &username, challenge_type);
+                    operation.finish(
+                        if result.is_ok() { "success" } else { "error" },
+                        &[("challenge_type", challenge_type_for_log)],
+                    );
 
-                                let nas_display_name =
-                                    data.nas_name.unwrap_or_else(|| "极空间 NAS".to_string());
-                                ui.set_session_user(username.into());
-                                ui.set_session_nas_name(nas_display_name.into());
-                                ui.set_session_base_url(normalized_base_url.into());
-                                ui.set_show_sms_field(false);
-                                ui.set_login_error_message("".into());
-                                ui.set_requires_relogin(false);
-                                ui.set_is_logged_in(true);
-                                ui.set_current_view("library".into());
-                                ui.set_status_message(
-                                    "局域网鉴权成功，正在拉取极影视片库...".into(),
-                                );
-
-                                ui.invoke_refresh_library_clicked();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        let Some(ui) = ui_weak_bg.upgrade() else {
+                            return;
+                        };
+                        ui.set_mfa_code_sending(false);
+                        match result {
+                            Ok(()) => {
+                                ui.set_mfa_code_sent(true);
+                                ui.set_mfa_status_hint(
+                                    "验证码已发送，请输入收到的验证码，再点击“验证登录”。".into(),
+                                )
                             }
-                            Err(err) => {
-                                warn!(
-                                    "NAS login error: {}",
-                                    sanitize_log_message(&err.to_string())
-                                );
-                                let recovery_hint = err.user_recovery_hint();
-                                ui.set_login_error_message(recovery_hint.into());
-                                ui.set_requires_relogin(false);
-
-                                if let AuthError::MfaRequired { .. } = err {
-                                    ui.set_show_sms_field(true);
-                                    ui.set_login_status_hint(
-                                        "安全两步验证：请输入极空间验证码后点击登录。".into(),
-                                    );
-                                }
+                            Err(error) => {
+                                ui.set_mfa_code_sent(false);
+                                ui.set_login_error_message(error.user_recovery_hint().into());
+                                ui.set_mfa_status_hint("验证码发送失败，请检查网络后重试。".into());
                             }
+                        }
+                    });
+                });
+            },
+        );
+
+        let ui_weak = self.ui.as_weak();
+        let nas_client = Arc::clone(&self.nas_client);
+        let session = Arc::clone(&self.session);
+        let credential_store = Arc::clone(&self.credential_store);
+        self.ui.on_verify_mfa_login_requested(
+            move |server_url_slint, username_slint, password_slint, code_slint, remember| {
+                let Some(ui) = ui_weak.upgrade() else { return };
+                let server_url = server_url_slint.to_string();
+                let username = username_slint.to_string();
+                let password = password_slint.to_string();
+                let code = code_slint.to_string();
+
+                if code.trim().is_empty() {
+                    ui.set_login_error_message("请输入收到的验证码。".into());
+                    ui.set_mfa_status_hint("验证码不能为空。".into());
+                    return;
+                }
+
+                ui.set_login_loading(true);
+                ui.set_mfa_verifying(true);
+                ui.set_login_error_message("".into());
+                ui.set_mfa_status_hint("正在验证验证码并登录 NAS...".into());
+                let operation = diagnostics::start_event("ui", "auth.mfa.login");
+
+                let nas_client = Arc::clone(&nas_client);
+                let session = Arc::clone(&session);
+                let credential_store = Arc::clone(&credential_store);
+                let ui_weak_bg = ui_weak.clone();
+                std::thread::spawn(move || {
+                    let result = nas_client
+                        .verify_mfa_code(&server_url, &username, &code)
+                        .and_then(|proof| {
+                            nas_client.login(&server_url, &username, &password, Some(&proof))
+                        });
+                    operation.finish(
+                        if result.is_ok() { "success" } else { "error" },
+                        &[("remember", remember.to_string())],
+                    );
+
+                    let _ = slint::invoke_from_event_loop(move || {
+                        let Some(ui) = ui_weak_bg.upgrade() else {
+                            return;
+                        };
+                        ui.set_login_loading(false);
+                        ui.set_mfa_verifying(false);
+                        apply_login_result_to_ui(
+                            &ui,
+                            &session,
+                            credential_store.as_ref(),
+                            &server_url,
+                            &username,
+                            &password,
+                            remember,
+                            &result,
+                        );
+                        if result.is_ok() {
+                            ui.invoke_refresh_library_clicked();
+                        } else {
+                            ui.set_show_sms_field(true);
+                            ui.set_mfa_status_hint("验证码验证失败，请检查验证码后重试。".into());
                         }
                     });
                 });
@@ -1142,6 +1531,7 @@ impl AppCoordinator {
 
         self.ui.on_logout_requested(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
+            let operation = diagnostics::start_event("ui", "session.logout");
             info!("User requested logout, clearing active session");
 
             let _ = player.stop();
@@ -1159,15 +1549,25 @@ impl AppCoordinator {
             ui.set_playback_loading(false);
             ui.set_playback_error("".into());
             ui.set_requires_relogin(false);
+            ui.set_show_sms_field(false);
+            ui.set_mfa_challenge_type("".into());
+            ui.set_mfa_code_sent(false);
+            ui.set_mfa_code_sending(false);
+            ui.set_mfa_verifying(false);
+            ui.set_mfa_status_hint("".into());
+            ui.set_sms_code_input("".into());
 
             #[cfg(windows)]
             if let Some(surface) = surface_mutex.lock().unwrap().as_ref() {
                 surface.set_bounds(-9999, -9999, 0, 0);
             }
+
+            operation.finish("success", &[]);
         });
 
         let ui_weak = self.ui.as_weak();
         let session = Arc::clone(&self.session);
+        let credential_store = Arc::clone(&self.credential_store);
         let player = Arc::clone(&self.player);
         let detail_state = Arc::clone(&self.detail_state);
         let detail_request_generation = Arc::clone(&self.detail_request_generation);
@@ -1176,8 +1576,17 @@ impl AppCoordinator {
         let image_request_gate = self.image_request_gate.clone();
         self.ui.on_relogin_requested(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
+            diagnostics::record_event(
+                "recovery",
+                "session.relogin_requested",
+                "complete",
+                "success",
+                Duration::ZERO,
+                &[("reason", "reauthentication_required".to_string())],
+            );
             let _ = player.stop();
             session.clear();
+            let _ = credential_store.delete();
             detail_request_generation.fetch_add(1, Ordering::SeqCst);
             playback_request_generation.fetch_add(1, Ordering::SeqCst);
             image_request_gate.cancel();
@@ -1191,6 +1600,119 @@ impl AppCoordinator {
             ui.set_collections(ModelRc::new(VecModel::default()));
             ui.set_playback_loading(false);
             ui.set_playback_error("".into());
+            ui.set_show_sms_field(false);
+            ui.set_mfa_challenge_type("".into());
+            ui.set_mfa_code_sent(false);
+            ui.set_mfa_code_sending(false);
+            ui.set_mfa_verifying(false);
+            ui.set_mfa_status_hint("".into());
+            ui.set_sms_code_input("".into());
+        });
+    }
+
+    fn setup_discovery_callbacks(&self) {
+        let ui_weak = self.ui.as_weak();
+        let cancellation_slot = Arc::clone(&self.discovery_cancellation);
+        self.ui.on_discover_nas_requested(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            if cancellation_slot.lock().unwrap().is_some() {
+                return;
+            }
+
+            let cancellation = DiscoveryCancellation::new();
+            *cancellation_slot.lock().unwrap() = Some(cancellation.clone());
+            ui.set_discovery_loading(true);
+            ui.set_discovery_error("".into());
+            ui.set_discovery_results(ModelRc::new(VecModel::default()));
+            ui.set_login_status_hint(
+                "正在扫描本机私有局域网，仅验证 NAS 的 5055 端口响应...".into(),
+            );
+
+            let ui_weak_bg = ui_weak.clone();
+            let cancellation_slot_bg = Arc::clone(&cancellation_slot);
+            std::thread::spawn(move || {
+                let result = discover_local_nas(DiscoveryConfig::default(), cancellation.clone());
+                *cancellation_slot_bg.lock().unwrap() = None;
+
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(ui) = ui_weak_bg.upgrade() else {
+                        return;
+                    };
+                    ui.set_discovery_loading(false);
+                    match result {
+                        Ok(report) => {
+                            let rows: Vec<NasDiscoveryUiItem> = report
+                                .results
+                                .iter()
+                                .map(discovery_result_to_ui)
+                                .collect();
+                            let count = rows.len();
+                            ui.set_discovery_results(ModelRc::from(Rc::new(VecModel::from(rows))));
+                            if count == 0 {
+                                let suffix = if report.truncated {
+                                    "（网段过大，已达到扫描上限）"
+                                } else {
+                                    ""
+                                };
+                                ui.set_discovery_error(
+                                    format!(
+                                        "未发现可用 NAS{}。可手动输入地址继续登录。",
+                                        suffix
+                                    )
+                                    .into(),
+                                );
+                                ui.set_login_status_hint(
+                                    format!(
+                                        "已扫描 {} 个本机局域网地址，未发现 NAS。",
+                                        report.candidate_count
+                                    )
+                                    .into(),
+                                );
+                            } else {
+                                ui.set_discovery_error("".into());
+                                ui.set_login_status_hint(
+                                    format!("发现 {} 台 NAS，请选择后登录。", count).into(),
+                                );
+                            }
+                        }
+                        Err(DiscoveryError::Cancelled) => {
+                            ui.set_discovery_error("".into());
+                            ui.set_login_status_hint("已取消 NAS 扫描。".into());
+                        }
+                        Err(error) => {
+                            ui.set_discovery_error(error.user_recovery_hint().into());
+                            ui.set_login_status_hint(
+                                "NAS 自动发现不可用，可手动输入局域网地址。".into(),
+                            );
+                        }
+                    }
+                });
+            });
+        });
+
+        let cancellation_slot = Arc::clone(&self.discovery_cancellation);
+        self.ui.on_cancel_discovery_requested(move || {
+            if let Some(cancellation) = cancellation_slot.lock().unwrap().as_ref() {
+                cancellation.cancel();
+            }
+        });
+
+        let ui_weak = self.ui.as_weak();
+        self.ui.on_select_discovery_result(move |ip_slint| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let ip = ip_slint.to_string();
+            match normalize_lan_url(&ip) {
+                Ok(base_url) => {
+                    ui.set_server_url_input(base_url.into());
+                    ui.set_discovery_error("".into());
+                    ui.set_login_status_hint(
+                        "已填入发现的 NAS 地址，请输入账号密码后登录。".into(),
+                    );
+                }
+                Err(error) => {
+                    ui.set_discovery_error(error.user_recovery_hint().into());
+                }
+            }
         });
     }
 
@@ -1216,6 +1738,14 @@ impl AppCoordinator {
                             }
                             ui.set_playback_status(state.to_string().into());
                             ui.set_is_playing(state == PlaybackState::Playing);
+                            diagnostics::record_event(
+                                "ui",
+                                "playback.state",
+                                "complete",
+                                "success",
+                                Duration::ZERO,
+                                &[("media_state", state.to_string())],
+                            );
                             match state {
                                 PlaybackState::Playing => {
                                     ui.set_status_message(
@@ -1246,9 +1776,23 @@ impl AppCoordinator {
                                 let nas_client = Arc::clone(&nas_client);
                                 let nas_session = Arc::clone(&nas_session);
                                 std::thread::spawn(move || {
-                                    if let Err(error) = nas_client
-                                        .update_playback_progress(&nas_session, &progress_update)
-                                    {
+                                    let sec = progress_update.sec.to_string();
+                                    let duration_sec = progress_update.video_duration.to_string();
+                                    let result = nas_client
+                                        .update_playback_progress(&nas_session, &progress_update);
+                                    diagnostics::record_event(
+                                        "ui",
+                                        "playback.progress",
+                                        "complete",
+                                        if result.is_ok() { "success" } else { "error" },
+                                        Duration::ZERO,
+                                        &[("sec", sec), ("duration_sec", duration_sec)],
+                                    );
+                                    if let Err(error) = result {
+                                        record_reauthentication_required(
+                                            "playback.progress",
+                                            error.requires_reauthentication(),
+                                        );
                                         warn!(
                                             "Failed to report playback progress: {}",
                                             sanitize_log_message(&error.to_string())
@@ -1276,13 +1820,37 @@ impl AppCoordinator {
                             playback_controls.lock().unwrap().cancel_seek();
                             ui.set_media_path(path.into());
                             ui.set_duration_value(duration_secs as f32);
+                            diagnostics::record_event(
+                                "ui",
+                                "playback.media_loaded",
+                                "complete",
+                                "success",
+                                Duration::ZERO,
+                                &[("duration_sec", duration_secs.to_string())],
+                            );
                             ui.set_status_message("媒体已成功载入并在原生窗口渲染。".into());
                         }
                         PlayerEvent::PlaybackFinished => {
                             playback_controls.lock().unwrap().cancel_seek();
+                            diagnostics::record_event(
+                                "ui",
+                                "playback.finished",
+                                "complete",
+                                "success",
+                                Duration::ZERO,
+                                &[],
+                            );
                             ui.set_status_message("视频播放完毕。".into());
                         }
                         PlayerEvent::Error(err) => {
+                            diagnostics::record_event(
+                                "ui",
+                                "playback.player_error",
+                                "complete",
+                                "error",
+                                Duration::ZERO,
+                                &[("reason", "player_error".to_string())],
+                            );
                             ui.set_status_message(format!("播放器错误: {}", err).into());
                         }
                     }
@@ -1625,6 +2193,93 @@ fn playback_track_status(stream: &PlaybackStream) -> String {
     }
 }
 
+fn apply_login_result_to_ui(
+    ui: &AppWindow,
+    session: &NasSession,
+    credential_store: &dyn CredentialStore,
+    server_url: &str,
+    username: &str,
+    password: &str,
+    remember: bool,
+    result: &Result<crate::nas::auth::LoginResponseData, AuthError>,
+) {
+    match result {
+        Ok(data) => {
+            info!("NAS authentication successful for user: {}", username);
+
+            let normalized_base_url = normalized_session_base_url(server_url);
+            session.set_base_url(normalized_base_url.clone());
+            session.set_authenticated_with_identity(
+                data.token.clone(),
+                username.to_string(),
+                data.qcname.clone(),
+                data.nas_name.clone(),
+                data.nas_id.clone(),
+                data.nas_sign.clone(),
+            );
+
+            if remember {
+                let creds = SavedCredentials {
+                    server_url: server_url.to_string(),
+                    username: username.to_string(),
+                    password: Some(password.to_string()),
+                    token: Some(data.token.clone()),
+                    nas_id: data.nas_id.clone(),
+                    nas_sign: data.nas_sign.clone(),
+                };
+                if let Err(e) = credential_store.save(&creds) {
+                    warn!("Failed to persist credentials to secure storage: {}", e);
+                }
+            } else {
+                let _ = credential_store.delete();
+            }
+
+            let nas_display_name = data
+                .nas_name
+                .clone()
+                .unwrap_or_else(|| "极空间 NAS".to_string());
+            ui.set_session_user(username.into());
+            ui.set_session_nas_name(nas_display_name.into());
+            ui.set_session_base_url(normalized_base_url.into());
+            ui.set_show_sms_field(false);
+            ui.set_mfa_challenge_type("".into());
+            ui.set_mfa_code_sent(false);
+            ui.set_mfa_status_hint("".into());
+            ui.set_sms_code_input("".into());
+            ui.set_login_error_message("".into());
+            ui.set_is_logged_in(true);
+            ui.set_current_view("library".into());
+            ui.set_status_message("局域网鉴权成功，正在拉取极影视片库...".into());
+        }
+        Err(err) => {
+            warn!(
+                "NAS login error: {}",
+                sanitize_log_message(&err.to_string())
+            );
+            let recovery_hint = err.user_recovery_hint();
+            ui.set_login_error_message(recovery_hint.into());
+            ui.set_requires_relogin(false);
+
+            if let AuthError::MfaRequired { code, .. } = err {
+                let is_new_device = code == "N001414";
+                ui.set_show_sms_field(true);
+                ui.set_mfa_challenge_type(if is_new_device {
+                    "new_device".into()
+                } else {
+                    "".into()
+                });
+                ui.set_mfa_code_sent(false);
+                ui.set_mfa_status_hint(if is_new_device {
+                    "检测到新设备，请先发送验证码，再输入验证码验证登录。".into()
+                } else {
+                    "检测到安全验证，请先发送验证码，再输入验证码验证登录。".into()
+                });
+                ui.set_login_status_hint("安全两步验证已开启，请按下方步骤完成登录。".into());
+            }
+        }
+    }
+}
+
 fn normalized_session_base_url(input: &str) -> String {
     match normalize_lan_url(input) {
         Ok(url) => url,
@@ -1634,6 +2289,36 @@ fn normalized_session_base_url(input: &str) -> String {
             warn!("Successful login returned an invalid base URL: {}", error);
             input.trim().trim_end_matches('/').to_string()
         }
+    }
+}
+
+fn discovery_result_to_ui(result: &NasDiscoveryResult) -> NasDiscoveryUiItem {
+    NasDiscoveryUiItem {
+        ip: result.ip.to_string().into(),
+        name: result
+            .name
+            .clone()
+            .unwrap_or_else(|| "未命名 NAS".to_string())
+            .into(),
+        availability: if result.available {
+            "可用（5055 已响应）".into()
+        } else {
+            "不可用".into()
+        },
+        available: result.available,
+    }
+}
+
+fn record_reauthentication_required(operation: &str, required: bool) {
+    if required {
+        diagnostics::record_event(
+            "recovery",
+            "session.reauthentication_required",
+            "complete",
+            "required",
+            Duration::ZERO,
+            &[("reason", operation.to_string())],
+        );
     }
 }
 

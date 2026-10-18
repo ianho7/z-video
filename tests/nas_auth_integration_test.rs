@@ -1,8 +1,36 @@
 use std::sync::Arc;
+use std::time::Duration;
+use slint::Timer;
 use z_video::app::AppCoordinator;
 use z_video::nas::client::{MockNasClient, NasClient};
 use z_video::player::MockPlayer;
-use z_video::storage::credentials::{CredentialStore, MemoryCredentialStore, SavedCredentials};
+use z_video::storage::credentials::{
+    CredentialStore, MemoryCredentialStore, SavedCredentials, StorageError,
+};
+
+fn pump_event_loop() {
+    Timer::single_shot(Duration::from_millis(250), || {
+        let _ = slint::quit_event_loop();
+    });
+    slint::run_event_loop_until_quit().expect("auth event loop should exit cleanly");
+}
+
+#[derive(Default)]
+struct FailingCredentialStore;
+
+impl CredentialStore for FailingCredentialStore {
+    fn save(&self, _creds: &SavedCredentials) -> Result<(), StorageError> {
+        Err(StorageError::Other("secure store unavailable".to_string()))
+    }
+
+    fn load(&self) -> Result<Option<SavedCredentials>, StorageError> {
+        Err(StorageError::Other("secure store unavailable".to_string()))
+    }
+
+    fn delete(&self) -> Result<(), StorageError> {
+        Err(StorageError::Other("secure store unavailable".to_string()))
+    }
+}
 
 #[test]
 fn test_nas_auth_integration_comprehensive_suite() {
@@ -19,6 +47,8 @@ fn test_nas_auth_integration_comprehensive_suite() {
             username: "stored_admin".to_string(),
             password: Some("saved_pwd_123".to_string()),
             token: Some("existing_token_xyz".to_string()),
+            nas_id: Some("stored_nas_id".to_string()),
+            nas_sign: Some("stored_nas_sign".to_string()),
         };
         mock_store.save(&preloaded).expect("pre-seed credentials");
 
@@ -30,6 +60,20 @@ fn test_nas_auth_integration_comprehensive_suite() {
         assert_eq!(ui.get_username_input(), "stored_admin");
         assert_eq!(ui.get_password_input(), "saved_pwd_123");
         assert!(ui.get_remember_credentials());
+        assert!(
+            ui.get_is_logged_in(),
+            "saved token should restore the logged-in view"
+        );
+        assert!(coordinator.session().is_authenticated());
+        assert_eq!(
+            coordinator.session().token().as_deref(),
+            Some("existing_token_xyz")
+        );
+        assert_eq!(
+            coordinator.session().nas_id().as_deref(),
+            Some("stored_nas_id")
+        );
+        assert_eq!(coordinator.session().nas_sign().as_deref(), Some("stored_nas_sign"));
     }
 
     // -------------------------------------------------------------
@@ -73,6 +117,8 @@ fn test_nas_auth_integration_comprehensive_suite() {
         let saved = mock_store.load().unwrap().expect("creds should be saved");
         assert_eq!(saved.username, "admin");
         assert_eq!(saved.password.as_deref(), Some("password123"));
+        assert_eq!(saved.nas_id.as_deref(), Some("mock_nas_id_001"));
+        assert_eq!(saved.nas_sign.as_deref(), Some("mock_opaque_sign_abc"));
 
         // Perform logout
         coordinator.perform_logout();
@@ -142,15 +188,29 @@ fn test_nas_auth_integration_comprehensive_suite() {
         assert!(!ui.get_is_logged_in());
         assert!(!coordinator.session().is_authenticated());
 
-        // Step 2: Login with incorrect MFA code -> should fail
+        // Step 2: Request the code through the cloud-facing MFA operation.
+        let res_send = coordinator.perform_send_mfa_code("192.168.1.50", "admin", None);
+        assert!(
+            res_send.is_ok(),
+            "MFA code request should succeed: {:?}",
+            res_send.err()
+        );
+        assert!(coordinator
+            .window()
+            .get_mfa_status_hint()
+            .contains("验证码已发送"));
+        assert!(coordinator.window().get_mfa_code_sent());
+
+        // Step 3: Invalid user-entered code must fail before NAS login.
         let res_bad_mfa =
-            coordinator.perform_login("192.168.1.50", "admin", "password123", Some("000000"), true);
+            coordinator.perform_mfa_login("192.168.1.50", "admin", "password123", "000000", true);
         assert!(res_bad_mfa.is_err());
         assert!(!ui.get_is_logged_in());
 
-        // Step 3: Login with correct MFA code "123456" -> should succeed
+        // Step 4: Verification returns an opaque proof, then the final NAS
+        // login succeeds with that proof rather than the raw code.
         let res_good_mfa =
-            coordinator.perform_login("192.168.1.50", "admin", "password123", Some("123456"), true);
+            coordinator.perform_mfa_login("192.168.1.50", "admin", "password123", "123456", true);
         assert!(res_good_mfa.is_ok());
         assert!(ui.get_is_logged_in());
         assert!(coordinator.session().is_authenticated());
@@ -191,8 +251,32 @@ fn test_nas_auth_integration_comprehensive_suite() {
     // Scenario 6: Bare IP login stores a normalized session base URL
     // -------------------------------------------------------------
     successful_bare_ip_login_stores_normalized_session_base_url();
-}
 
+    // N001414 is the new-device variant and must expose the cloud request
+    // type required by the SMS endpoint.
+    {
+        let coordinator = AppCoordinator::with_deps(
+            Arc::new(MockPlayer::new()),
+            false,
+            Arc::new(
+                MockNasClient::new()
+                    .with_mfa(true)
+                    .with_mfa_error_code("N001414"),
+            ),
+            Arc::new(MemoryCredentialStore::new()),
+        )
+        .expect("coordinator should initialize");
+
+        let result = coordinator.perform_login("192.168.1.50", "admin", "password123", None, false);
+        assert!(result.is_err());
+        assert!(coordinator.window().get_show_sms_field());
+        assert_eq!(coordinator.window().get_mfa_challenge_type(), "new_device");
+        assert!(coordinator
+            .window()
+            .get_mfa_status_hint()
+            .contains("新设备"));
+    }
+}
 fn successful_bare_ip_login_stores_normalized_session_base_url() {
     let coordinator = AppCoordinator::with_deps(
         Arc::new(MockPlayer::new()),
@@ -211,4 +295,90 @@ fn successful_bare_ip_login_stores_normalized_session_base_url() {
         coordinator.window().get_session_base_url(),
         "http://192.168.1.50:5055"
     );
+}
+
+#[test]
+fn remember_false_removes_previous_saved_credentials() {
+    let store = Arc::new(MemoryCredentialStore::new());
+    store
+        .save(&SavedCredentials {
+            server_url: "192.168.1.50:5055".to_string(),
+            username: "admin".to_string(),
+            password: Some("old-password".to_string()),
+            token: Some("old-token".to_string()),
+            nas_id: Some("old-nas-id".to_string()),
+            nas_sign: Some("old-nas-sign".to_string()),
+        })
+        .expect("pre-seed credentials");
+
+    let coordinator = AppCoordinator::with_deps(
+        Arc::new(MockPlayer::new()),
+        false,
+        Arc::new(MockNasClient::new()),
+        store.clone(),
+    )
+    .expect("coordinator should initialize");
+
+    coordinator
+        .perform_login("192.168.1.50", "admin", "password123", None, false)
+        .expect("mock login should succeed");
+
+    assert!(store.load().expect("store load should succeed").is_none());
+}
+
+#[test]
+fn credential_restore_failure_is_visible_and_does_not_fake_a_session() {
+    let coordinator = AppCoordinator::with_deps(
+        Arc::new(MockPlayer::new()),
+        false,
+        Arc::new(MockNasClient::new()),
+        Arc::new(FailingCredentialStore),
+    )
+    .expect("coordinator should initialize");
+
+    assert!(!coordinator.window().get_is_logged_in());
+    assert!(coordinator
+        .window()
+        .get_login_error_message()
+        .contains("安全凭据"));
+    assert!(coordinator
+        .window()
+        .get_login_status_hint()
+        .contains("凭据"));
+}
+
+#[test]
+fn expired_restored_session_returns_to_login_and_clears_saved_credentials() {
+    let store = Arc::new(MemoryCredentialStore::new());
+    store
+        .save(&SavedCredentials {
+            server_url: "192.168.1.50:5055".to_string(),
+            username: "admin".to_string(),
+            password: Some("password123".to_string()),
+            token: Some("expired-token".to_string()),
+            nas_id: Some("expired-nas-id".to_string()),
+            nas_sign: Some("expired-nas-sign".to_string()),
+        })
+        .expect("pre-seed credentials");
+
+    let coordinator = AppCoordinator::with_deps(
+        Arc::new(MockPlayer::new()),
+        false,
+        Arc::new(MockNasClient::new()),
+        store.clone(),
+    )
+    .expect("coordinator should initialize");
+
+    assert!(coordinator.window().get_is_logged_in());
+    coordinator.session().clear();
+    coordinator.window().invoke_refresh_library_clicked();
+    pump_event_loop();
+
+    assert!(!coordinator.window().get_is_logged_in());
+    assert!(!coordinator.session().is_authenticated());
+    assert!(store.load().expect("store load should succeed").is_none());
+    assert!(coordinator
+        .window()
+        .get_login_error_message()
+        .contains("会话已失效"));
 }

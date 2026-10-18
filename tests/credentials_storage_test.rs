@@ -16,6 +16,8 @@ fn test_credential_storage_crud_lifecycle() {
         username: "master_user".to_string(),
         password: Some("p@ssword_xyz_2026".to_string()),
         token: Some("zenith_token_live_abcdef123456789".to_string()),
+        nas_id: Some("nas-id-123".to_string()),
+        nas_sign: Some("opaque-sign-123".to_string()),
     };
     store.save(&creds).expect("save should succeed");
 
@@ -28,10 +30,25 @@ fn test_credential_storage_crud_lifecycle() {
         loaded.token.as_deref(),
         Some("zenith_token_live_abcdef123456789")
     );
+    assert_eq!(loaded.nas_id.as_deref(), Some("nas-id-123"));
+    assert_eq!(loaded.nas_sign.as_deref(), Some("opaque-sign-123"));
 
     // 4. Delete credentials
     store.delete().expect("delete should succeed");
     assert!(store.load().unwrap().is_none());
+}
+
+#[test]
+fn test_legacy_saved_credentials_default_nas_id_to_none() {
+    let legacy_json = r#"{
+        "server_url": "192.168.5.2:5055",
+        "username": "legacy_user",
+        "token": "legacy-token"
+    }"#;
+
+    let loaded: SavedCredentials =
+        serde_json::from_str(legacy_json).expect("legacy credentials should remain readable");
+    assert_eq!(loaded.nas_id, None);
 }
 
 #[test]
@@ -55,6 +72,8 @@ fn test_sanitization_rules_never_expose_plaintext_secrets() {
         username: "security_auditor".to_string(),
         password: Some(raw_pass.to_string()),
         token: Some(long_token.to_string()),
+        nas_id: None,
+        nas_sign: None,
     };
 
     let debug_output = format!("{:?}", creds);

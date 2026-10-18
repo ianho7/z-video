@@ -1,8 +1,34 @@
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+pub const NAS_APP: &str = "video";
+pub const NAS_PLATFORM: &str = "pc";
+
+/// Optional device fields observed in the official Windows request envelope.
+/// Unknown values stay absent instead of being fabricated.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NasDeviceMetadata {
+    pub version: Option<String>,
+    pub device_id: Option<String>,
+    pub device: Option<String>,
+    pub client_public_ip: Option<String>,
+    pub locale: Option<String>,
+    pub uuid: Option<String>,
+}
+
+/// Snapshot of the identity and metadata used to build a NAS request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NasRequestContext {
+    pub token: String,
+    pub nas_id: Option<String>,
+    pub nas_sign: Option<String>,
+    pub app: &'static str,
+    pub platform: &'static str,
+    pub device: NasDeviceMetadata,
+}
+
 /// Thread-safe NAS authentication session.
-/// Maintains the active session token, base URL, user profile, and sign info.
+/// Maintains the active session token, NAS identity, opaque sign, and request metadata.
 #[derive(Debug, Clone)]
 pub struct NasSession {
     base_url: Arc<Mutex<String>>,
@@ -10,7 +36,9 @@ pub struct NasSession {
     username: Arc<Mutex<Option<String>>>,
     qcname: Arc<Mutex<Option<String>>>,
     nas_name: Arc<Mutex<Option<String>>>,
+    nas_id: Arc<Mutex<Option<String>>>,
     nas_sign: Arc<Mutex<Option<String>>>,
+    device: Arc<Mutex<NasDeviceMetadata>>,
     authenticated_at: Arc<Mutex<Option<Instant>>>,
 }
 
@@ -28,24 +56,43 @@ impl NasSession {
             username: Arc::new(Mutex::new(None)),
             qcname: Arc::new(Mutex::new(None)),
             nas_name: Arc::new(Mutex::new(None)),
+            nas_id: Arc::new(Mutex::new(None)),
             nas_sign: Arc::new(Mutex::new(None)),
+            device: Arc::new(Mutex::new(NasDeviceMetadata::default())),
             authenticated_at: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// Sets the active authenticated credentials and session metadata.
+    /// Sets authenticated credentials and the real NAS identity returned by login.
+    ///
+    /// The final argument is deliberately `nas_id`; `/key/pub`'s opaque `sign`
+    /// is stored separately with [`Self::set_nas_sign`].
     pub fn set_authenticated(
         &self,
         token: String,
         username: String,
         qcname: Option<String>,
         nas_name: Option<String>,
+        nas_id: Option<String>,
+    ) {
+        self.set_authenticated_with_identity(token, username, qcname, nas_name, nas_id, None);
+    }
+
+    /// Sets both identity values when a caller has independently observed them.
+    pub fn set_authenticated_with_identity(
+        &self,
+        token: String,
+        username: String,
+        qcname: Option<String>,
+        nas_name: Option<String>,
+        nas_id: Option<String>,
         nas_sign: Option<String>,
     ) {
         *self.token.lock().unwrap() = Some(token);
         *self.username.lock().unwrap() = Some(username);
         *self.qcname.lock().unwrap() = qcname;
         *self.nas_name.lock().unwrap() = nas_name;
+        *self.nas_id.lock().unwrap() = nas_id;
         *self.nas_sign.lock().unwrap() = nas_sign;
         *self.authenticated_at.lock().unwrap() = Some(Instant::now());
     }
@@ -56,6 +103,7 @@ impl NasSession {
         *self.username.lock().unwrap() = None;
         *self.qcname.lock().unwrap() = None;
         *self.nas_name.lock().unwrap() = None;
+        *self.nas_id.lock().unwrap() = None;
         *self.nas_sign.lock().unwrap() = None;
         *self.authenticated_at.lock().unwrap() = None;
     }
@@ -81,8 +129,43 @@ impl NasSession {
         self.nas_name.lock().unwrap().clone()
     }
 
+    pub fn nas_id(&self) -> Option<String> {
+        self.nas_id.lock().unwrap().clone()
+    }
+
+    pub fn set_nas_id(&self, nas_id: Option<String>) {
+        *self.nas_id.lock().unwrap() = nas_id;
+    }
+
     pub fn nas_sign(&self) -> Option<String> {
         self.nas_sign.lock().unwrap().clone()
+    }
+
+    pub fn set_nas_sign(&self, nas_sign: Option<String>) {
+        *self.nas_sign.lock().unwrap() = nas_sign;
+    }
+
+    pub fn set_device_metadata(&self, device: NasDeviceMetadata) {
+        *self.device.lock().unwrap() = device;
+    }
+
+    pub fn device_metadata(&self) -> NasDeviceMetadata {
+        self.device.lock().unwrap().clone()
+    }
+
+    /// Creates a consistent request snapshot without exposing a partial token.
+    pub fn request_context(&self) -> Option<NasRequestContext> {
+        let token = self
+            .token()
+            .filter(|token| !token.trim().is_empty())?;
+        Some(NasRequestContext {
+            token,
+            nas_id: self.nas_id(),
+            nas_sign: self.nas_sign(),
+            app: NAS_APP,
+            platform: NAS_PLATFORM,
+            device: self.device_metadata(),
+        })
     }
 
     pub fn base_url(&self) -> String {
@@ -113,14 +196,16 @@ mod tests {
             "admin_user".to_string(),
             Some("Admin".to_string()),
             Some("MyZspace".to_string()),
-            Some("sign_123".to_string()),
+            Some("nas_id_123".to_string()),
         );
+        session.set_nas_sign(Some("sign_123".to_string()));
 
         assert!(session.is_authenticated());
         assert_eq!(session.token().unwrap(), "test_token_xyz");
         assert_eq!(session.username().unwrap(), "admin_user");
         assert_eq!(session.qcname().unwrap(), "Admin");
         assert_eq!(session.nas_name().unwrap(), "MyZspace");
+        assert_eq!(session.nas_id().unwrap(), "nas_id_123");
         assert_eq!(session.nas_sign().unwrap(), "sign_123");
         assert!(session.authenticated_at().is_some());
 
@@ -128,5 +213,23 @@ mod tests {
         assert!(!session.is_authenticated());
         assert_eq!(session.token(), None);
         assert_eq!(session.username(), None);
+    }
+
+    #[test]
+    fn request_context_keeps_nas_id_and_nas_sign_separate() {
+        let session = NasSession::new("http://192.168.1.50:5055".to_string());
+        session.set_authenticated(
+            "session-token".to_string(),
+            "admin_user".to_string(),
+            None,
+            None,
+            None,
+        );
+        session.set_nas_id(Some("real-nas-id".to_string()));
+        session.set_nas_sign(Some("opaque-sign".to_string()));
+
+        let context = session.request_context().expect("authenticated context");
+        assert_eq!(context.nas_id.as_deref(), Some("real-nas-id"));
+        assert_eq!(context.nas_sign.as_deref(), Some("opaque-sign"));
     }
 }

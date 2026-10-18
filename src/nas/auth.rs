@@ -1,4 +1,6 @@
-use serde::{Deserialize, Serialize};
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize};
+use std::fmt;
 use thiserror::Error;
 
 /// Public key response data returned by `/key/pub`.
@@ -9,6 +11,66 @@ pub struct NasPubKeyData {
     pub sign: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
+}
+
+/// Cloud public-key material used by the SMS verification endpoints.
+///
+/// The cloud key and its key id are separate from the NAS key/sign pair. The
+/// former encrypts the username sent to the cloud; the latter identifies the
+/// NAS to the cloud verification service.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CloudPubKeyData {
+    pub key: String,
+    #[serde(alias = "keyId")]
+    pub key_id: String,
+}
+
+/// Opaque proof returned by `/sms/ucheck`.
+///
+/// Keeping this distinct from the user-entered code prevents callers from
+/// accidentally forwarding the raw code to `/auth/login` as `sms_proof`.
+#[derive(Clone, PartialEq, Eq)]
+pub struct MfaProof(String);
+
+impl MfaProof {
+    pub(crate) fn new(value: String) -> Self {
+        Self(value)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for MfaProof {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("MfaProof([REDACTED])")
+    }
+}
+
+fn deserialize_optional_boolish<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+
+    match value {
+        None => Ok(None),
+        Some(serde_json::Value::Bool(value)) => Ok(Some(value)),
+        Some(serde_json::Value::Number(value)) => match value.as_i64() {
+            Some(0) => Ok(Some(false)),
+            Some(1) => Ok(Some(true)),
+            Some(value) => Err(D::Error::custom(format!(
+                "expected boolean or integer 0/1, got integer {value}"
+            ))),
+            None => Err(D::Error::custom(
+                "expected boolean or integer 0/1, got non-integer number",
+            )),
+        },
+        Some(value) => Err(D::Error::custom(format!(
+            "expected boolean or integer 0/1, got {value}"
+        ))),
+    }
 }
 
 /// Generic wrapper for Z-Space API responses.
@@ -75,12 +137,15 @@ pub struct LoginResponseData {
     pub qcname: Option<String>,
     #[serde(default)]
     pub avatar: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_optional_boolish")]
     pub is_local: Option<bool>,
     #[serde(default)]
     pub userinfo: Option<serde_json::Value>,
-    #[serde(default)]
+    #[serde(default, alias = "nasid", alias = "nasId")]
     pub nas_id: Option<String>,
+    /// Opaque value returned by `/key/pub`; it is not the NAS identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nas_sign: Option<String>,
     #[serde(default)]
     pub nas_name: Option<String>,
 }
@@ -197,6 +262,29 @@ impl AuthError {
             AuthError::MalformedResponse(err) => {
                 format!("无法解析 NAS 响应: {}", sanitize_log_message(err))
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ApiResponse, LoginResponseData};
+
+    #[test]
+    fn login_response_accepts_numeric_is_local_flag() {
+        for (raw_value, expected) in [("0", false), ("1", true)] {
+            let response: ApiResponse<LoginResponseData> = serde_json::from_str(&format!(
+                r#"{{
+                    "code": 200,
+                    "data": {{
+                        "token": "test-token",
+                        "is_local": {raw_value}
+                    }}
+                }}"#
+            ))
+            .expect("numeric is_local should be accepted");
+
+            assert_eq!(response.data.expect("login data").is_local, Some(expected));
         }
     }
 }

@@ -1,10 +1,18 @@
 use std::sync::Arc;
-use slint::Model;
+use std::time::Duration;
+use slint::{Model, Timer};
 use z_video::app::AppCoordinator;
 use z_video::media::image_cache::{decode_to_slint_image, ImageCache};
 use z_video::nas::client::MockNasClient;
 use z_video::player::MockPlayer;
 use z_video::storage::credentials::MemoryCredentialStore;
+
+fn pump_library_event_loop() {
+    Timer::single_shot(Duration::from_millis(250), || {
+        let _ = slint::quit_event_loop();
+    });
+    slint::run_event_loop_until_quit().expect("library event loop should exit cleanly");
+}
 
 #[test]
 fn test_media_library_integration_comprehensive_suite() {
@@ -75,6 +83,24 @@ fn test_media_library_integration_comprehensive_suite() {
     assert_eq!(first_col.release_year.as_str(), "2014");
     assert_eq!(first_col.video_type.as_str(), "电影");
     assert_eq!(first_col.score.as_str(), "9.4");
+
+    // Reproduce the async post-login refresh state: the category result has
+    // arrived, but the selected category ID has not yet been copied to UI.
+    coordinator
+        .window()
+        .set_selected_classification_id("".into());
+    coordinator.window().invoke_refresh_library_clicked();
+    pump_library_event_loop();
+    assert_eq!(
+        coordinator.window().get_selected_classification_id(),
+        "1",
+        "refresh should select the first category when no category is selected"
+    );
+    assert_eq!(
+        coordinator.window().get_collections().row_count(),
+        4,
+        "refresh should load collections for the selected category"
+    );
 
     // -------------------------------------------------------------
     // Scenario 3: Category switching

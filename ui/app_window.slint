@@ -25,6 +25,13 @@ export struct EpisodeUiItem {
     is_selected: bool,
 }
 
+export struct NasDiscoveryUiItem {
+    ip: string,
+    name: string,
+    availability: string,
+    available: bool,
+}
+
 export struct SeasonUiItem {
     season_number: int,
     title: string,
@@ -49,10 +56,20 @@ export component AppWindow inherits Window {
     in-out property <string> password_input: "";
     in-out property <string> sms_code_input: "";
     in-out property <bool> show_sms_field: false;
+    in-out property <string> mfa_challenge_type: "";
+    in-out property <bool> mfa_code_sent: false;
+    in-out property <bool> mfa_code_sending: false;
+    in-out property <bool> mfa_verifying: false;
+    in-out property <string> mfa_status_hint: "";
     in-out property <bool> remember_credentials: true;
     in-out property <bool> login_loading: false;
     in-out property <string> login_error_message: "";
     in-out property <string> login_status_hint: "请输入极空间局域网 IP (默认端口 5055) 与管理账号密码";
+
+    // LAN NAS discovery state
+    in-out property <[NasDiscoveryUiItem]> discovery_results: [];
+    in-out property <bool> discovery_loading: false;
+    in-out property <string> discovery_error: "";
 
     // Active Authenticated Session Profile
     in-out property <string> session_user: "";
@@ -109,8 +126,13 @@ export component AppWindow inherits Window {
 
     // Authentication Callbacks
     callback login_requested(string, string, string, string, bool);
+    callback send_mfa_code_requested(string, string, string);
+    callback verify_mfa_login_requested(string, string, string, string, bool);
     callback logout_requested();
     callback relogin_requested();
+    callback discover_nas_requested();
+    callback cancel_discovery_requested();
+    callback select_discovery_result(string);
 
     // Library Callbacks
     callback select_classification(string);
@@ -264,6 +286,83 @@ export component AppWindow inherits Window {
                     }
                 }
 
+                // Minimal LAN discovery and selection panel.
+                Rectangle {
+                    background: #202731;
+                    border_color: #344150;
+                    border_width: 1px;
+                    border_radius: 6px;
+
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 8px;
+
+                        HorizontalLayout {
+                            alignment: space_between;
+                            Text {
+                                text: "发现本机局域网 NAS";
+                                color: #cfd8dc;
+                                font_size: 12px;
+                                font_weight: 600;
+                            }
+                            if root.discovery_loading: Button {
+                                text: "取消扫描";
+                                clicked => { root.cancel_discovery_requested(); }
+                            }
+                            if !root.discovery_loading: Button {
+                                text: "扫描 NAS";
+                                enabled: !root.login_loading;
+                                clicked => { root.discover_nas_requested(); }
+                            }
+                        }
+
+                        if root.discovery_error != "": Text {
+                            text: "⚠ " + root.discovery_error;
+                            color: #ffccbc;
+                            font_size: 11px;
+                            wrap: word-wrap;
+                        }
+
+                        if root.discovery_loading: Text {
+                            text: "正在扫描本机私有局域网，请稍候...";
+                            color: #90caf9;
+                            font_size: 11px;
+                        }
+
+                        for item in root.discovery_results: Rectangle {
+                            background: item.available ? #263238 : #2b2528;
+                            border_color: item.available ? #456a7d : #5d4246;
+                            border_width: 1px;
+                            border_radius: 4px;
+                            height: 42px;
+
+                            HorizontalLayout {
+                                padding_left: 8px;
+                                padding_right: 8px;
+                                spacing: 8px;
+                                Text {
+                                    text: item.name + " · " + item.ip;
+                                    color: #ffffff;
+                                    font_size: 12px;
+                                    vertical_alignment: center;
+                                    horizontal_stretch: 1;
+                                }
+                                Text {
+                                    text: item.availability;
+                                    color: item.available ? #a5d6a7 : #ef9a9a;
+                                    font_size: 11px;
+                                    vertical_alignment: center;
+                                }
+                                Button {
+                                    text: "使用此地址";
+                                    enabled: item.available && !root.login_loading;
+                                    clicked => { root.select_discovery_result(item.ip); }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Fields
                 VerticalLayout {
                     spacing: 4px;
@@ -276,7 +375,7 @@ export component AppWindow inherits Window {
                     LineEdit {
                         text: root.server_url_input;
                         placeholder_text: "例如: 192.168.1.100 或 192.168.1.100:5055";
-                        enabled: !root.login_loading;
+                        enabled: !root.login_loading && !root.mfa_code_sending && !root.mfa_verifying;
                         edited(val) => { root.server_url_input = val; }
                     }
                 }
@@ -292,7 +391,7 @@ export component AppWindow inherits Window {
                     LineEdit {
                         text: root.username_input;
                         placeholder_text: "请输入极空间账号 / 手机号";
-                        enabled: !root.login_loading;
+                        enabled: !root.login_loading && !root.mfa_code_sending && !root.mfa_verifying;
                         edited(val) => { root.username_input = val; }
                     }
                 }
@@ -309,7 +408,7 @@ export component AppWindow inherits Window {
                         text: root.password_input;
                         placeholder_text: "请输入登录密码";
                         input_type: password;
-                        enabled: !root.login_loading;
+                        enabled: !root.login_loading && !root.mfa_code_sending && !root.mfa_verifying;
                         edited(val) => { root.password_input = val; }
                         accepted => {
                             if !root.login_loading && root.server_url_input != "" && root.username_input != "" {
@@ -317,7 +416,7 @@ export component AppWindow inherits Window {
                                     root.server_url_input,
                                     root.username_input,
                                     root.password_input,
-                                    root.sms_code_input,
+                                    "",
                                     root.remember_credentials
                                 );
                             }
@@ -341,10 +440,16 @@ export component AppWindow inherits Window {
                             font_size: 11px;
                         }
                     }
+                    if root.show_sms_field && root.mfa_status_hint != "": Text {
+                        text: root.mfa_status_hint;
+                        color: #90caf9;
+                        font_size: 11px;
+                        wrap: word-wrap;
+                    }
                     LineEdit {
                         text: root.sms_code_input;
                         placeholder_text: root.show_sms_field ? "请输入收到的短信/邮件验证码" : "如开启两步验证或遇到新设备验证时输入";
-                        enabled: !root.login_loading;
+                        enabled: root.show_sms_field && !root.login_loading && !root.mfa_code_sending && !root.mfa_verifying;
                         edited(val) => { root.sms_code_input = val; }
                     }
                 }
@@ -360,7 +465,7 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                Button {
+                if !root.show_sms_field: Button {
                     text: root.login_loading ? "正在连接 NAS 并验证身份..." : "登 录 (Login)";
                     primary: true;
                     enabled: !root.login_loading && root.server_url_input != "" && root.username_input != "";
@@ -369,9 +474,40 @@ export component AppWindow inherits Window {
                             root.server_url_input,
                             root.username_input,
                             root.password_input,
-                            root.sms_code_input,
+                            "",
                             root.remember_credentials
                         );
+                    }
+                }
+
+                if root.show_sms_field: HorizontalLayout {
+                    spacing: 8px;
+
+                    Button {
+                        text: root.mfa_code_sending ? "正在发送验证码..." : "发送验证码";
+                        enabled: !root.login_loading && !root.mfa_code_sending && !root.mfa_verifying && root.server_url_input != "" && root.username_input != "";
+                        clicked => {
+                            root.send_mfa_code_requested(
+                                root.server_url_input,
+                                root.username_input,
+                                root.mfa_challenge_type
+                            );
+                        }
+                    }
+
+                    Button {
+                        text: root.mfa_verifying ? "正在验证登录..." : "验证登录";
+                        primary: true;
+                        enabled: root.mfa_code_sent && !root.login_loading && !root.mfa_code_sending && !root.mfa_verifying && root.server_url_input != "" && root.username_input != "" && root.password_input != "" && root.sms_code_input != "";
+                        clicked => {
+                            root.verify_mfa_login_requested(
+                                root.server_url_input,
+                                root.username_input,
+                                root.password_input,
+                                root.sms_code_input,
+                                root.remember_credentials
+                            );
+                        }
                     }
                 }
 

@@ -13,7 +13,7 @@ pub struct ClassificationItem {
     pub is_system: i32,
     #[serde(default)]
     pub is_enable: i32,
-    #[serde(default)]
+    #[serde(default, alias = "collection_count", alias = "collectionCount")]
     pub count: i64,
 }
 
@@ -31,19 +31,19 @@ impl ClassificationItem {
 pub struct CollectionItem {
     pub collection_id: String,
     pub title: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_value")]
     pub cover: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_value")]
     pub release_year: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_value")]
     pub video_type: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
     pub score: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
     pub rating: Option<String>,
     #[serde(default)]
     pub episode_count: Option<i32>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
     pub storyline: Option<String>,
 }
 
@@ -390,6 +390,22 @@ fn value_as_string(value: &Value) -> Option<String> {
     }
 }
 
+fn deserialize_string_value<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(value_as_string(&value).unwrap_or_default())
+}
+
+fn deserialize_optional_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|value| value_as_string(&value)))
+}
+
 fn first_u32(object: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<u32> {
     keys.iter().find_map(|key| object.get(*key).and_then(value_as_u32))
 }
@@ -533,9 +549,9 @@ mod tests {
                     "collection_id": "c101",
                     "title": "肖申克的救赎",
                     "cover": "/zvideo/cover/shawshank.jpg",
-                    "release_year": "1994",
+                    "release_year": 1994,
                     "video_type": "movie",
-                    "score": "9.7"
+                    "score": 9.7
                 },
                 {
                     "collection_id": "c102",
