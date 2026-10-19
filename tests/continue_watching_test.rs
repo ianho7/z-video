@@ -18,7 +18,6 @@ fn context(episode_id: &str) -> LastPlaybackContext {
         episode_id: episode_id.to_string(),
     }
 }
-
 fn detail(history: Option<PlaybackHistory>, duration: Option<&str>) -> CollectionDetail {
     CollectionDetail {
         collection_id: "collection-fixture".to_string(),
@@ -191,4 +190,3 @@ fn continue_watching_ui_integration_suite() {
         .get_continue_watching_error()
         .contains("重试"));
 }
-

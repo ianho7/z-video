@@ -297,10 +297,11 @@ component ShellSearchField inherits Rectangle {
         padding-left: 10px;
         padding-right: 10px;
         spacing: 8px;
-        Text {
-            text: "⌕";
-            color: ShellTheme.text_tertiary;
-            font_size: 17px;
+        Image {
+            source: @image-url("../assets/icons/search.svg");
+            width: 16px;
+            height: 16px;
+            colorize: ShellTheme.text_tertiary;
             vertical_alignment: center;
         }
         input := TextInput {
