@@ -33,12 +33,12 @@ $env:CARGO_BUILD_JOBS = '2'
 & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -NoProfile -ExecutionPolicy Bypass -File '.\docs\design\evidence\ticket-09\probe-native-window.ps1' `
   -Executable 'D:\project\z-video\.build-cache\ticket-09-skia-implementation\debug\poster_grid_preview.exe' `
   -Output '.\docs\design\evidence\ticket-09\skia-library-1440x900-125.png' `
-  -LogicalWidth 1440 -LogicalHeight 900 -ScalePercent 125 -HoldMs 1800
+  -LogicalWidth 1440 -LogicalHeight 900 -ScalePercent 125 -HoldMs 1800 -MaterialEvidence
 
 & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -NoProfile -ExecutionPolicy Bypass -File '.\docs\design\evidence\ticket-09\probe-native-window.ps1' `
   -Executable 'D:\project\z-video\.build-cache\ticket-09-skia-implementation\debug\poster_grid_preview.exe' `
   -Output '.\docs\design\evidence\ticket-09\opaque-fallback-1440x900-125.png' `
-  -LogicalWidth 1440 -LogicalHeight 900 -ScalePercent 125 -HoldMs 1800 -ReducedTransparency
+  -LogicalWidth 1440 -LogicalHeight 900 -ScalePercent 125 -HoldMs 1800 -ReducedTransparency -MaterialEvidence
 ```
 
 `probe-native-window.ps1` 通过 Win32 `GetDpiForWindow` 读取窗口 DPI，并同时保留 fixture 自己的 `Window::take_snapshot()` 尺寸日志。脚本会在进程退出后读取真实的 `Process.ExitCode`；若当前 PowerShell/GUI harness 仍无法取得数值，则明确记录 `exit_code=unavailable` 和 `exit_code_read=unavailable`，不会伪造退出码。提交时保留的两次原生证据均记录 `exit_code=unavailable`，但 `HasExited=True`、stderr 均报告 `poster preview saved`，目标文件存在且尺寸符合预期。

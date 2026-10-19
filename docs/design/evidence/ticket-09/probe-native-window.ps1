@@ -8,7 +8,8 @@ param(
     [ValidateSet(100, 125, 150)]
     [int]$ScalePercent = 125,
     [int]$HoldMs = 1800,
-    [switch]$ReducedTransparency
+    [switch]$ReducedTransparency,
+    [switch]$MaterialEvidence
 )
 
 $ErrorActionPreference = 'Stop'
@@ -52,9 +53,11 @@ try {
         '--width', "$LogicalWidth",
         '--height', "$LogicalHeight",
         '--output', $outputPath,
-        '--hold-ms', "$HoldMs",
-        '--material-evidence'
+        '--hold-ms', "$HoldMs"
     )
+    if ($MaterialEvidence) {
+        $arguments += '--material-evidence'
+    }
     $process = Start-Process -FilePath $executablePath `
         -ArgumentList $arguments `
         -WorkingDirectory $workingDirectory `
@@ -80,6 +83,15 @@ try {
         $physicalHeight = [Math]::Round($LogicalHeight * $dpi / 96.0)
         Write-Output "dpi=$dpi source=GetDpiForWindow hwnd=$windowHandle logical=${LogicalWidth}x${LogicalHeight} physical=${physicalWidth}x${physicalHeight} scale_override=${ScalePercent}%"
     }
+
+    $sidebarWidth = 220
+    $toolbarHeight = 64
+    $contentWidth = [Math]::Max(0, $LogicalWidth - $sidebarWidth)
+    $contentHeight = [Math]::Max(0, $LogicalHeight - $toolbarHeight)
+    $innerX = $sidebarWidth + 32
+    $innerWidth = [Math]::Max(0, $contentWidth - 64)
+    Write-Output "layout_bounds_logical=sidebar=0,0,${sidebarWidth}x${LogicalHeight};toolbar=${sidebarWidth},0,${contentWidth}x${toolbarHeight};content=${sidebarWidth},${toolbarHeight},${contentWidth}x${contentHeight};grid-detail=${innerX},${toolbarHeight},${innerWidth}x${contentHeight} source=ShellTheme/sidebar-toolbar-padding"
+    Write-Output "material_evidence=$MaterialEvidence"
 
     $process.WaitForExit()
     $process.Refresh()
