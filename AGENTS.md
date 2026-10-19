@@ -42,6 +42,7 @@
 - 本地诊断日志默认写入 `%LOCALAPPDATA%\z-video\logs\diagnostics.jsonl`，至少覆盖 UI 操作、请求路径、HTTP 状态、解析结果、业务结果、耗时和错误码。
 - 在沙箱或复现环境中可设置 `Z_VIDEO_LOG_DIR` 覆盖日志目录；覆盖只用于诊断，不改变正式环境的默认路径。
 - 协议参数以官方 Windows app 的静态与运行时证据为准，Web 端参数不得直接套用；静态候选与运行时确认必须分开记录。
+- 任何接口参数、响应字段或协议解析变更，必须同步更新 `reference/protocol-ledger.md`、`tests/fixtures/protocol/` 和对应 owner 边界契约测试；完成前运行 `cargo test --test protocol_contract_test -- --test-threads=1`、`cargo check`、`python scripts/check_protocol_contracts.py` 与 `git diff --check`。这些检查只证明本地契约，不替代真实 NAS 验收。
 - 普通片库列表 `POST /zvideo/video/v2/list` 经真实 NAS 验证使用 `system=94`；`system=7` 在同一分类会返回 `count=0/list=[]`，只能作为兼容回退，不能作为默认参数。
 - 片库卡片的 `release_year`、评分等字段可能返回数字或字符串；模型解析必须兼容两种 JSON 类型，不能因 `integer 2026` 这类值丢弃整页。
 - `/auth/login` 返回成功不代表片库身份已经完整；登录后及恢复保存会话时，都要通过 `/zhelper/state` 补齐并保存 `nas_id`，再请求分类和列表。
