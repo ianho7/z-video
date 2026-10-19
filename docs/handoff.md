@@ -57,5 +57,5 @@ JSON catalog 是从选定版本脚本提取的调用目录，不是固件完整 
 2026-10-20 shell follow-up：正式默认 shell 增加低对比 `ShellAtmosphere` 作为 sidebar/toolbar
 玻璃层的真实背景采样内容；`MaterialEvidenceBackdrop` 仍仅由 neutral fixture 显式开启。布局
 按 logical client size 计算，固定来源为 preferred `1040x720`、sidebar `220px`、toolbar
-`64px` 和内容左右 `32px`，geometry 证据见 `docs/design/evidence/ticket-09-shell-layout/README.md`。
+`64px` 和内容左右 `32px`，geometry 证据见 [filter-fix README](design/evidence/ticket-09-shell-layout-filter-fix/README.md)：[Skia 1040x720](design/evidence/ticket-09-shell-layout-filter-fix/skia-1040x720.png)、[Skia 1440x900](design/evidence/ticket-09-shell-layout-filter-fix/skia-1440x900.png)、[Skia 2560x1351](design/evidence/ticket-09-shell-layout-filter-fix/skia-2560x1351.png)、[opaque 1040x720](design/evidence/ticket-09-shell-layout-filter-fix/opaque-1040x720.png)、[opaque 1440x900](design/evidence/ticket-09-shell-layout-filter-fix/opaque-1440x900.png)、[opaque 2560x1351](design/evidence/ticket-09-shell-layout-filter-fix/opaque-2560x1351.png)。
 资源成本、性能、系统无障碍自动探测和非 Windows renderer 仍未验证。

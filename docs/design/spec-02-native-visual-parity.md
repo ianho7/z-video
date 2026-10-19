@@ -56,5 +56,4 @@
 2026-10-20 shell follow-up 保持同一边界：默认 shell 的低对比 `ShellAtmosphere` 只为
 sidebar/toolbar 的真实 `backdrop-blur` 提供采样背景，七色 underlay 仍只属于 fixture。响应式
 几何使用 logical client bounds（preferred `1040x720`、sidebar `220px`、toolbar `64px`、
-内容 padding `32px`），三种窗口尺寸及 opaque fallback 证据见
-`docs/design/evidence/ticket-09-shell-layout/README.md`。不据此承诺性能或跨平台结果。
+内容 padding `32px`），三种窗口尺寸及 opaque fallback 证据见 [filter-fix README](evidence/ticket-09-shell-layout-filter-fix/README.md)：[Skia 1040x720](evidence/ticket-09-shell-layout-filter-fix/skia-1040x720.png)、[Skia 1440x900](evidence/ticket-09-shell-layout-filter-fix/skia-1440x900.png)、[Skia 2560x1351](evidence/ticket-09-shell-layout-filter-fix/skia-2560x1351.png)、[opaque 1040x720](evidence/ticket-09-shell-layout-filter-fix/opaque-1040x720.png)、[opaque 1440x900](evidence/ticket-09-shell-layout-filter-fix/opaque-1440x900.png)、[opaque 2560x1351](evidence/ticket-09-shell-layout-filter-fix/opaque-2560x1351.png)。不据此承诺性能或跨平台结果。

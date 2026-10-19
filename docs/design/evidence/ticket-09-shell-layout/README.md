@@ -1,5 +1,7 @@
 # Ticket #9 shell layout follow-up evidence
 
+> **superseded by ticket-09-shell-layout-filter-fix**：此文件和其中的六张旧截图保留作历史证据；当前引用请使用新的 filter-fix README 及其截图。
+
 基线是集成 HEAD `9b42d76a7778ee36f55984c8c76b6cedbb0325f2`，工作分支为
 `codex/ticket-09-shell-layout`。截图使用真实 `AppCoordinator`、
 `AppWindow` 和脱敏 `poster_grid_preview` fixture；不连接 NAS，也不包含私人媒体。

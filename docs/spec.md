@@ -155,4 +155,4 @@ Windows 构建显式使用 `backend-winit`、`renderer-skia`、`accessibility` �
 logical 尺寸计算：preferred `1040x720`、sidebar `220px`、toolbar `64px`、内容左右各
 `32px`；grid/detail 内宽为窗口宽减去 `220+64px`。`Z_VIDEO_REDUCED_TRANSPARENCY=1`
 或 `Z_VIDEO_HIGH_CONTRAST=1` 仍回退到不透明 shell。三种尺寸的 Windows geometry 证据见
-`docs/design/evidence/ticket-09-shell-layout/README.md`；它不扩展 blur 到网格、卡片、详情或视频。
+[filter-fix README](design/evidence/ticket-09-shell-layout-filter-fix/README.md)：[Skia 1040x720](design/evidence/ticket-09-shell-layout-filter-fix/skia-1040x720.png)、[Skia 1440x900](design/evidence/ticket-09-shell-layout-filter-fix/skia-1440x900.png)、[Skia 2560x1351](design/evidence/ticket-09-shell-layout-filter-fix/skia-2560x1351.png)、[opaque 1040x720](design/evidence/ticket-09-shell-layout-filter-fix/opaque-1040x720.png)、[opaque 1440x900](design/evidence/ticket-09-shell-layout-filter-fix/opaque-1440x900.png)、[opaque 2560x1351](design/evidence/ticket-09-shell-layout-filter-fix/opaque-2560x1351.png)；它不扩展 blur 到网格、卡片、详情或视频。
