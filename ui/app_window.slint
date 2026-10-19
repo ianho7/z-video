@@ -363,7 +363,14 @@ component PosterCardFocusTouchArea {
 component PosterCard inherits Rectangle {
     in property <CollectionUiItem> item;
     in property <length> card_width: 150px;
+    in property <string> restore_focus_collection_id: "";
     callback activated(string);
+
+    changed restore_focus_collection_id => {
+        if root.restore_focus_collection_id == root.item.collection_id {
+            focus_touch_area.focus();
+        }
+    }
 
     width: root.card_width;
     height: root.card_width * 1.5 + 48px;
@@ -536,6 +543,8 @@ component AppleWorkspace inherits Rectangle {
     in property <string> search_scope: "当前已加载范围";
     in property <string> media_type_filter: "all";
     in property <string> sort_order: "default";
+    in property <length> restore_scroll_offset: 0px;
+    in property <string> restore_focus_collection_id: "";
     in property <string> session_nas_name: "";
     in property <string> session_base_url: "";
     in property <string> session_user: "";
@@ -578,8 +587,26 @@ component AppleWorkspace inherits Rectangle {
     callback episode_selected(string);
     callback play_episode(string);
 
-    changed current_view => {
-        if root.current_view == "detail" { workspace_focus.focus(); }
+    // Keep a stable keyboard ancestor for the detail view. The library cards
+    // are separate focus scopes, so the workspace itself must own Escape when
+    // a detail page is opened from one of them.
+    detail_focus_anchor := FocusScope {
+        width: 0px;
+        height: 0px;
+        property <string> view_for_focus: root.current_view;
+        changed view_for_focus => {
+            if self.view_for_focus == "detail" {
+                detail_focus_anchor.focus();
+            }
+        }
+        KeyBinding {
+            keys: @keys(Escape);
+            activated => {
+                if root.current_view == "detail" {
+                    root.detail_back();
+                }
+            }
+        }
     }
 
     background: ShellTheme.canvas;
@@ -763,6 +790,7 @@ component AppleWorkspace inherits Rectangle {
 
             if root.current_view == "library": library_scroll_view := ScrollView {
                 vertical_stretch: 1;
+                content-y: -root.restore_scroll_offset;
 
                 scrolled => {
                     root.library_scrolled(
@@ -1190,6 +1218,7 @@ component AppleWorkspace inherits Rectangle {
                             row: index / parent.columns;
                             col: Math.mod(index, parent.columns);
                             card_width: parent.card_width;
+                            restore_focus_collection_id: root.restore_focus_collection_id;
                             item: item;
                             activated(id) => { root.collection_clicked(id); }
                         }
@@ -1536,6 +1565,9 @@ export component AppWindow inherits Window {
     in-out property <string> search_scope: "当前已加载范围";
     in-out property <string> media_type_filter: "all";
     in-out property <string> sort_order: "default";
+    in-out property <length> library_scroll_offset: 0px;
+    in-out property <length> library_restore_scroll_offset: 0px;
+    in-out property <string> library_focus_collection_id: "";
 
     // Collection detail state
     in-out property <string> detail_collection_id: "";
@@ -2917,6 +2949,8 @@ export component AppWindow inherits Window {
         search_scope: root.search_scope;
         media_type_filter: root.media_type_filter;
         sort_order: root.sort_order;
+        restore_scroll_offset: root.library_restore_scroll_offset;
+        restore_focus_collection_id: root.library_focus_collection_id;
         session_nas_name: root.session_nas_name;
         session_base_url: root.session_base_url;
         session_user: root.session_user;
