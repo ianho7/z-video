@@ -34,4 +34,3 @@ fixture artwork, and a redacted NAS label.
 - The grid keeps equal card geometry while showing ready, missing, failed, and
   loading poster states.
 - No favorite control or unknown favorite state is rendered.
-
