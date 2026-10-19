@@ -25,6 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         detail_roundtrip,
         detail_output,
         back_output,
+        material_evidence,
     ) = parse_args()?;
     let coordinator = AppCoordinator::with_deps(
         Arc::new(MockPlayer::new()),
@@ -47,6 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     window.set_is_logged_in(true);
     window.set_current_view("library".into());
     window.set_apple_sidebar_visible(true);
+    window.set_material_evidence(material_evidence);
     window.set_session_user("fixture-user".into());
     window.set_session_nas_name("脱敏 NAS".into());
     window.set_selected_classification_id("fixture-classification".into());
@@ -92,19 +94,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let output_for_timer = output.clone();
     Timer::single_shot(Duration::from_millis(600), move || {
-        let result = match window.window().take_snapshot() {
-            Ok(snapshot) => save_snapshot(&snapshot, &output_for_timer),
-            Err(error) => Err(error.into()),
+        let dimensions = match window.window().take_snapshot() {
+            Ok(snapshot) => match save_snapshot(&snapshot, &output_for_timer) {
+                Ok(dimensions) => dimensions,
+                Err(error) => {
+                    eprintln!("poster preview snapshot failed: {error}");
+                    std::process::exit(1);
+                }
+            },
+            Err(error) => {
+                eprintln!("poster preview snapshot failed: {error}");
+                std::process::exit(1);
+            }
         };
-        if let Err(error) = result {
-            eprintln!("poster preview snapshot failed: {error}");
-            std::process::exit(1);
-        }
         eprintln!(
-            "poster preview saved: {} ({}x{})",
+            "poster preview saved: {} logical={}x{} png={}x{}",
             output_for_timer.display(),
             width,
-            height
+            height,
+            dimensions.0,
+            dimensions.1
         );
         if detail_roundtrip {
             let detail_output = detail_output.clone();
@@ -112,36 +121,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let detail_window = window.clone_strong();
             detail_window.invoke_collection_clicked("c04".into());
             Timer::single_shot(Duration::from_millis(700), move || {
-                let result = match detail_window.window().take_snapshot() {
-                    Ok(snapshot) => save_snapshot(&snapshot, &detail_output),
-                    Err(error) => Err(error.into()),
+                let dimensions = match detail_window.window().take_snapshot() {
+                    Ok(snapshot) => match save_snapshot(&snapshot, &detail_output) {
+                        Ok(dimensions) => dimensions,
+                        Err(error) => {
+                            eprintln!("detail preview snapshot failed: {error}");
+                            std::process::exit(1);
+                        }
+                    },
+                    Err(error) => {
+                        eprintln!("detail preview snapshot failed: {error}");
+                        std::process::exit(1);
+                    }
                 };
-                if let Err(error) = result {
-                    eprintln!("detail preview snapshot failed: {error}");
-                    std::process::exit(1);
-                }
                 eprintln!(
-                    "detail preview saved: {} ({}x{})",
+                    "detail preview saved: {} logical={}x{} png={}x{}",
                     detail_output.display(),
                     width,
-                    height
+                    height,
+                    dimensions.0,
+                    dimensions.1
                 );
                 let back_window = detail_window.clone_strong();
                 back_window.invoke_detail_back_clicked();
                 Timer::single_shot(Duration::from_millis(350), move || {
-                    let result = match back_window.window().take_snapshot() {
-                        Ok(snapshot) => save_snapshot(&snapshot, &back_output),
-                        Err(error) => Err(error.into()),
+                    let dimensions = match back_window.window().take_snapshot() {
+                        Ok(snapshot) => match save_snapshot(&snapshot, &back_output) {
+                            Ok(dimensions) => dimensions,
+                            Err(error) => {
+                                eprintln!("back preview snapshot failed: {error}");
+                                std::process::exit(1);
+                            }
+                        },
+                        Err(error) => {
+                            eprintln!("back preview snapshot failed: {error}");
+                            std::process::exit(1);
+                        }
                     };
-                    if let Err(error) = result {
-                        eprintln!("back preview snapshot failed: {error}");
-                        std::process::exit(1);
-                    }
                     eprintln!(
-                        "back preview saved: {} ({}x{})",
+                        "back preview saved: {} logical={}x{} png={}x{}",
                         back_output.display(),
                         width,
-                        height
+                        height,
+                        dimensions.0,
+                        dimensions.1
                     );
                     if hold_ms <= 1_650 {
                         let _ = slint::quit_event_loop();
@@ -166,7 +189,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn parse_args() -> Result<
-    (u32, u32, PathBuf, u64, String, String, String, String, bool, PathBuf, PathBuf),
+    (u32, u32, PathBuf, u64, String, String, String, String, bool, PathBuf, PathBuf, bool),
     Box<dyn std::error::Error>,
 > {
     let args: Vec<String> = env::args().collect();
@@ -181,6 +204,7 @@ fn parse_args() -> Result<
     let mut detail_roundtrip = false;
     let mut detail_output = PathBuf::from("poster-grid-detail.png");
     let mut back_output = PathBuf::from("poster-grid-back.png");
+    let mut material_evidence = false;
     let mut index = 1;
     while index < args.len() {
         match args[index].as_str() {
@@ -232,6 +256,7 @@ fn parse_args() -> Result<
                     .to_string();
             }
             "--detail-roundtrip" => detail_roundtrip = true,
+            "--material-evidence" => material_evidence = true,
             "--detail-output" => {
                 index += 1;
                 detail_output =
@@ -270,6 +295,7 @@ fn parse_args() -> Result<
         detail_roundtrip,
         detail_output,
         back_output,
+        material_evidence,
     ))
 }
 
@@ -522,7 +548,7 @@ fn fixture_image(width: u32, height: u32, base: [u8; 4], accent: [u8; 4]) -> sli
 fn save_snapshot(
     snapshot: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
     output: &PathBuf,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(u32, u32), Box<dyn std::error::Error>> {
     if let Some(parent) = output
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -536,5 +562,5 @@ fn save_snapshot(
     )
     .ok_or("snapshot buffer dimensions do not match pixel data")?;
     image.save(output)?;
-    Ok(())
+    Ok((snapshot.width(), snapshot.height()))
 }

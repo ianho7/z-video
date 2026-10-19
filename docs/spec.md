@@ -137,3 +137,13 @@ Windows 先交付；平台代码集中处理，macOS 后续单独构建和运行
 官方 Windows 客户端曾通过本地代理进入极影视、启动 UZPlayer/VLC 并上报递增播放秒数；此事实不证明新客户端能脱离官方运行时工作，也不证明上报已持久化。原始日志可能含敏感字段，未迁入项目；逆向报告和 catalog 是特定版本的证据，不作为跨固件通用规范。
 
 本 spec 汇总已有 ADR、架构、扩展契约和交接资料。后续改变已确认范围时同步维护相关文档；实现细节可由开发者据证据决定，不借选型扩充首版功能。
+
+## Ticket #9 Skia backdrop-blur candidate（2026-10-19）
+
+本候选把 Slint 与 `slint-build` 固定到已验证的 git rev `0ade85bfd0a88b6de2f87f767420975f98c141d0`，两者使用同一 rev；Rust 构建前提为 `rustc/cargo 1.99.1`。已核对 upstream PR #13821 的 merge commit 为 `e492aa7`，本候选使用的是其后仍包含该功能的 rev。
+
+Windows 构建显式使用 `backend-winit`、`renderer-skia`、`accessibility` 和兼容 feature，并由 `SLINT_BACKEND=winit-skia` 选择 Skia。非 Windows 保留同一 git compiler rev 和默认 renderer features，但本候选没有进行非 Windows 构建或运行验收，不能宣称跨平台 renderer 支持。仓库的稳定 Slint 依赖线不能解析当前 `backdrop-blur` 语法，因此不能作为本候选的编译基线。
+
+`backdrop-blur` 只允许出现在侧栏和工具栏；网格、卡片、详情和视频区域保持锐利。`Z_VIDEO_REDUCED_TRANSPARENCY=1` 或 `Z_VIDEO_HIGH_CONTRAST=1` 时，侧栏和工具栏改用不透明 surface 并关闭 blur。Windows 1440x900 logical、125% scale 的两组同 fixture 截图、DPI 和命令记录在 `docs/design/evidence/ticket-09/README.md`；本证据不包含性能比例。
+
+回滚时应恢复候选 commit 前的 Cargo/Slint 配置并移除 `backdrop-blur` 语法；只把 git 依赖换回稳定版本会导致编译失败。macOS/Linux、非 Windows renderer、软件 Skia、真实视频帧、系统透明度探测及性能仍未验证。

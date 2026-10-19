@@ -6,7 +6,6 @@ export struct ClassificationUiItem {
     count: int,
     is_selected: bool,
 }
-
 export struct CollectionUiItem {
     collection_id: string,
     title: string,
@@ -57,8 +56,12 @@ export struct SeasonUiItem {
 export global ShellTheme {
     out property <color> canvas: #101113;
     out property <color> surface: #18191c;
+    // The Skia candidate applies backdrop blur only to these low-frequency
+    // functional layers; cards, grids, detail content and video stay opaque.
     out property <color> sidebar_surface: #18191ccc;
     out property <color> toolbar_surface: #18191ccc;
+    out property <color> sidebar_opaque_surface: #18191c;
+    out property <color> toolbar_opaque_surface: #18191c;
     out property <color> surface_subtle: #202125;
     out property <color> surface_elevated: #282a2f;
     out property <color> separator: #36383e;
@@ -329,6 +332,22 @@ component ShellSearchField inherits Rectangle {
 
 }
 
+// Evidence-only underlay used by poster_grid_preview --material-evidence.
+// It is disabled by default and is not a product decoration. The fixed hard
+// edges make a real backdrop blur observable through the shell surfaces.
+component MaterialEvidenceBackdrop inherits Rectangle {
+    HorizontalLayout {
+        Rectangle { background: #ef4f4f; horizontal-stretch: 1; }
+        Rectangle { background: #32b8e8; horizontal-stretch: 1; }
+        Rectangle { background: #f2d34f; horizontal-stretch: 1; }
+        Rectangle { background: #8257d6; horizontal-stretch: 1; }
+        Rectangle { background: #36c884; horizontal-stretch: 1; }
+        Rectangle { background: #ee5ca9; horizontal-stretch: 1; }
+        Rectangle { background: #f28c42; horizontal-stretch: 1; }
+    }
+    Rectangle { y: parent.height * 0.28; width: parent.width; height: 4px; background: #ffffff; }
+    Rectangle { y: parent.height * 0.64; width: parent.width; height: 3px; background: #101113; }
+}
 // A local copy of the standard focus/click bridge. Keeping it beside the
 // card makes the card a real focus target while retaining the existing Rust
 // collection-click callback.
@@ -525,6 +544,9 @@ component DetailEpisodeRow inherits Rectangle {
 // visual work does not invent a second data or playback path.
 component AppleWorkspace inherits Rectangle {
     in property <bool> sidebar_visible: true;
+    in property <bool> reduced_transparency: false;
+    // Evidence-only switch; production defaults to false.
+    in property <bool> material_evidence: false;
     in property <string> current_view: "library";
     in property <[ClassificationUiItem]> classifications: [];
     in property <[CollectionUiItem]> collections: [];
@@ -611,6 +633,14 @@ component AppleWorkspace inherits Rectangle {
 
     background: ShellTheme.canvas;
 
+    if root.material_evidence: MaterialEvidenceBackdrop {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+    }
+
+
     workspace_focus := FocusScope {
         width: 100%;
         height: 100%;
@@ -628,7 +658,11 @@ component AppleWorkspace inherits Rectangle {
 
         if root.sidebar_visible: Rectangle {
             width: ShellTheme.sidebar_width;
-            background: ShellTheme.sidebar_surface;
+            background: root.reduced_transparency
+                ? ShellTheme.sidebar_opaque_surface
+                : ShellTheme.sidebar_surface;
+            // Reduced-transparency/high-contrast mode disables alpha and blur.
+            backdrop-blur: root.reduced_transparency ? 0px : 18px;
             border_color: ShellTheme.separator;
             border_width: 1px;
 
@@ -721,7 +755,11 @@ component AppleWorkspace inherits Rectangle {
                 Rectangle {
                     width: parent.width;
                     height: parent.height;
-                    background: ShellTheme.toolbar_surface;
+                    background: root.reduced_transparency
+                        ? ShellTheme.toolbar_opaque_surface
+                        : ShellTheme.toolbar_surface;
+                    // Keep the glass effect on the toolbar only.
+                    backdrop-blur: root.reduced_transparency ? 0px : 18px;
                     border_color: ShellTheme.separator;
                     border_width: 1px;
 
@@ -1543,6 +1581,10 @@ export component AppWindow inherits Window {
     in-out property <bool> is_logged_in: false;
     in-out property <string> current_view: "library"; // "library" | "detail" | "player"
     in-out property <bool> apple_sidebar_visible: true;
+    // Rust sets this for reduced-transparency/high-contrast policy.
+    in-out property <bool> reduced_transparency: false;
+    // Evidence-only switch, set by poster_grid_preview.
+    in-out property <bool> material_evidence: false;
     in-out property <string> apple_search_input: "";
 
     // Login Form State
@@ -2955,6 +2997,8 @@ export component AppWindow inherits Window {
     apple_workspace := AppleWorkspace {
         visible: root.is_logged_in && root.current_view != "player";
         sidebar_visible: root.apple_sidebar_visible;
+        reduced_transparency: root.reduced_transparency;
+        material_evidence: root.material_evidence;
         current_view: root.current_view;
         classifications: root.classifications;
         collections: root.collections;

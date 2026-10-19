@@ -45,3 +45,11 @@ JSON catalog 是从选定版本脚本提取的调用目录，不是固件完整 
 先明确 LAN 直连的最小独立链路，检查 Windows 原生构建环境，用可重复获取的流验证 Slint 视频集成。网络连通和 GUI 集成分别给结论，失败时定位边界，再决定依赖。macOS 和远程访问后置，不作为首版阻塞。后续逐步完成片库、详情、播放与进度闭环；进度必须核对 NAS 保存及再次打开时的恢复，不能只看客户端发送日志。
 
 插件只按 `metadata-extension.md` 预留模型和调用边界。先个人自用；公开分发及闭源/开源选择后置，播放器构建来源和许可条件在选型时记录。
+
+## Ticket #9 Skia 候选交接（2026-10-19）
+
+候选分支使用 Slint 与 `slint-build` rev `0ade85bfd0a88b6de2f87f767420975f98c141d0`，Rust `1.99.1`。upstream PR #13821 的 merge commit 已核对为 `e492aa7`；候选依赖使用其后包含该功能的 rev。Windows 通过 `backend-winit + renderer-skia + accessibility` 构建，运行环境设置 `SLINT_BACKEND=winit-skia`。
+
+已完成 Windows 原生 fixture：同一 `poster_grid_preview.exe` 生成 Skia 默认图和 `Z_VIDEO_REDUCED_TRANSPARENCY=1` 不透明回退图，logical `1440x900`、PNG `1800x1125`、`GetDpiForWindow=120`、scale override `125%`。证据和命令见 `docs/design/evidence/ticket-09/README.md`。blur 只在侧栏/工具栏，海报网格、卡片、详情和视频区域未加入 blur。
+
+非 Windows renderer、macOS/Linux 运行、`renderer-skia-software`、真实视频帧和性能比例仍未验证。高对比/低透明度目前通过环境变量分支验证，不等于已接入系统设置探测。回滚必须同时撤销 git-only Slint 配置和 `.slint` 中的 `backdrop-blur`，再回到稳定依赖。

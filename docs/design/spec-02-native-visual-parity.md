@@ -28,7 +28,7 @@
 - 工具栏保留上下文、侧栏切换、搜索及必要动作；侧栏以真实 NAS 分类为依据，不伪造原型分类和数量。
 - 详情采用独立主内容页，封面、标题/元信息、主操作、Episode 和简介遵循已确认原型的优先级。缺失元数据不造值。
 - 磨砂仅限侧边栏和工具栏。先用锁定版本与真实 Windows 渲染后端验证应用内背景模糊；透明颜色本身不是模糊证据。不能保持效果时，展示不透明/半透明替代的截图和成本，取得用户确认；不默认添加平台特效依赖。
-- 阅读并更新过时映射记录：Cargo 声明最低 Slint 版本为 1.9.2，但当前锁文件实际为 1.18.1；仓库已有 Cargo、Slint、鉴权和播放实现。文档必须与当前代码/证据一致。
+- 阅读并更新过时映射记录：Ticket #9 候选将 Cargo 中的 Slint compiler 固定到 git rev `0ade85bfd0a88b6de2f87f767420975f98c141d0`；仓库已有 Cargo、Slint、鉴权和播放实现。文档必须与当前代码/证据一致。
 - 已有旧视图与新外壳存在重叠，完成替换后只保留仍被产品使用的路径；清理仅限本次替换，不顺带重构播放器或登录。
 
 ## Testing Decisions
@@ -46,3 +46,9 @@
 ## Further Notes
 
 依据：用户已确认的暗色 Apple 原型及2026-10-19原生截图。视觉修复依据已确认设计，不把这次任务当新一轮审美探索。私密截图不上传。此 issue 可与网格修复独立评审，最终合并态截图复用有效证据。
+
+## Ticket #9 Skia candidate（2026-10-19）
+
+真实 Windows 候选已使用 Slint git rev `0ade85bfd0a88b6de2f87f767420975f98c141d0` 和 Rust `1.99.1` 构建；PR #13821 的 merge commit 是 `e492aa7`。Windows 显式选择 `backend-winit + renderer-skia`，并保留 `accessibility`。默认状态与 `Z_VIDEO_REDUCED_TRANSPARENCY=1` opaque fallback 在同一 1440x900 logical、125% scale fixture 中均生成了 1800x1125 PNG，DPI 通过 `GetDpiForWindow=120` 记录。
+
+材质边界保持为侧栏和工具栏；海报网格、卡片、详情与视频保持锐利。fallback 使用不透明 surface 并将 blur 设为 `0px`。非 Windows renderer、软件 Skia、真实视频帧和性能仍未验证；不能把 Windows 截图扩展为跨平台结论。详细命令、截图和回滚方式见 `docs/design/evidence/ticket-09/README.md`。

@@ -79,6 +79,18 @@ struct PendingResume {
 
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(180);
 
+fn environment_flag_enabled(name: &str) -> bool {
+    matches!(
+        std::env::var(name).ok().as_deref(),
+        Some("1" | "true" | "yes" | "on")
+    )
+}
+
+fn shell_transparency_disabled() -> bool {
+    environment_flag_enabled("Z_VIDEO_REDUCED_TRANSPARENCY")
+        || environment_flag_enabled("Z_VIDEO_HIGH_CONTRAST")
+}
+
 const MEDIA_TYPE_ALL: &str = "all";
 const MEDIA_TYPE_MOVIE: &str = "movie";
 const MEDIA_TYPE_TV: &str = "tv";
@@ -513,6 +525,7 @@ impl AppCoordinator {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let startup = diagnostics::start_event("app", "coordinator.init");
         let ui = AppWindow::new()?;
+        ui.set_reduced_transparency(shell_transparency_disabled());
 
         let engine_label = if is_native {
             "libmpv 2.6 (D3D11 / hwdec=auto-safe; runtime unverified)"

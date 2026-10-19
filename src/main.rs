@@ -4,6 +4,12 @@ use z_video::diagnostics;
 use z_video::player::create_player_probe;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Ticket #9 uses the Skia renderer for the Windows glass-layer candidate.
+    // The dependency features keep this backend available in the formal build;
+    // the selector makes the native window choice explicit at runtime.
+    #[cfg(windows)]
+    std::env::set_var("SLINT_BACKEND", "winit-skia");
+
     // Initialize脱敏 logger
     if std::env::var("RUST_LOG").is_err() {
         std::env::set_var("RUST_LOG", "info");
