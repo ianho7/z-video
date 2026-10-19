@@ -23,6 +23,22 @@ cargo run --target-dir 'D:\project\z-video\.worktrees\ticket-07-shell\target' -j
   --output docs/design/evidence/ticket-07/shell-1440x900.png
 ```
 
+The same native preview can exercise the two requested display scale factors
+without changing the Windows display setting. `SLINT_SCALE_FACTOR` is read by
+Slint's Windows winit backend before the native window is created:
+
+```powershell
+$env:SLINT_SCALE_FACTOR = '1'
+cargo run --target-dir 'D:\project\z-video\.worktrees\ticket-07-shell\target' -j 1 `
+  --bin poster_grid_preview -- --width 1440 --height 900 `
+  --output docs/design/evidence/ticket-07/shell-1440x900-100.png
+$env:SLINT_SCALE_FACTOR = '1.5'
+cargo run --target-dir 'D:\project\z-video\.worktrees\ticket-07-shell\target' -j 1 `
+  --bin poster_grid_preview -- --width 1440 --height 900 `
+  --output docs/design/evidence/ticket-07/shell-1440x900-150.png
+Remove-Item Env:SLINT_SCALE_FACTOR
+```
+
 `RUSTFLAGS=-C debuginfo=0` removes the Windows PDB pressure that previously
 caused `link.exe` error `LNK1140`; it does not change the UI or renderer.
 
@@ -32,14 +48,15 @@ caused `link.exe` error `LNK1140`; it does not change the UI or renderer.
 | --- | --- | --- | --- |
 | 900x640 | 1125x800 | [shell-900x640.png](shell-900x640.png) | Dark sidebar, toolbar, search field, real category count, refresh action, and four-column grid remain visible at the minimum window size. |
 | 1440x900 | 1800x1125 | [shell-1440x900.png](shell-1440x900.png) | Dark shell, seven-column grid, search/filter control, focusable actions, and real fixture counts render without light default controls. |
+| 1440x900 at 100% | 1440x900 | [shell-1440x900-100.png](shell-1440x900-100.png) | Native snapshot with `SLINT_SCALE_FACTOR=1.0` (96 effective DPI). |
+| 1440x900 at 150% | 2160x1350 | [shell-1440x900-150.png](shell-1440x900-150.png) | Native snapshot with `SLINT_SCALE_FACTOR=1.5` (144 effective DPI). |
 
 The PNGs do not contain a `pHYs` chunk, so they do not carry embedded DPI
-metadata. Their physical-to-logical ratios are `1.25` (`1125/900` and
-`1800/1440`), matching the Windows host's observed 125% desktop scale
-(approximately 120 effective DPI from a 96 DPI baseline). No explicit
-`SLINT_SCALE_FACTOR` override was used. This evidence covers the host's 125%
-scale; Windows 100% and 150% display settings were not switched in this run
-and remain unverified.
+metadata. The observed physical-to-logical ratios are `1.25` for the default
+host run (`1125/900`, `1800/1440`), `1.0` for the 100% override, and `1.5`
+for the 150% override. The default host run is approximately 120 effective
+DPI; the explicit Slint overrides correspond to 96 and 144 effective DPI.
+These scale checks do not change the Windows display setting.
 
 The images were visually inspected after replacing the unsupported search
 glyph with the reusable SVG search token. Existing #5 poster geometry and #10
