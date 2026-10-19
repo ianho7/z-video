@@ -164,5 +164,5 @@ HTML 的 token 进入一个 Slint `Theme` 全局，组件只引用 `Theme`，不
 ## 验证记录
 
 - `cargo check`：通过；当前锁定的 Slint git compiler candidate 可编译 UI 并与 Rust 回调接口匹配。
-- `git diff --check`：待本次 Ticket 完成后复核。
+- `git diff --check`：通过（2026-10-19，Ticket #9 closeout commit `c4cd67fff1931aa76098a59e35d788048a02ddc5`）。
 - 原生窗口截图：由 `src/bin/poster_grid_preview.rs` 通过 `Window::take_snapshot()` 生成；本次 Ticket 的尺寸、缩放因子和截图路径记录在 `docs/design/evidence/ticket-07/README.md`。
