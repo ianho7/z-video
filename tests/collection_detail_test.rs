@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use slint::{Model, Timer};
+use slint::{platform::{Key, WindowEvent}, ComponentHandle, Model, Timer};
 use z_video::app::AppCoordinator;
 use z_video::nas::client::MockNasClient;
 use z_video::player::MockPlayer;
@@ -50,6 +50,20 @@ fn coordinator_navigates_selects_episode_and_returns_without_reloading_library()
     assert_eq!(coordinator.window().get_detail_title(), "测试剧集");
     assert_eq!(coordinator.window().get_detail_seasons().row_count(), 2);
     assert_eq!(coordinator.window().get_selected_episode_id(), "series-s1e1");
+
+    coordinator
+        .window()
+        .window()
+        .dispatch_event_with_result(WindowEvent::KeyPressed {
+            text: Key::Escape.into(),
+        })
+        .expect("Escape should dispatch to the detail view");
+    assert_eq!(coordinator.window().get_current_view(), "library");
+
+    coordinator
+        .window()
+        .invoke_collection_clicked("series-demo".into());
+    pump_detail_event_loop();
 
     coordinator
         .window()
