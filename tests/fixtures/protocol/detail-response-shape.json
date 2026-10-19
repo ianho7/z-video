@@ -14,7 +14,8 @@
     }
   ],
   "endpoints": [
-    { "method": "POST", "path": "/zvideo/collection/v2/info", "purpose": "collection-detail" }
+    { "method": "POST", "path": "/zvideo/collection/v2/info", "purpose": "collection-detail" },
+    { "method": "POST", "path": "/zvideo/collection/info", "purpose": "legacy-history-fallback" }
   ],
   "variants": {
     "success": {

@@ -12,7 +12,8 @@ use crate::nas::auth::{
 };
 use crate::nas::crypto::{encrypt_credential, parse_public_key};
 use crate::nas::models::{
-    ClassificationItem, CollectionDetail, CollectionItem, CollectionPage, Episode, NasError, Season,
+    ClassificationItem, CollectionDetail, CollectionItem, CollectionPage, Episode, NasError,
+    PlaybackHistory, Season,
 };
 use crate::nas::session::{
     NasDeviceMetadata, NasRequestContext, NasSession, NAS_APP, NAS_PLATFORM,
@@ -877,6 +878,116 @@ impl HttpNasClient {
         );
         result
     }
+
+    fn fetch_collection_history(
+        &self,
+        session: &NasSession,
+        collection_id: &str,
+        classification_id: &str,
+    ) -> Result<Option<PlaybackHistory>, NasError> {
+        let base_url = session.base_url();
+        let context = session
+            .request_context()
+            .ok_or(NasError::Unauthorized)?;
+        let url = build_post_url(&base_url, "/zvideo/collection/info");
+        let mut form_params = vec![
+            ("collection_id".to_string(), collection_id.to_string()),
+            ("classification_id".to_string(), classification_id.to_string()),
+            ("get_type".to_string(), "all".to_string()),
+        ];
+        append_request_context_form(&mut form_params, &context);
+        let form_params: Vec<(&str, &str)> = form_params
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+            .collect();
+        let started_at = Instant::now();
+        let mut status = None;
+        let mut parse_result = "not_attempted";
+        let mut business_result = "not_attempted";
+        let result = (|| {
+            let resp = self
+                .agent
+                .post(&url)
+                .set("token", &context.token)
+                .set("Cookie", &build_nas_cookie(&context))
+                .set("Content-Type", "application/x-www-form-urlencoded")
+                .send_form(&form_params)
+                .map_err(|error| {
+                    if let ureq::Error::Status(http_status, _) = &error {
+                        status = Some(*http_status);
+                    }
+                    map_nas_request_error("获取影视续播历史失败", error)
+                })?;
+
+            status = Some(resp.status());
+            if status == Some(401) || status == Some(403) {
+                return Err(NasError::Unauthorized);
+            }
+            if status != Some(200) {
+                return Err(NasError::Http {
+                    status: status.unwrap_or_default(),
+                    message: format!("HTTP {}", status.unwrap_or_default()),
+                });
+            }
+
+            let body: ApiResponse<Value> = resp
+                .into_json()
+                .map_err(|e| NasError::MalformedResponse(format!("解析影视续播历史失败: {}", e)))?;
+            parse_result = "success";
+
+            if !body.is_success() {
+                business_result = "error";
+                return Err(NasError::Business {
+                    code: body.code_str(),
+                    message: body.error_message(),
+                });
+            }
+
+            let data = body
+                .data
+                .ok_or_else(|| NasError::MalformedResponse("续播历史响应缺少 data".to_string()))?;
+            let history = PlaybackHistory::from_detail_data(&data);
+            diagnostics::record_event(
+                "nas.response",
+                "library.collection_history.shape",
+                "complete",
+                "observed",
+                Duration::ZERO,
+                &[
+                    ("history_present", history.is_some().to_string()),
+                    (
+                        "history_position_present",
+                        history
+                            .as_ref()
+                            .and_then(|value| value.play_duration)
+                            .is_some()
+                            .to_string(),
+                    ),
+                    (
+                        "history_episode_present",
+                        history
+                            .as_ref()
+                            .and_then(|value| value.last_video_id.as_deref())
+                            .is_some()
+                            .to_string(),
+                    ),
+                ],
+            );
+            business_result = "success";
+            Ok(history)
+        })();
+        record_nas_result(
+            "library.collection_history",
+            "POST",
+            "/zvideo/collection/info",
+            status,
+            started_at,
+            &result,
+            parse_result,
+            business_result,
+        );
+        result
+    }
 }
 
 impl NasClient for HttpNasClient {
@@ -1405,9 +1516,57 @@ impl NasClient for HttpNasClient {
                 });
             }
 
-            let detail = body
+            let mut detail = body
                 .data
                 .ok_or_else(|| NasError::MalformedResponse("响应缺少影视详情数据".to_string()))?;
+            if detail.history.is_none() {
+                match self.fetch_collection_history(session, collection_id, classification_id) {
+                    Ok(Some(history)) => {
+                        detail.history = Some(history);
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        warn!(
+                            "Optional collection history lookup failed: {}",
+                            sanitize_log_message(&error.to_string())
+                        );
+                    }
+                }
+            }
+            let episode_count = detail
+                .seasons
+                .iter()
+                .map(|season| season.episodes.len())
+                .sum::<usize>();
+            diagnostics::record_event(
+                "nas.response",
+                "library.collection_detail.shape",
+                "complete",
+                "observed",
+                Duration::ZERO,
+                &[
+                    ("history_present", detail.history.is_some().to_string()),
+                    (
+                        "history_position_present",
+                        detail
+                            .history
+                            .as_ref()
+                            .and_then(|history| history.play_duration)
+                            .is_some()
+                            .to_string(),
+                    ),
+                    (
+                        "history_episode_present",
+                        detail
+                            .history
+                            .as_ref()
+                            .and_then(|history| history.last_video_id.as_deref())
+                            .is_some()
+                            .to_string(),
+                    ),
+                    ("episode_count", episode_count.to_string()),
+                ],
+            );
             business_result = "success";
             Ok(detail)
         })();
@@ -1607,21 +1766,54 @@ impl NasClient for HttpNasClient {
             ("chapter".to_string(), progress.chapter.to_string()),
             ("audio_index".to_string(), progress.audio_index.to_string()),
             ("subtitle_index".to_string(), progress.subtitle_index.to_string()),
-            ("subtitle_hash".to_string(), progress.subtitle_hash.clone()),
-            (
+        ];
+        if !progress.subtitle_hash.trim().is_empty() {
+            form.push((
+                "subtitle_hash".to_string(),
+                progress.subtitle_hash.clone(),
+            ));
+        }
+        if progress.video_duration > 0 {
+            form.push((
                 "video_duration".to_string(),
                 progress.video_duration.to_string(),
-            ),
-            (
+            ));
+        }
+        if !progress.subtitle_setting.trim().is_empty() {
+            form.push((
                 "subtitle_setting".to_string(),
                 progress.subtitle_setting.clone(),
-            ),
-        ];
-        append_request_context_form(&mut form, &context);
+            ));
+        }
+        // The official Windows player sends only the progress payload here;
+        // request identity is carried by the token header and NAS cookie.
         let form: Vec<(&str, &str)> = form
             .iter()
             .map(|(key, value)| (key.as_str(), value.as_str()))
             .collect();
+
+        diagnostics::record_event(
+            "nas.payload",
+            "playback.progress",
+            "complete",
+            "observed",
+            Duration::ZERO,
+            &[
+                ("collection_id", progress.collection_id.clone()),
+                ("classification_id", progress.classification_id.clone()),
+                ("episode_id", progress.video_id.clone()),
+                ("sec", progress.sec.to_string()),
+                ("duration_sec", progress.video_duration.to_string()),
+                (
+                    "subtitle_hash_present",
+                    (!progress.subtitle_hash.trim().is_empty()).to_string(),
+                ),
+                (
+                    "subtitle_setting_present",
+                    (!progress.subtitle_setting.trim().is_empty()).to_string(),
+                ),
+            ],
+        );
 
         let started_at = Instant::now();
         let mut status = None;
@@ -2876,6 +3068,9 @@ mod tests {
             assert!(headers.starts_with("POST /zvideo/video/updateplaytime?&drnd="));
             assert!(headers
                 .to_ascii_lowercase()
+                .contains("token: progress-token"));
+            assert!(headers
+                .to_ascii_lowercase()
                 .contains("cookie: app=video; token=progress-token; plat=pc; nas_id=progress-nas-id"));
             assert!(headers
                 .to_ascii_lowercase()
@@ -2907,12 +3102,14 @@ mod tests {
                 "subtitle_hash=hash-01",
                 "video_duration=3600",
                 "subtitle_setting=default",
-                "token=progress-token",
-                "nasid=progress-nas-id",
-                "app=video",
-                "plat=pc",
             ] {
                 assert!(payload.contains(field), "missing form field: {field}");
+            }
+            for context_field in ["token=", "nasid=", "app=", "plat=", "version=", "device_id="] {
+                assert!(
+                    !payload.contains(context_field),
+                    "request context must stay out of progress payload: {context_field}"
+                );
             }
 
             let response = r#"{"code":200,"data":{}}"#;
@@ -2948,6 +3145,86 @@ mod tests {
         HttpNasClient::new(Duration::from_secs(2))
             .update_playback_progress(&session, &progress)
             .expect("HTTP progress response should succeed");
+        server.join().expect("progress server should finish");
+    }
+
+    #[test]
+    fn http_client_omits_empty_optional_playback_progress_fields() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind local test server");
+        let address = listener.local_addr().expect("read local test address");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept progress request");
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            let header_end;
+            loop {
+                let read = stream.read(&mut buffer).expect("read progress request");
+                assert!(read > 0, "client closed before sending request");
+                request.extend_from_slice(&buffer[..read]);
+                if let Some(position) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                    header_end = position + 4;
+                    break;
+                }
+            }
+            let headers = String::from_utf8_lossy(&request[..header_end]);
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("Content-Length")
+                        .then_some(value.trim())
+                })
+                .and_then(|value| value.parse::<usize>().ok())
+                .expect("request should include content length");
+            while request.len() < header_end + content_length {
+                let read = stream.read(&mut buffer).expect("read progress request body");
+                assert!(read > 0, "client closed before sending request body");
+                request.extend_from_slice(&buffer[..read]);
+            }
+
+            let payload = String::from_utf8_lossy(&request[header_end..header_end + content_length]);
+            assert!(payload.contains("sec=42"));
+            assert!(!payload.contains("subtitle_hash="));
+            assert!(!payload.contains("subtitle_setting="));
+            assert!(!payload.contains("video_duration="));
+
+            let response = r#"{"code":200,"data":{}}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response.len(),
+                response
+            )
+            .expect("write progress response");
+        });
+
+        let session = NasSession::new(format!("http://{}", address));
+        session.set_authenticated(
+            "progress-token".to_string(),
+            "test-user".to_string(),
+            None,
+            None,
+            Some("progress-nas-id".to_string()),
+        );
+        let progress = PlaybackProgressUpdate {
+            collection_id: "collection-01".to_string(),
+            classification_id: "classification-01".to_string(),
+            video_id: "video-01".to_string(),
+            sec: 42,
+            chapter: 0,
+            audio_index: 0,
+            subtitle_index: 0,
+            subtitle_hash: String::new(),
+            video_duration: 0,
+            subtitle_setting: String::new(),
+        };
+        HttpNasClient::new(Duration::from_secs(2))
+            .update_playback_progress(&session, &progress)
+            .expect("minimal HTTP progress response should succeed");
         server.join().expect("progress server should finish");
     }
 }

@@ -18,6 +18,7 @@ fn test_credential_storage_crud_lifecycle() {
         token: Some("zenith_token_live_abcdef123456789".to_string()),
         nas_id: Some("nas-id-123".to_string()),
         nas_sign: Some("opaque-sign-123".to_string()),
+        last_playback: None,
     };
     store.save(&creds).expect("save should succeed");
 
@@ -74,6 +75,7 @@ fn test_sanitization_rules_never_expose_plaintext_secrets() {
         token: Some(long_token.to_string()),
         nas_id: None,
         nas_sign: None,
+        last_playback: None,
     };
 
     let debug_output = format!("{:?}", creds);

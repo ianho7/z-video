@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::media::image_cache::{
     decode_image_pixels, slint_image_from_decoded, DecodedImage, ImageCache, ImageRequestGate,
@@ -22,11 +22,11 @@ use crate::nas::models::{CollectionDetail, CollectionItem, Episode, NasError, Pl
 use crate::nas::session::{NasDeviceMetadata, NasSession};
 #[cfg(windows)]
 use crate::platform::Win32VideoSurface;
-use crate::playback::{PlaybackSession, PlaybackStream};
+use crate::playback::{PlaybackProgressUpdate, PlaybackSession, PlaybackStream};
 use crate::player::state::{PlaybackControlState, PlaybackProgress, PlaybackState, PlayerEvent};
 use crate::player::traits::Player;
 use crate::storage::credentials::{
-    CredentialStore, KeyringCredentialStore, SavedCredentials,
+    CredentialStore, KeyringCredentialStore, LastPlaybackContext, SavedCredentials,
 };
 
 slint::include_modules!();
@@ -46,10 +46,49 @@ pub struct AppCoordinator {
     playback_request_generation: Arc<AtomicU64>,
     playback_session: Arc<Mutex<Option<PlaybackSession>>>,
     pending_progress_requests: Arc<AtomicUsize>,
+    progress_report_gate: Arc<Mutex<ProgressReportGate>>,
+    pending_resume: Arc<Mutex<Option<PendingResume>>>,
+    startup_last_playback: Arc<Mutex<Option<LastPlaybackContext>>>,
     playback_controls: Arc<Mutex<PlaybackControlState>>,
     #[cfg(windows)]
     video_surface: Arc<Mutex<Option<Win32VideoSurface>>>,
     timer: slint::Timer,
+}
+
+const NORMAL_PROGRESS_REPORT_INTERVAL: Duration = Duration::from_secs(10);
+
+#[derive(Default)]
+struct ProgressReportGate {
+    last_report_at: Option<Instant>,
+}
+
+#[derive(Clone, Copy)]
+struct PendingResume {
+    request_generation: u64,
+    position_secs: f64,
+}
+
+impl ProgressReportGate {
+    fn reset(&mut self) {
+        self.last_report_at = None;
+    }
+
+    fn should_report(&mut self, sec: u64, force: bool) -> bool {
+        if sec <= 1 {
+            return false;
+        }
+        if force
+            || self
+                .last_report_at
+                .map(|last| last.elapsed() >= NORMAL_PROGRESS_REPORT_INTERVAL)
+                .unwrap_or(true)
+        {
+            self.last_report_at = Some(Instant::now());
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl AppCoordinator {
@@ -104,6 +143,9 @@ impl AppCoordinator {
             playback_request_generation: Arc::new(AtomicU64::new(0)),
             playback_session: Arc::new(Mutex::new(None)),
             pending_progress_requests: Arc::new(AtomicUsize::new(0)),
+            progress_report_gate: Arc::new(Mutex::new(ProgressReportGate::default())),
+            pending_resume: Arc::new(Mutex::new(None)),
+            startup_last_playback: Arc::new(Mutex::new(None)),
             playback_controls: Arc::new(Mutex::new(PlaybackControlState::default())),
             #[cfg(windows)]
             video_surface,
@@ -336,7 +378,20 @@ impl AppCoordinator {
         let operation = diagnostics::start_event("session", "session.restore");
         match self.credential_store.load() {
             Ok(Some(creds)) => {
-                info!("Auto-loaded saved credentials for user: {}", creds.username);
+                let last_playback_present = creds.last_playback.is_some();
+                info!(
+                    "Auto-loaded saved credentials for user: {} (last_playback_context_present={})",
+                    creds.username, last_playback_present
+                );
+                *self.startup_last_playback.lock().unwrap() = creds.last_playback.clone();
+                diagnostics::record_event(
+                    "session",
+                    "session.restore_context",
+                    "complete",
+                    if last_playback_present { "success" } else { "skipped" },
+                    Duration::ZERO,
+                    &[("last_playback_present", last_playback_present.to_string())],
+                );
                 self.ui
                     .set_server_url_input(creds.server_url.clone().into());
                 self.ui.set_username_input(creds.username.clone().into());
@@ -554,6 +609,7 @@ impl AppCoordinator {
         playback_session: Arc<Mutex<Option<PlaybackSession>>>,
         collection_id: String,
         classification_id: String,
+        preferred_episode_id: Option<String>,
     ) {
         let operation = diagnostics::start_event("ui", "library.collection_detail");
         let request_generation = detail_request_generation.fetch_add(1, Ordering::SeqCst) + 1;
@@ -641,7 +697,13 @@ impl AppCoordinator {
                 match detail_result {
                     Ok(detail) => {
                         *detail_state_bg.lock().unwrap() = Some(detail.clone());
-                        apply_collection_detail(&ui, detail, cover_image, background_image);
+                        apply_collection_detail(
+                            &ui,
+                            detail,
+                            cover_image,
+                            background_image,
+                            preferred_episode_id.as_deref(),
+                        );
                     }
                     Err(err) => {
                         *detail_state_bg.lock().unwrap() = None;
@@ -669,8 +731,21 @@ impl AppCoordinator {
             .seasons
             .iter()
             .flat_map(|season| season.episodes.iter())
-            .find(|episode| episode.selection_id() == episode_id)
+            .find(|episode| Self::episode_matches_identifier(episode, episode_id))
             .cloned()
+    }
+
+    fn episode_matches_identifier(episode: &Episode, identifier: &str) -> bool {
+        let identifier = identifier.trim();
+        !identifier.is_empty()
+            && [
+                episode.selection_id(),
+                episode.video_id.as_str(),
+                episode.version_id.as_str(),
+                episode.file_path.as_str(),
+            ]
+            .iter()
+            .any(|candidate| !candidate.is_empty() && *candidate == identifier)
     }
 
     fn history_matches_episode(history: &PlaybackHistory, episode: &Episode) -> bool {
@@ -678,9 +753,7 @@ impl AppCoordinator {
             return true;
         };
 
-        last_video_id == episode.selection_id()
-            || last_video_id == episode.video_id
-            || (!episode.version_id.is_empty() && last_video_id == episode.version_id)
+        Self::episode_matches_identifier(episode, last_video_id)
     }
 
     fn find_resume_history(
@@ -689,17 +762,37 @@ impl AppCoordinator {
     ) -> Option<PlaybackHistory> {
         let detail = detail_state.lock().ok()?;
         let history = detail.as_ref()?.history.clone()?;
-        Self::history_matches_episode(&history, episode).then_some(history)
+        if Self::history_matches_episode(&history, episode) {
+            return Some(history);
+        }
+
+        // A movie detail normally contains exactly one playable item. Some NAS
+        // versions return a history video id from a different identifier field
+        // than the detail item, so an ID mismatch is safe to fall back only for
+        // an unambiguous single-episode detail, never for a multi-episode show.
+        let episode_count = detail
+            .as_ref()
+            .map(|detail| {
+                detail
+                    .seasons
+                    .iter()
+                    .map(|season| season.episodes.len())
+                    .sum::<usize>()
+            })
+            .unwrap_or_default();
+        (episode_count == 1).then_some(history)
     }
 
     fn start_playback_load(
         ui_weak: slint::Weak<AppWindow>,
         nas_client: Arc<dyn NasClient>,
         session: Arc<NasSession>,
+        credential_store: Arc<dyn CredentialStore>,
         player: Arc<dyn Player>,
         detail_state: Arc<Mutex<Option<CollectionDetail>>>,
         playback_session: Arc<Mutex<Option<PlaybackSession>>>,
         playback_request_generation: Arc<AtomicU64>,
+        pending_resume: Arc<Mutex<Option<PendingResume>>>,
         collection_id: String,
         classification_id: String,
         episode_id: String,
@@ -709,6 +802,9 @@ impl AppCoordinator {
             operation.finish("cancelled", &[]);
             return;
         };
+        let request_generation = playback_request_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        *pending_resume.lock().unwrap() = None;
+
         let Some(episode) = Self::find_episode(&detail_state, &episode_id) else {
             ui.set_playback_loading(false);
             ui.set_playback_error("当前详情没有可播放的 Episode。".into());
@@ -720,8 +816,40 @@ impl AppCoordinator {
             return;
         };
         let resume_history = Self::find_resume_history(&detail_state, &episode);
-
-        let request_generation = playback_request_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let resume_position = resume_history
+            .as_ref()
+            .and_then(|history| history.play_duration)
+            .filter(|seconds| *seconds > 0)
+            .unwrap_or_default() as f64;
+        let history_present = detail_state
+            .lock()
+            .ok()
+            .and_then(|detail| detail.as_ref().map(|detail| detail.history.is_some()))
+            .unwrap_or(false);
+        info!(
+            "Playback resume lookup: history_present={}, matched={}, position_sec={}",
+            history_present,
+            resume_history.is_some(),
+            resume_position.round()
+        );
+        diagnostics::record_event(
+            "ui",
+            "playback.resume_lookup",
+            "complete",
+            if resume_history.is_some() { "success" } else { "skipped" },
+            Duration::ZERO,
+            &[
+                ("history_present", history_present.to_string()),
+                ("history_matched", resume_history.is_some().to_string()),
+                ("sec", resume_position.round().to_string()),
+            ],
+        );
+        if resume_position > 0.0 {
+            *pending_resume.lock().unwrap() = Some(PendingResume {
+                request_generation,
+                position_secs: resume_position,
+            });
+        }
         *playback_session.lock().unwrap() = None;
         ui.set_playback_loading(true);
         ui.set_playback_error("".into());
@@ -730,7 +858,7 @@ impl AppCoordinator {
 
         let ui_weak_bg = ui_weak.clone();
         let playback_request_generation_bg = Arc::clone(&playback_request_generation);
-        let player_for_resume = Arc::clone(&player);
+        let pending_resume_bg = Arc::clone(&pending_resume);
         std::thread::spawn(move || {
             let playback_result = match nas_client.get_playback_stream(&session, &episode) {
                 Ok(stream) => {
@@ -740,6 +868,12 @@ impl AppCoordinator {
 
                     match player.load_media(&stream.uri) {
                         Ok(()) => {
+                            persist_last_playback_context(
+                                credential_store.as_ref(),
+                                &collection_id,
+                                &classification_id,
+                                &episode_id,
+                            );
                             let state = player.state();
                             if playback_request_generation_bg.load(Ordering::SeqCst)
                                 != request_generation
@@ -759,6 +893,16 @@ impl AppCoordinator {
                     Err(format!("播放地址加载失败：{}", err.user_recovery_hint()))
                 }
             };
+
+            if playback_result.is_err() {
+                let mut pending = pending_resume_bg.lock().unwrap();
+                if pending
+                    .as_ref()
+                    .is_some_and(|resume| resume.request_generation == request_generation)
+                {
+                    *pending = None;
+                }
+            }
 
             operation.finish(
                 if playback_result.is_ok() { "success" } else { "error" },
@@ -796,11 +940,6 @@ impl AppCoordinator {
                             stream,
                             state,
                         );
-                        let resume_position = resume_history
-                            .as_ref()
-                            .and_then(|history| history.play_duration)
-                            .filter(|seconds| *seconds > 0)
-                            .unwrap_or_default() as f64;
                         if let Some(history) = &resume_history {
                             new_playback_session.audio_index = history
                                 .audio_index
@@ -835,14 +974,6 @@ impl AppCoordinator {
                             }
                             .into(),
                         );
-                        if resume_position > 0.0 {
-                            let player = Arc::clone(&player_for_resume);
-                            std::thread::spawn(move || {
-                                if let Err(error) = player.seek(resume_position) {
-                                    warn!("Failed to seek to the saved playback position: {}", error);
-                                }
-                            });
-                        }
                     }
                     Err(error) => {
                         *playback_session.lock().unwrap() = None;
@@ -1090,6 +1221,7 @@ impl AppCoordinator {
         let session = Arc::clone(&self.session);
         let credential_store = Arc::clone(&self.credential_store);
         let startup_restore_pending = Arc::clone(&self.startup_restore_pending);
+        let startup_last_playback = Arc::clone(&self.startup_last_playback);
         let image_cache = self.image_cache.clone();
         let image_request_gate = self.image_request_gate.clone();
 
@@ -1105,6 +1237,16 @@ impl AppCoordinator {
             let session_for_thread = Arc::clone(&session);
             let credential_store_for_thread = Arc::clone(&credential_store);
             let startup_restore_attempt = startup_restore_pending.load(Ordering::SeqCst);
+            let startup_resume_context = if startup_restore_attempt {
+                startup_last_playback.lock().unwrap().clone()
+            } else {
+                None
+            };
+            let requested_classification_id = startup_resume_context
+                .as_ref()
+                .map(|context| context.classification_id.clone())
+                .filter(|classification_id| !classification_id.trim().is_empty())
+                .unwrap_or(sel_id);
             let image_cache_for_thread = image_cache.clone();
             let image_request_gate_for_thread = image_request_gate.clone();
             let ui_weak_bg = ui_weak.clone();
@@ -1118,7 +1260,7 @@ impl AppCoordinator {
                     .ok()
                     .and_then(|cats| {
                         cats.iter()
-                            .find(|cat| cat.id == sel_id)
+                            .find(|cat| cat.id == requested_classification_id)
                             .or_else(|| cats.first())
                     })
                     .map(|cat| cat.id.clone())
@@ -1269,6 +1411,48 @@ impl AppCoordinator {
                                 page.list,
                             );
                             ui.set_requires_relogin(false);
+
+                            if startup_restore_attempt {
+                                if let Some(context) = startup_resume_context.as_ref().filter(|context| {
+                                    context.classification_id == selected_id_for_ui
+                                        && !context.collection_id.trim().is_empty()
+                                        && !context.episode_id.trim().is_empty()
+                                }) {
+                                    info!("Restoring last playback collection from saved context");
+                                    let collection_id = context.collection_id.clone();
+                                    let classification_id = context.classification_id.clone();
+                                    let episode_id = context.episode_id.clone();
+                                    diagnostics::record_event(
+                                        "ui",
+                                        "playback.restore_context",
+                                        "complete",
+                                        "success",
+                                        Duration::ZERO,
+                                        &[
+                                            ("collection_id", collection_id.clone()),
+                                            ("classification_id", classification_id),
+                                            ("episode_id", episode_id),
+                                        ],
+                                    );
+                                    ui.set_status_message("正在打开上次观看内容...".into());
+                                    let ui_weak_restore = ui.as_weak();
+                                    slint::Timer::single_shot(Duration::from_millis(0), move || {
+                                        if let Some(ui) = ui_weak_restore.upgrade() {
+                                            ui.invoke_collection_clicked(collection_id.into());
+                                        }
+                                    });
+                                } else if startup_resume_context.is_some() {
+                                    info!("Saved playback context could not be matched to the refreshed classification");
+                                    diagnostics::record_event(
+                                        "ui",
+                                        "playback.restore_context",
+                                        "complete",
+                                        "skipped",
+                                        Duration::ZERO,
+                                        &[("reason", "classification_not_found".to_string())],
+                                    );
+                                }
+                            }
                         }
                         Err(err) => {
                             ui.set_library_error(err.user_recovery_hint().into());
@@ -1304,9 +1488,20 @@ impl AppCoordinator {
         let playback_request_generation = Arc::clone(&self.playback_request_generation);
         let playback_session = Arc::clone(&self.playback_session);
         let image_request_gate = self.image_request_gate.clone();
+        let startup_last_playback = Arc::clone(&self.startup_last_playback);
         self.ui.on_collection_clicked(move |col_id| {
             let Some(ui) = ui_weak.upgrade() else { return };
             let classification_id = ui.get_selected_classification_id().to_string();
+            let collection_id = col_id.to_string();
+            let preferred_episode_id = startup_last_playback
+                .lock()
+                .unwrap()
+                .as_ref()
+                .filter(|context| {
+                    context.collection_id == collection_id
+                        && context.classification_id == classification_id
+                })
+                .map(|context| context.episode_id.clone());
             info!("User clicked collection card; opening detail view");
             AppCoordinator::start_collection_detail_load(
                 ui_weak.clone(),
@@ -1318,8 +1513,9 @@ impl AppCoordinator {
                 Arc::clone(&detail_request_generation),
                 Arc::clone(&playback_request_generation),
                 Arc::clone(&playback_session),
-                col_id.to_string(),
+                collection_id,
                 classification_id,
+                preferred_episode_id,
             );
         });
 
@@ -1402,9 +1598,11 @@ impl AppCoordinator {
         let nas_client = Arc::clone(&self.nas_client);
         let session = Arc::clone(&self.session);
         let player = Arc::clone(&self.player);
+        let credential_store = Arc::clone(&self.credential_store);
         let detail_state = Arc::clone(&self.detail_state);
         let playback_session = Arc::clone(&self.playback_session);
         let playback_request_generation = Arc::clone(&self.playback_request_generation);
+        let pending_resume = Arc::clone(&self.pending_resume);
         self.ui.on_play_episode_clicked(move |episode_id| {
             let Some(ui) = ui_weak.upgrade() else { return };
             let episode_id = episode_id.to_string();
@@ -1414,10 +1612,12 @@ impl AppCoordinator {
                 ui_weak.clone(),
                 Arc::clone(&nas_client),
                 Arc::clone(&session),
+                Arc::clone(&credential_store),
                 Arc::clone(&player),
                 Arc::clone(&detail_state),
                 Arc::clone(&playback_session),
                 Arc::clone(&playback_request_generation),
+                Arc::clone(&pending_resume),
                 collection_id,
                 classification_id,
                 episode_id,
@@ -1811,6 +2011,10 @@ impl AppCoordinator {
         let nas_client = Arc::clone(&self.nas_client);
         let nas_session = Arc::clone(&self.session);
         let pending_progress_requests = Arc::clone(&self.pending_progress_requests);
+        let progress_report_gate = Arc::clone(&self.progress_report_gate);
+        let player = Arc::clone(&self.player);
+        let pending_resume = Arc::clone(&self.pending_resume);
+        let playback_request_generation = Arc::clone(&self.playback_request_generation);
 
         self.player.add_event_listener(Box::new(move |event| {
             let ui_weak = ui_weak.clone();
@@ -1819,6 +2023,10 @@ impl AppCoordinator {
             let nas_client = Arc::clone(&nas_client);
             let nas_session = Arc::clone(&nas_session);
             let pending_progress_requests = Arc::clone(&pending_progress_requests);
+            let progress_report_gate = Arc::clone(&progress_report_gate);
+            let player = Arc::clone(&player);
+            let pending_resume = Arc::clone(&pending_resume);
+            let playback_request_generation = Arc::clone(&playback_request_generation);
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = ui_weak.upgrade() {
                     match event {
@@ -1846,6 +2054,25 @@ impl AppCoordinator {
                                     ui.set_status_message("已暂停播放。可点击继续播放。".into());
                                 }
                                 PlaybackState::Stopped => {
+                                    let final_progress = playback_session
+                                        .lock()
+                                        .unwrap()
+                                        .as_ref()
+                                        .map(PlaybackSession::progress_update);
+                                    if let Some(progress_update) = final_progress {
+                                        let should_report = progress_report_gate
+                                            .lock()
+                                            .unwrap()
+                                            .should_report(progress_update.sec, true);
+                                        if should_report {
+                                            spawn_playback_progress_report(
+                                                progress_update,
+                                                Arc::clone(&nas_client),
+                                                Arc::clone(&nas_session),
+                                                Arc::clone(&pending_progress_requests),
+                                            );
+                                        }
+                                    }
                                     ui.set_status_message("播放已停止。".into());
                                     ui.set_progress_value(0.0);
                                 }
@@ -1863,35 +2090,18 @@ impl AppCoordinator {
                                 })
                             };
                             if let Some(progress_update) = progress_update {
-                                let nas_client = Arc::clone(&nas_client);
-                                let nas_session = Arc::clone(&nas_session);
-                                pending_progress_requests.fetch_add(1, Ordering::SeqCst);
-                                let pending_progress_requests = Arc::clone(&pending_progress_requests);
-                                std::thread::spawn(move || {
-                                    let sec = progress_update.sec.to_string();
-                                    let duration_sec = progress_update.video_duration.to_string();
-                                    let result = nas_client
-                                        .update_playback_progress(&nas_session, &progress_update);
-                                    diagnostics::record_event(
-                                        "ui",
-                                        "playback.progress",
-                                        "complete",
-                                        if result.is_ok() { "success" } else { "error" },
-                                        Duration::ZERO,
-                                        &[("sec", sec), ("duration_sec", duration_sec)],
+                                let should_report = progress_report_gate
+                                    .lock()
+                                    .unwrap()
+                                    .should_report(progress_update.sec, false);
+                                if should_report {
+                                    spawn_playback_progress_report(
+                                        progress_update,
+                                        Arc::clone(&nas_client),
+                                        Arc::clone(&nas_session),
+                                        Arc::clone(&pending_progress_requests),
                                     );
-                                    if let Err(error) = result {
-                                        record_reauthentication_required(
-                                            "playback.progress",
-                                            error.requires_reauthentication(),
-                                        );
-                                        warn!(
-                                            "Failed to report playback progress: {}",
-                                            sanitize_log_message(&error.to_string())
-                                        );
-                                    }
-                                    pending_progress_requests.fetch_sub(1, Ordering::SeqCst);
-                                });
+                                }
                             }
                             if prog.duration_secs > 0.0 {
                                 ui.set_duration_value(prog.duration_secs as f32);
@@ -1910,6 +2120,7 @@ impl AppCoordinator {
                             path,
                             duration_secs,
                         } => {
+                            progress_report_gate.lock().unwrap().reset();
                             playback_controls.lock().unwrap().cancel_seek();
                             ui.set_media_path(path.into());
                             ui.set_duration_value(duration_secs as f32);
@@ -1922,6 +2133,78 @@ impl AppCoordinator {
                                 &[("duration_sec", duration_secs.to_string())],
                             );
                             ui.set_status_message("媒体已成功载入并在原生窗口渲染。".into());
+
+                            let current_generation =
+                                playback_request_generation.load(Ordering::SeqCst);
+                            let pending = {
+                                let mut pending_slot = pending_resume.lock().unwrap();
+                                if pending_slot
+                                    .as_ref()
+                                    .is_some_and(|resume| {
+                                        resume.request_generation == current_generation
+                                    })
+                                {
+                                    pending_slot.take()
+                                } else {
+                                    None
+                                }
+                            };
+                            if let Some(pending) = pending {
+                                info!(
+                                    "Applying saved playback position after media loaded: {} sec",
+                                    pending.position_secs.round()
+                                );
+                                let player = Arc::clone(&player);
+                                let playback_request_generation =
+                                    Arc::clone(&playback_request_generation);
+                                std::thread::spawn(move || {
+                                    if playback_request_generation.load(Ordering::SeqCst)
+                                        != pending.request_generation
+                                    {
+                                        diagnostics::record_event(
+                                            "ui",
+                                            "playback.resume_seek",
+                                            "complete",
+                                            "skipped",
+                                            Duration::ZERO,
+                                            &[("reason", "stale_playback_request".to_string())],
+                                        );
+                                        return;
+                                    }
+
+                                    let result = player.seek(pending.position_secs);
+                                    info!(
+                                        "Saved playback position seek result: success={}, sec={}",
+                                        result.is_ok(),
+                                        pending.position_secs.round()
+                                    );
+                                    diagnostics::record_event(
+                                        "ui",
+                                        "playback.resume_seek",
+                                        "complete",
+                                        if result.is_ok() { "success" } else { "error" },
+                                        Duration::ZERO,
+                                        &[
+                                            ("sec", pending.position_secs.round().to_string()),
+                                            (
+                                                "reason",
+                                                if result.is_ok() {
+                                                    "media_loaded"
+                                                } else {
+                                                    "player_seek_failed"
+                                                }
+                                                .to_string(),
+                                            ),
+                                        ],
+                                    );
+                                    if let Err(error) = result {
+                                        warn!(
+                                            "Failed to seek to the saved playback position: {}",
+                                            error
+                                        );
+                                    }
+                                });
+                            }
                         }
                         PlayerEvent::PlaybackFinished => {
                             playback_controls.lock().unwrap().cancel_seek();
@@ -2215,6 +2498,7 @@ fn apply_collection_detail(
     detail: CollectionDetail,
     cover_image: Option<DecodedImage>,
     background_image: Option<DecodedImage>,
+    preferred_episode_id: Option<&str>,
 ) {
     let display_type = detail.display_type().to_string();
     let is_movie = detail.is_movie();
@@ -2234,21 +2518,30 @@ fn apply_collection_detail(
         ui.set_detail_has_background(true);
     }
 
-    let first_episode_id = detail
-        .history
-        .as_ref()
-        .and_then(|history| history.last_video_id.as_deref())
-        .and_then(|last_video_id| {
+    let first_episode_id = preferred_episode_id
+        .and_then(|preferred_id| {
             detail
                 .seasons
                 .iter()
                 .flat_map(|season| season.episodes.iter())
-                .find(|episode| {
-                    last_video_id == episode.selection_id()
-                        || last_video_id == episode.video_id
-                        || (!episode.version_id.is_empty() && last_video_id == episode.version_id)
-                })
+                .find(|episode| AppCoordinator::episode_matches_identifier(episode, preferred_id))
                 .map(|episode| episode.selection_id().to_string())
+        })
+        .or_else(|| {
+            detail
+                .history
+                .as_ref()
+                .and_then(|history| history.last_video_id.as_deref())
+                .and_then(|last_video_id| {
+                    detail
+                        .seasons
+                        .iter()
+                        .flat_map(|season| season.episodes.iter())
+                        .find(|episode| {
+                            AppCoordinator::episode_matches_identifier(episode, last_video_id)
+                        })
+                        .map(|episode| episode.selection_id().to_string())
+                })
         })
         .or_else(|| {
             detail
@@ -2338,6 +2631,7 @@ fn apply_login_result_to_ui(
                     token: Some(data.token.clone()),
                     nas_id: data.nas_id.clone(),
                     nas_sign: data.nas_sign.clone(),
+                    last_playback: None,
                 };
                 if let Err(e) = credential_store.save(&creds) {
                     warn!("Failed to persist credentials to secure storage: {}", e);
@@ -2443,6 +2737,113 @@ fn record_request_not_sent(operation: &str, reason: &str) {
         Duration::ZERO,
         &[("reason", reason.to_string())],
     );
+}
+
+fn spawn_playback_progress_report(
+    progress_update: PlaybackProgressUpdate,
+    nas_client: Arc<dyn NasClient>,
+    nas_session: Arc<NasSession>,
+    pending_progress_requests: Arc<AtomicUsize>,
+) {
+    pending_progress_requests.fetch_add(1, Ordering::SeqCst);
+    std::thread::spawn(move || {
+        let sec = progress_update.sec.to_string();
+        let duration_sec = progress_update.video_duration.to_string();
+        let result = nas_client.update_playback_progress(&nas_session, &progress_update);
+        diagnostics::record_event(
+            "ui",
+            "playback.progress",
+            "complete",
+            if result.is_ok() { "success" } else { "error" },
+            Duration::ZERO,
+            &[("sec", sec), ("duration_sec", duration_sec)],
+        );
+        if let Err(error) = result {
+            record_reauthentication_required(
+                "playback.progress",
+                error.requires_reauthentication(),
+            );
+            warn!(
+                "Failed to report playback progress: {}",
+                sanitize_log_message(&error.to_string())
+            );
+        }
+        pending_progress_requests.fetch_sub(1, Ordering::SeqCst);
+    });
+}
+
+fn persist_last_playback_context(
+    credential_store: &dyn CredentialStore,
+    collection_id: &str,
+    classification_id: &str,
+    episode_id: &str,
+) {
+    let context = LastPlaybackContext {
+        collection_id: collection_id.to_string(),
+        classification_id: classification_id.to_string(),
+        episode_id: episode_id.to_string(),
+    };
+
+    match credential_store.load() {
+        Ok(Some(mut credentials)) => {
+            credentials.last_playback = Some(context);
+            match credential_store.save(&credentials) {
+                Ok(()) => {
+                    info!("Saved last playback context to secure OS storage");
+                    diagnostics::record_event(
+                        "storage",
+                        "playback.context",
+                        "complete",
+                        "success",
+                        Duration::ZERO,
+                        &[
+                            ("collection_id", collection_id.to_string()),
+                            ("classification_id", classification_id.to_string()),
+                            ("episode_id", episode_id.to_string()),
+                        ],
+                    )
+                }
+                Err(error) => {
+                    warn!(
+                        "Failed to persist last playback context ({}): {}",
+                        error.class(),
+                        sanitize_log_message(&error.to_string())
+                    );
+                    diagnostics::record_event(
+                        "storage",
+                        "playback.context",
+                        "complete",
+                        "error",
+                        Duration::ZERO,
+                        &[("storage", error.class().to_string())],
+                    );
+                }
+            }
+        }
+        Ok(None) => diagnostics::record_event(
+            "storage",
+            "playback.context",
+            "complete",
+            "skipped",
+            Duration::ZERO,
+            &[("reason", "no_saved_credentials".to_string())],
+        ),
+        Err(error) => {
+            warn!(
+                "Failed to load credentials for playback context ({}): {}",
+                error.class(),
+                sanitize_log_message(&error.to_string())
+            );
+            diagnostics::record_event(
+                "storage",
+                "playback.context",
+                "complete",
+                "error",
+                Duration::ZERO,
+                &[("storage", error.class().to_string())],
+            );
+        }
+    }
 }
 
 fn wait_for_progress_flush(pending: &AtomicUsize) {

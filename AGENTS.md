@@ -48,6 +48,7 @@
 - `/auth/login` 返回成功不代表片库身份已经完整；登录后及恢复保存会话时，都要通过 `/zhelper/state` 补齐并保存 `nas_id`，再请求分类和列表。
 - `/key/pub` 返回的 `sign` 是签名上下文，不是 `nas_id`；请求和凭据持久化必须分别保留 `nas_sign` 与 `nas_id`。
 - 分类响应的片库总数可能在 `collection_count`，不能只读取 `count`；HTTP 200 也必须继续检查响应字段、列表长度和业务结果。
+- 新版 `POST /zvideo/collection/v2/info` 可能只返回详情和剧集、不带 `data.history`；详情缺少历史时，按官方客户端证据只读回退 `POST /zvideo/collection/info`（同样传 `collection_id`、`classification_id`、`get_type=all`），再把 `data.history` 合并到详情。回退失败不能把已成功的详情伪装成空片库，但必须留下可观测的请求和错误记录。
 - Windows 验证前要确认运行进程来自当前 `target\\debug\\z-video.exe`；旧进程会锁住可执行文件，也会让界面看起来像修复没有生效。
 - 所有诊断日志必须脱敏，不得保存密码、短信验证码、完整 token、原始播放地址或完整私密媒体路径。
 - 调查输出必须记录证据来源、覆盖范围、未知项和验证命令；未被证据确认的结论不得写成已实现事实。

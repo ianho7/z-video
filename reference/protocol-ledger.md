@@ -41,7 +41,9 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | `POST /zvideo/collection/v2/info` | `collection_id`、`classification_id`、`get_type=all` | `S` + `R` | 当前调用必须；服务端字段必填性未知 | 参数为字符串；响应 `data` 为对象 | `tests/fixtures/protocol/detail-response-shape.json`; `tests/protocol_contract_test.rs` 详情链 | 官方 Web 运行时观察到详情链；完整详情 schema 和权限差异未确认 |
 | 详情 `data` | `collection_id`、标题/年份/评分、`list[]`；剧集可能在 `version_list`、`video_list`、`episodes`；剧集有 `video_id`、`episode`、`file_path` | `S` + `R` | `data` 成功响应必须；具体剧集容器按响应分支 | 年份、评分、季/集编号可能数字或字符串；媒体路径值必须省略 | 同上 | 当前 fixture 只有字段名和类型；不保存私密媒体路径；不同固件的嵌套结构仍是未知项 |
-| 详情 `data.history` | `last_video_id`、`play_duration`、`audio_index`、`subtitle_index`、`subtitle_hash`、`subtitle_setting`、`play_chapter` | `S` | `history` 可缺省；存在时字段仍按可选值处理 | ID、秒数、轨道索引和章节已兼容数字/字符串；缺省历史不视为协议失败 | `src/nas/models.rs` 模型测试；`tests/protocol_contract_test.rs` 详情链 | 字段来自官方客户端静态消费链；不同固件是否把历史放在顶层或使用其他字段名仍未确认；不保存历史中的媒体路径或凭据 |
+| 详情 `data.history` | `last_video_id`、`play_duration`、`audio_index`、`subtitle_index`、`subtitle_hash`、`subtitle_setting`、`play_chapter` | `S` | `v2/info` 可缺省；缺省时只读回退 `/zvideo/collection/info`；历史字段仍按可选值处理 | ID、秒数、轨道索引和章节已兼容数字/字符串；缺省历史不视为协议失败 | `src/nas/models.rs` 模型测试；`tests/protocol_contract_test.rs` 详情链与 legacy history 回退 | 字段来自官方客户端静态消费链；`v2/info` 与旧版 `collection/info` 的固件差异仍需持续记录；不保存历史中的媒体路径或凭据 |
+
+| 续播历史回退 | `POST /zvideo/collection/info`：`collection_id`、`classification_id`、`get_type=all`；读取 `data.history` | `S` | 仅在 `/zvideo/collection/v2/info` 成功但不含 `data.history` 时调用；回退失败不否定已成功的详情 | 请求参数为字符串；历史字段沿用上行类型兼容规则 | `tests/fixtures/protocol/detail-response-shape.json`; `tests/protocol_contract_test.rs` `collection_detail_reads_legacy_history_when_v2_detail_omits_it` | 该请求是官方客户端静态证据支持的只读补充，不是新的播放写入接口；未知固件可能同时在 v2 响应中返回历史 |
 
 ## 5. 播放
 

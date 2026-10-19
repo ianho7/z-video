@@ -337,8 +337,8 @@ fn sanitize_field(key: &str, value: &str) -> Option<(String, Value)> {
         "path" => Value::String(sanitize_request_path(value)),
         "method" => Value::String(sanitize_label(value)),
         "http_status" | "item_count" | "category_count" | "count" | "category_item_count"
-        | "bytes" | "sec" | "duration_sec" | "video_duration" | "response_code"
-        | "system" | "start" | "limit" | "pending" => {
+        | "episode_count" | "bytes" | "sec" | "duration_sec" | "video_duration"
+        | "response_code" | "system" | "start" | "limit" | "pending" => {
             Value::Number(value.parse::<u64>().unwrap_or(0).into())
         }
         "authenticated"
@@ -346,7 +346,14 @@ fn sanitize_field(key: &str, value: &str) -> Option<(String, Value)> {
         | "token_present"
         | "nas_id_present"
         | "nas_sign_present"
-        | "request_observed" => Value::Bool(value.eq_ignore_ascii_case("true")),
+        | "request_observed"
+        | "history_present"
+        | "history_position_present"
+        | "history_episode_present"
+        | "last_playback_present"
+        | "history_matched"
+        | "subtitle_hash_present"
+        | "subtitle_setting_present" => Value::Bool(value.eq_ignore_ascii_case("true")),
         "classification_id" | "selected_id" | "collection_id" | "episode_id" => {
             Value::String(mask_identifier(value))
         }

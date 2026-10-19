@@ -22,5 +22,5 @@ pub use player::{
 pub use playback::{PlaybackSession, PlaybackStream};
 pub use storage::{
     delete_credentials, load_credentials, save_credentials, CredentialStore,
-    KeyringCredentialStore, MemoryCredentialStore, SavedCredentials,
+    KeyringCredentialStore, LastPlaybackContext, MemoryCredentialStore, SavedCredentials,
 };

@@ -49,6 +49,7 @@ fn test_nas_auth_integration_comprehensive_suite() {
             token: Some("existing_token_xyz".to_string()),
             nas_id: Some("stored_nas_id".to_string()),
             nas_sign: Some("stored_nas_sign".to_string()),
+            last_playback: None,
         };
         mock_store.save(&preloaded).expect("pre-seed credentials");
 
@@ -314,6 +315,7 @@ fn remember_false_removes_previous_saved_credentials() {
             token: Some("old-token".to_string()),
             nas_id: Some("old-nas-id".to_string()),
             nas_sign: Some("old-nas-sign".to_string()),
+            last_playback: None,
         })
         .expect("pre-seed credentials");
 
@@ -362,6 +364,7 @@ fn expired_restored_session_returns_to_login_and_clears_saved_credentials() {
             token: Some("expired-token".to_string()),
             nas_id: Some("expired-nas-id".to_string()),
             nas_sign: Some("expired-nas-sign".to_string()),
+            last_playback: None,
         })
         .expect("pre-seed credentials");
 

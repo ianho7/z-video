@@ -191,6 +191,59 @@ fn library_http_owner_accepts_number_and_string_field_variants() {
 }
 
 #[test]
+fn collection_detail_reads_legacy_history_when_v2_detail_omits_it() {
+    let detail_without_history = r#"{
+        "code": 200,
+        "data": {
+            "collection_id": "fixture-collection",
+            "title": "Fixture title",
+            "type": "movie",
+            "list": [{
+                "version_list": [{
+                    "video_id": "fixture-video",
+                    "episode": 1,
+                    "file_path": "fixture-media-reference"
+                }]
+            }]
+        }
+    }"#;
+    let legacy_history = r#"{
+        "code": 200,
+        "data": {
+            "history": {
+                "last_video_id": "fixture-video",
+                "play_duration": 31
+            }
+        }
+    }"#;
+    let (base_url, server) = spawn_response_server(vec![
+        collection_list_response("count"),
+        detail_without_history.to_string(),
+        legacy_history.to_string(),
+    ]);
+    let session = authenticated_session(&base_url);
+    let client = HttpNasClient::new(Duration::from_secs(2));
+
+    client
+        .get_collections(&session, "fixture-category", 1, 50)
+        .expect("collection list should parse");
+    let detail = client
+        .get_collection_detail(&session, "fixture-collection", "fixture-category")
+        .expect("v2 detail plus legacy history should parse");
+
+    let history = detail
+        .history
+        .as_ref()
+        .expect("legacy history should be merged into detail");
+    assert_eq!(history.last_video_id.as_deref(), Some("fixture-video"));
+    assert_eq!(history.play_duration, Some(31));
+
+    let requests = server.join().expect("legacy-history server should finish");
+    assert!(requests[1].starts_with("POST /zvideo/collection/v2/info?&drnd="));
+    assert!(requests[2].starts_with("POST /zvideo/collection/info?&drnd="));
+}
+
+#[test]
 fn collection_list_http_owner_accepts_count_and_collection_count_aliases() {
     let (base_url, server) = spawn_response_server(vec![
         collection_list_response("count"),

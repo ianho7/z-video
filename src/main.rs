@@ -9,6 +9,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::env::set_var("RUST_LOG", "info");
     }
     env_logger::init();
+    info!("Diagnostics log file: {}", diagnostics::log_file_path().display());
 
     let startup = diagnostics::start_event("app", "startup");
     info!("Starting z-video shell & player probe...");

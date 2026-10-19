@@ -45,6 +45,13 @@ impl StorageError {
 }
 
 /// Persisted login credentials saved into the OS secure storage (Windows Credential Manager / macOS Keychain).
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
+pub struct LastPlaybackContext {
+    pub collection_id: String,
+    pub classification_id: String,
+    pub episode_id: String,
+}
+
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SavedCredentials {
     pub server_url: String,
@@ -57,6 +64,8 @@ pub struct SavedCredentials {
     pub nas_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nas_sign: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_playback: Option<LastPlaybackContext>,
 }
 
 // Custom Debug implementation ensuring sensitive fields (password, raw token) are NEVER logged
@@ -249,6 +258,7 @@ mod tests {
             token: Some("token_abc_xyz_123456".to_string()),
             nas_id: None,
             nas_sign: None,
+            last_playback: None,
         };
 
         store.save(&creds).unwrap();
@@ -271,6 +281,7 @@ mod tests {
             token: Some("zenith_token_live_abcdef123456".to_string()),
             nas_id: None,
             nas_sign: None,
+            last_playback: None,
         };
 
         let debug_str = format!("{:?}", creds);

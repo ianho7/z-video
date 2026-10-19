@@ -10,6 +10,7 @@ struct Inner {
     surface_id: Option<isize>,
     listeners: Vec<PlayerEventListener>,
     history: Vec<String>,
+    defer_media_loaded: bool,
 }
 
 #[derive(Clone, Default)]
@@ -24,6 +25,28 @@ impl MockPlayer {
 
     pub fn call_history(&self) -> Vec<String> {
         self.inner.lock().unwrap().history.clone()
+    }
+
+    /// Delays the load events so tests can model an asynchronous native player.
+    pub fn defer_media_loaded(&self) {
+        self.inner.lock().unwrap().defer_media_loaded = true;
+    }
+
+    /// Delivers the load events after a deferred media load is ready.
+    pub fn emit_media_loaded(&self) {
+        let (path, duration_secs) = {
+            let inner = self.inner.lock().unwrap();
+            (inner.current_media.clone().unwrap_or_default(), inner.progress.duration_secs)
+        };
+        self.dispatch_event(PlayerEvent::MediaLoaded {
+            path,
+            duration_secs,
+        });
+        self.dispatch_event(PlayerEvent::StateChanged(PlaybackState::Playing));
+        self.dispatch_event(PlayerEvent::ProgressChanged(PlaybackProgress::new(
+            0.0,
+            duration_secs,
+        )));
     }
 
     fn dispatch_event(&self, event: PlayerEvent) {
@@ -41,7 +64,12 @@ impl Player for MockPlayer {
         inner.current_media = Some(path.to_string());
         inner.state = PlaybackState::Playing;
         inner.progress = PlaybackProgress::new(0.0, 120.0);
+        let defer_media_loaded = inner.defer_media_loaded;
         drop(inner);
+
+        if defer_media_loaded {
+            return Ok(());
+        }
 
         self.dispatch_event(PlayerEvent::MediaLoaded {
             path: path.to_string(),
