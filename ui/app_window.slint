@@ -534,6 +534,8 @@ component AppleWorkspace inherits Rectangle {
     in property <bool> search_loading: false;
     in property <string> search_error: "";
     in property <string> search_scope: "当前已加载范围";
+    in property <string> media_type_filter: "all";
+    in property <string> sort_order: "default";
     in property <string> session_nas_name: "";
     in property <string> session_base_url: "";
     in property <string> session_user: "";
@@ -562,6 +564,9 @@ component AppleWorkspace inherits Rectangle {
     callback search_changed(string);
     callback search_submitted(string);
     callback retry_search();
+    callback filter_changed(string);
+    callback sort_changed(string);
+    callback clear_query();
     callback select_classification(string);
     callback refresh_library();
     callback relogin();
@@ -794,6 +799,64 @@ component AppleWorkspace inherits Rectangle {
                             icon: @image-url("../assets/icons/refresh.svg");
                             label: "刷新片库";
                             clicked => { root.refresh_library(); }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 6px;
+
+                        Text {
+                            text: "类型";
+                            color: #8f9098;
+                            font_size: 11px;
+                            vertical_alignment: center;
+                        }
+                        Button {
+                            text: "全部";
+                            primary: root.media_type_filter == "all";
+                            clicked => { root.filter_changed("all"); }
+                        }
+                        Button {
+                            text: "电影";
+                            primary: root.media_type_filter == "movie";
+                            clicked => { root.filter_changed("movie"); }
+                        }
+                        Button {
+                            text: "剧集";
+                            primary: root.media_type_filter == "tv";
+                            clicked => { root.filter_changed("tv"); }
+                        }
+
+                        Text {
+                            text: "排序";
+                            color: #8f9098;
+                            font_size: 11px;
+                            vertical_alignment: center;
+                        }
+                        Button {
+                            text: "默认";
+                            primary: root.sort_order == "default";
+                            clicked => { root.sort_changed("default"); }
+                        }
+                        Button {
+                            text: "片名 A-Z";
+                            primary: root.sort_order == "title_asc";
+                            clicked => { root.sort_changed("title_asc"); }
+                        }
+                        Button {
+                            text: "评分↓";
+                            primary: root.sort_order == "score_desc";
+                            clicked => { root.sort_changed("score_desc"); }
+                        }
+                        Button {
+                            text: "年份↓";
+                            primary: root.sort_order == "release_year_desc";
+                            clicked => { root.sort_changed("release_year_desc"); }
+                        }
+                        Rectangle { horizontal_stretch: 1; }
+                        Button {
+                            text: "清除条件";
+                            clicked => { root.clear_query(); }
                         }
                     }
 
@@ -1471,6 +1534,8 @@ export component AppWindow inherits Window {
     in-out property <bool> search_loading: false;
     in-out property <string> search_error: "";
     in-out property <string> search_scope: "当前已加载范围";
+    in-out property <string> media_type_filter: "all";
+    in-out property <string> sort_order: "default";
 
     // Collection detail state
     in-out property <string> detail_collection_id: "";
@@ -1525,6 +1590,9 @@ export component AppWindow inherits Window {
     callback search_changed(string);
     callback search_submitted(string);
     callback retry_search();
+    callback filter_changed(string);
+    callback sort_changed(string);
+    callback clear_query();
     callback collection_clicked(string);
     callback library_scrolled(length, length, length, length, int);
     callback continue_watching_clicked(string, string);
@@ -2847,6 +2915,8 @@ export component AppWindow inherits Window {
         search_loading: root.search_loading;
         search_error: root.search_error;
         search_scope: root.search_scope;
+        media_type_filter: root.media_type_filter;
+        sort_order: root.sort_order;
         session_nas_name: root.session_nas_name;
         session_base_url: root.session_base_url;
         session_user: root.session_user;
@@ -2878,6 +2948,20 @@ export component AppWindow inherits Window {
             root.search_submitted(query);
         }
         retry-search => { root.retry_search(); }
+        filter-changed(value) => {
+            root.media_type_filter = value;
+            root.filter_changed(value);
+        }
+        sort-changed(value) => {
+            root.sort_order = value;
+            root.sort_changed(value);
+        }
+        clear-query => {
+            root.apple_search_input = "";
+            root.media_type_filter = "all";
+            root.sort_order = "default";
+            root.clear_query();
+        }
         select-classification(id) => { root.select_classification(id); }
         refresh-library => { root.refresh_library_clicked(); }
         relogin => { root.relogin_requested(); }

@@ -2209,6 +2209,24 @@ impl MockNasClient {
         self
     }
 
+    /// Adds one local TV fixture so the coordinator can exercise a real
+    /// movie/TV type combination without changing the default four-item
+    /// library used by unrelated tests.
+    pub fn with_mixed_media_types(mut self) -> Self {
+        self.mock_collections.push(CollectionItem {
+            collection_id: "tv-fixture".to_string(),
+            title: "脱敏剧集样本".to_string(),
+            cover: "/zvideo/cover/tv-fixture.jpg".to_string(),
+            release_year: "2025".to_string(),
+            video_type: "tv".to_string(),
+            score: Some("8.6".to_string()),
+            rating: None,
+            episode_count: Some(8),
+            storyline: Some("用于筛选排序行为测试的脱敏剧集。".to_string()),
+        });
+        self
+    }
+
     pub fn with_playback_uri(mut self, uri: impl Into<String>) -> Self {
         self.mock_playback_uri = Some(uri.into());
         self
