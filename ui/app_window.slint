@@ -15,6 +15,7 @@ export struct CollectionUiItem {
     score: string,
     cover_image: image,
     has_cover: bool,
+    cover_status: string,
 }
 
 export struct ContinueWatchingUiItem {
@@ -109,18 +110,21 @@ component PosterCard inherits Rectangle {
             border_radius: 7px;
             clip: true;
 
-            if root.item.has_cover: Image {
+            if root.item.cover_status == "ready": Image {
                 source: root.item.cover_image;
                 width: 100%;
                 height: 100%;
                 image_fit: cover;
             }
-            if !root.item.has_cover: Text {
-                text: "封面";
-                color: #8f9098;
-                font_size: 12px;
-                horizontal_alignment: center;
-                vertical_alignment: center;
+            if root.item.cover_status != "ready": VerticalLayout {
+                alignment: center;
+                Text {
+                    text: root.item.cover_status == "loading" ? "正在加载封面" :
+                        root.item.cover_status == "failed" ? "封面加载失败" : "暂无封面";
+                    color: root.item.cover_status == "failed" ? #ffb3bc : #8f9098;
+                    font_size: 12px;
+                    horizontal_alignment: center;
+                }
             }
         }
 
@@ -184,6 +188,9 @@ component AppleWorkspace inherits Rectangle {
     in property <string> session_nas_name: "";
     in property <string> session_base_url: "";
     in property <string> session_user: "";
+    property <length> library_grid_top: 0px;
+    property <length> library_card_width: 0px;
+    property <int> library_columns: 0;
 
     in property <string> detail_title: "";
     in property <string> detail_release_year: "";
@@ -210,6 +217,7 @@ component AppleWorkspace inherits Rectangle {
     callback refresh_library();
     callback relogin();
     callback collection_clicked(string);
+    callback library_scrolled(length, length, length, length, int);
     callback continue_watching_clicked(string, string);
     callback continue_watching_retry();
     callback detail_back();
@@ -382,8 +390,18 @@ component AppleWorkspace inherits Rectangle {
                 }
             }
 
-            if root.current_view == "library": ScrollView {
+            if root.current_view == "library": library_scroll_view := ScrollView {
                 vertical_stretch: 1;
+
+                scrolled => {
+                    root.library_scrolled(
+                        max(0px, -self.content-y),
+                        self.visible-height,
+                        root.library_grid_top,
+                        root.library_card_width,
+                        root.library_columns
+                    );
+                }
 
                 VerticalLayout {
                     padding-top: 30px;
@@ -713,7 +731,7 @@ component AppleWorkspace inherits Rectangle {
                         }
                     }
 
-                    if !root.library_loading && !root.search_loading && root.library_error == "" && root.search_error == "" && root.collections.length > 0: GridLayout {
+                    if !root.library_loading && !root.search_loading && root.library_error == "" && root.search_error == "" && root.collections.length > 0: library_grid := GridLayout {
                         // The content width is the only input to the column
                         // count. A 140px target yields about seven columns at
                         // the 1440px reference size and fewer columns when
@@ -726,6 +744,9 @@ component AppleWorkspace inherits Rectangle {
                         property <length> card_width: self.columns > 0
                             ? (self.available_width - (self.columns - 1) * self.spacing) / self.columns
                             : self.min_card_width;
+                        changed y => { root.library_grid_top = self.y; }
+                        changed card_width => { root.library_card_width = self.card_width; }
+                        changed columns => { root.library_columns = self.columns; }
                         width: 100%;
                         min_width: 0px;
                         preferred_width: 0px;
@@ -1051,6 +1072,7 @@ export component AppWindow inherits Window {
     callback search_submitted(string);
     callback retry_search();
     callback collection_clicked(string);
+    callback library_scrolled(length, length, length, length, int);
     callback continue_watching_clicked(string, string);
     callback continue_watching_retry();
     callback refresh_library_clicked();
@@ -2352,7 +2374,7 @@ export component AppWindow inherits Window {
         }
     }
 
-    AppleWorkspace {
+    apple_workspace := AppleWorkspace {
         visible: root.is_logged_in && root.current_view != "player";
         sidebar_visible: root.apple_sidebar_visible;
         current_view: root.current_view;
@@ -2406,6 +2428,9 @@ export component AppWindow inherits Window {
         refresh-library => { root.refresh_library_clicked(); }
         relogin => { root.relogin_requested(); }
         collection-clicked(id) => { root.collection_clicked(id); }
+        library-scrolled(scroll_offset, viewport_height, grid_top, card_width, columns) => {
+            root.library_scrolled(scroll_offset, viewport_height, grid_top, card_width, columns);
+        }
         continue-watching-clicked(collection-id, episode-id) => {
             root.continue_watching_clicked(collection-id, episode-id);
         }
