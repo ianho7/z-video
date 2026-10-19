@@ -5,7 +5,6 @@ edition = "2021"
 description = "LAN video client for Zidoo/Z-Space NAS"
 
 [dependencies]
-slint = { git = "https://github.com/slint-ui/slint.git", rev = "0ade85bfd0a88b6de2f87f767420975f98c141d0", default-features = false, features = ["compat-1-2", "backend-winit", "renderer-skia", "raw-window-handle-06"] }
 raw-window-handle = "0.6"
 libloading = "0.8"
 thiserror = "2.0"
@@ -20,7 +19,11 @@ keyring = { version = "3.6", features = ["windows-native", "apple-native"] }
 rand = "0.8"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
+# The new Slint compiler is required on both targets because 1.18.1 does not
+# parse backdrop-blur. Resolver 2 keeps target-specific renderer features
+# scoped: Windows selects Skia; non-Windows keeps the default renderer set.
 [target.'cfg(windows)'.dependencies]
+slint = { git = "https://github.com/slint-ui/slint.git", rev = "0ade85bfd0a88b6de2f87f767420975f98c141d0", default-features = false, features = ["compat-1-2", "accessibility", "backend-winit", "renderer-skia", "raw-window-handle-06"] }
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
@@ -28,8 +31,14 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_LibraryLoader",
 ] }
 
-[build-dependencies]
+[target.'cfg(not(windows))'.dependencies]
+slint = { git = "https://github.com/slint-ui/slint.git", rev = "0ade85bfd0a88b6de2f87f767420975f98c141d0", features = ["compat-1-2", "raw-window-handle-06"] }
+
+[target.'cfg(windows)'.build-dependencies]
 slint-build = { git = "https://github.com/slint-ui/slint.git", rev = "0ade85bfd0a88b6de2f87f767420975f98c141d0", default-features = false, features = ["compat-1-18"] }
+
+[target.'cfg(not(windows))'.build-dependencies]
+slint-build = { git = "https://github.com/slint-ui/slint.git", rev = "0ade85bfd0a88b6de2f87f767420975f98c141d0" }
 
 [profile.dev]
 debug = 1
@@ -38,4 +47,3 @@ split-debuginfo = "unpacked"
 [profile.test]
 debug = 1
 split-debuginfo = "unpacked"
-
