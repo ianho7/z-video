@@ -147,3 +147,12 @@ Windows 构建显式使用 `backend-winit`、`renderer-skia`、`accessibility` �
 `backdrop-blur` 只允许出现在侧栏和工具栏；网格、卡片、详情和视频区域保持锐利。`Z_VIDEO_REDUCED_TRANSPARENCY=1` 或 `Z_VIDEO_HIGH_CONTRAST=1` 时，侧栏和工具栏改用不透明 surface 并关闭 blur。Windows 1440x900 logical、125% scale 的两组同 fixture 截图、DPI 和命令记录在 `docs/design/evidence/ticket-09/README.md`；本证据不包含性能比例。
 
 回滚时应恢复候选 commit 前的 Cargo/Slint 配置并移除 `backdrop-blur` 语法；只把 git 依赖换回稳定版本会导致编译失败。macOS/Linux、非 Windows renderer、软件 Skia、真实视频帧、系统透明度探测及性能仍未验证。
+
+### Ticket #9 shell layout follow-up（2026-10-20）
+
+正式 shell 默认在侧栏/工具栏玻璃层下使用低对比 `ShellAtmosphere`，仅提供真实采样背景；
+七色 `MaterialEvidenceBackdrop` 仍是显式 fixture 开关，不进入产品默认状态。窗口和布局均按
+logical 尺寸计算：preferred `1040x720`、sidebar `220px`、toolbar `64px`、内容左右各
+`32px`；grid/detail 内宽为窗口宽减去 `220+64px`。`Z_VIDEO_REDUCED_TRANSPARENCY=1`
+或 `Z_VIDEO_HIGH_CONTRAST=1` 仍回退到不透明 shell。三种尺寸的 Windows geometry 证据见
+`docs/design/evidence/ticket-09-shell-layout/README.md`；它不扩展 blur 到网格、卡片、详情或视频。

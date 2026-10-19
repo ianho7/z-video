@@ -52,3 +52,9 @@
 真实 Windows 候选已使用 Slint git rev `0ade85bfd0a88b6de2f87f767420975f98c141d0` 和 Rust `1.99.1` 构建；PR #13821 的 merge commit 是 `e492aa7`。Windows 显式选择 `backend-winit + renderer-skia`，并保留 `accessibility`。默认状态与 `Z_VIDEO_REDUCED_TRANSPARENCY=1` opaque fallback 在同一 1440x900 logical、125% scale fixture 中均生成了 1800x1125 PNG，DPI 通过 `GetDpiForWindow=120` 记录。
 
 材质边界保持为侧栏和工具栏；海报网格、卡片、详情与视频保持锐利。fallback 使用不透明 surface 并将 blur 设为 `0px`。非 Windows renderer、软件 Skia、真实视频帧和性能仍未验证；不能把 Windows 截图扩展为跨平台结论。详细命令、截图和回滚方式见 `docs/design/evidence/ticket-09/README.md`。
+
+2026-10-20 shell follow-up 保持同一边界：默认 shell 的低对比 `ShellAtmosphere` 只为
+sidebar/toolbar 的真实 `backdrop-blur` 提供采样背景，七色 underlay 仍只属于 fixture。响应式
+几何使用 logical client bounds（preferred `1040x720`、sidebar `220px`、toolbar `64px`、
+内容 padding `32px`），三种窗口尺寸及 opaque fallback 证据见
+`docs/design/evidence/ticket-09-shell-layout/README.md`。不据此承诺性能或跨平台结果。

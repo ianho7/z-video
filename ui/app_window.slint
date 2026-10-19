@@ -348,6 +348,53 @@ component MaterialEvidenceBackdrop inherits Rectangle {
     Rectangle { y: parent.height * 0.28; width: parent.width; height: 4px; background: #ffffff; }
     Rectangle { y: parent.height * 0.64; width: parent.width; height: 3px; background: #101113; }
 }
+
+// A low-contrast, state-independent shell atmosphere gives the functional
+// glass layers real content to sample in the normal product window. It stays
+// behind the sidebar and toolbar, uses logical dimensions, and is deliberately
+// quieter than the evidence-only colour bands above.
+component ShellAtmosphere inherits Rectangle {
+    background: ShellTheme.canvas;
+
+    Rectangle {
+        x: parent.width * 0.10;
+        y: parent.height * 0.08;
+        width: parent.width * 0.34;
+        height: parent.height * 0.30;
+        background: #1b2a38;
+        border_radius: 120px;
+        opacity: 0.62;
+    }
+
+    Rectangle {
+        x: parent.width * 0.56;
+        y: parent.height * 0.04;
+        width: parent.width * 0.30;
+        height: parent.height * 0.36;
+        background: #28233a;
+        border_radius: 140px;
+        opacity: 0.52;
+    }
+
+    Rectangle {
+        x: parent.width * 0.30;
+        y: parent.height * 0.62;
+        width: parent.width * 0.48;
+        height: parent.height * 0.24;
+        background: #1c3030;
+        border_radius: 120px;
+        opacity: 0.56;
+    }
+
+    Rectangle {
+        x: parent.width * 0.08;
+        y: parent.height * 0.50;
+        width: parent.width * 0.18;
+        height: 1px;
+        background: #3b4a58;
+        opacity: 0.42;
+    }
+}
 // A local copy of the standard focus/click bridge. Keeping it beside the
 // card makes the card a real focus target while retaining the existing Rust
 // collection-click callback.
@@ -573,6 +620,11 @@ component AppleWorkspace inherits Rectangle {
     property <length> library_grid_top: 0px;
     property <length> library_card_width: 0px;
     property <int> library_columns: 0;
+    // All shell geometry is logical. Keep the post-sidebar content width
+    // derived from the window and the one fixed sidebar token so the grid
+    // does not depend on a layout-produced width and form a binding loop.
+    property <length> shell_content_width: max(0px,
+        root.width - (root.sidebar_visible ? ShellTheme.sidebar_width : 0px));
 
     in property <string> detail_title: "";
     in property <string> detail_release_year: "";
@@ -632,6 +684,13 @@ component AppleWorkspace inherits Rectangle {
     }
 
     background: ShellTheme.canvas;
+
+    ShellAtmosphere {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+    }
 
     if root.material_evidence: MaterialEvidenceBackdrop {
         x: 0px;
@@ -1260,8 +1319,10 @@ component AppleWorkspace inherits Rectangle {
                         // the 1440px reference size and fewer columns when
                         // the sidebar leaves a narrow viewport.
                         property <length> min_card_width: 140px;
-                        property <length> available_width: root.width
-                            - (root.sidebar_visible ? ShellTheme.sidebar_width : 0px) - 64px;
+                        // The grid is inside the post-sidebar main column;
+                        // shell_content_width already accounts for that column
+                        // and keeps the calculation in logical units.
+                        property <length> available_width: max(0px, root.shell_content_width - 64px);
                         property <int> raw_columns: Math.floor((self.available_width + self.spacing) / (self.min_card_width + self.spacing));
                         property <int> columns: Math.max(1, Math.min(12, self.raw_columns));
                         property <length> card_width: self.columns > 0
