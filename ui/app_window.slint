@@ -38,6 +38,574 @@ export struct SeasonUiItem {
     episodes: [EpisodeUiItem],
 }
 
+// The approved HTML prototype keeps the functional shell separate from the
+// media content. This component is the first native slice of that structure.
+// It deliberately consumes the existing Rust-facing models and callbacks so
+// visual work does not invent a second data or playback path.
+component AppleWorkspace inherits Rectangle {
+    in property <bool> sidebar_visible: true;
+    in property <string> current_view: "library";
+    in property <[ClassificationUiItem]> classifications: [];
+    in property <[CollectionUiItem]> collections: [];
+    in property <string> selected_classification_id: "";
+    in property <string> selected_classification_name: "全部影片";
+    in property <int> collection_count: 0;
+    in property <bool> library_loading: false;
+    in property <string> library_error: "";
+    in property <bool> requires_relogin: false;
+    in property <string> session_nas_name: "";
+    in property <string> session_base_url: "";
+    in property <string> session_user: "";
+
+    in property <string> detail_title: "";
+    in property <string> detail_release_year: "";
+    in property <string> detail_video_type: "";
+    in property <string> detail_score: "";
+    in property <string> detail_storyline: "";
+    in property <image> detail_cover_image;
+    in property <bool> detail_has_cover: false;
+    in property <bool> detail_is_movie: false;
+    in property <[SeasonUiItem]> detail_seasons: [];
+    in property <string> selected_episode_id: "";
+    in property <bool> detail_loading: false;
+    in property <string> detail_error: "";
+    in property <bool> playback_loading: false;
+    in property <string> playback_error: "";
+
+    in-out property <string> search_input: "";
+
+    callback sidebar_toggled();
+    callback search_submitted(string);
+    callback select_classification(string);
+    callback refresh_library();
+    callback relogin();
+    callback collection_clicked(string);
+    callback detail_back();
+    callback episode_selected(string);
+    callback play_episode(string);
+
+    background: #101113;
+
+    HorizontalLayout {
+        spacing: 0px;
+
+        if root.sidebar_visible: Rectangle {
+            width: 220px;
+            background: #18191c;
+            border_color: #36383e;
+            border_width: 1px;
+
+            VerticalLayout {
+                padding-top: 22px;
+                padding-right: 12px;
+                padding-bottom: 16px;
+                padding-left: 12px;
+                spacing: 8px;
+
+                HorizontalLayout {
+                    height: 46px;
+                    padding_left: 10px;
+                    padding_right: 10px;
+                    spacing: 10px;
+                    Text {
+                        text: "◉";
+                        color: #5aa7ff;
+                        font_size: 20px;
+                        vertical_alignment: center;
+                    }
+                    VerticalLayout {
+                        spacing: 2px;
+                        Text {
+                            text: "z-video";
+                            color: #f5f5f7;
+                            font_size: 15px;
+                            font_weight: 700;
+                        }
+                        Text {
+                            text: "局域网片库";
+                            color: #b6b7bd;
+                            font_size: 11px;
+                        }
+                    }
+                }
+
+                Text {
+                    text: "片库";
+                    color: #8f9098;
+                    font_size: 11px;
+                    font_weight: 600;
+                }
+
+                for item in root.classifications: Rectangle {
+                    height: 34px;
+                    background: item.id == root.selected_classification_id ? #263a51 : transparent;
+                    border_color: item.id == root.selected_classification_id ? #356b9d : transparent;
+                    border_width: 1px;
+                    border_radius: 8px;
+
+                    HorizontalLayout {
+                        padding_left: 10px;
+                        padding_right: 10px;
+                        spacing: 8px;
+                        Text {
+                            text: item.name;
+                            color: item.id == root.selected_classification_id ? #f5f5f7 : #b6b7bd;
+                            font_size: 13px;
+                            font_weight: item.id == root.selected_classification_id ? 650 : 400;
+                            vertical_alignment: center;
+                            horizontal_stretch: 1;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: item.count;
+                            color: #8f9098;
+                            font_size: 11px;
+                            vertical_alignment: center;
+                        }
+                    }
+
+                    TouchArea {
+                        clicked => { root.select_classification(item.id); }
+                    }
+                }
+
+                Rectangle { vertical_stretch: 1; }
+
+                Rectangle {
+                    height: 1px;
+                    background: #36383e;
+                }
+
+                Text {
+                    text: "局域网 · 已连接";
+                    color: #78c88d;
+                    font_size: 11px;
+                }
+                Text {
+                    text: root.session_nas_name != "" ? root.session_nas_name : root.session_base_url;
+                    color: #8f9098;
+                    font_size: 11px;
+                    overflow: elide;
+                }
+            }
+        }
+
+        VerticalLayout {
+            horizontal_stretch: 1;
+            spacing: 0px;
+
+            Rectangle {
+                height: 64px;
+                background: #18191ccc;
+                border_color: #36383e;
+                border_width: 1px;
+
+                HorizontalLayout {
+                    padding_left: 18px;
+                    padding_right: 18px;
+                    spacing: 14px;
+
+                    Button {
+                        text: root.sidebar_visible ? "隐藏侧栏" : "显示侧栏";
+                        clicked => { root.sidebar_toggled(); }
+                    }
+
+                    VerticalLayout {
+                        spacing: 1px;
+                        Text {
+                            text: root.current_view == "detail" ? "详情" : "片库";
+                            color: #b6b7bd;
+                            font_size: 11px;
+                        }
+                        Text {
+                            text: root.current_view == "detail" ? root.detail_title : root.selected_classification_name;
+                            color: #f5f5f7;
+                            font_size: 16px;
+                            font_weight: 650;
+                            overflow: elide;
+                        }
+                    }
+
+                    Rectangle { horizontal_stretch: 1; }
+
+                    LineEdit {
+                        width: 260px;
+                        text: root.search_input;
+                        placeholder_text: "搜索片名、演员或类型";
+                        edited(value) => { root.search_input = value; }
+                        accepted => { root.search_submitted(root.search_input); }
+                    }
+                }
+            }
+
+            if root.current_view == "library": ScrollView {
+                vertical_stretch: 1;
+
+                VerticalLayout {
+                    padding-top: 30px;
+                    padding-right: 32px;
+                    padding-bottom: 36px;
+                    padding-left: 32px;
+                    spacing: 18px;
+
+                    HorizontalLayout {
+                        spacing: 12px;
+                        Text {
+                            text: "片库";
+                            color: #5aa7ff;
+                            font_size: 12px;
+                            font_weight: 650;
+                        }
+                        Text {
+                            text: root.collection_count + " 个结果";
+                            color: #8f9098;
+                            font_size: 12px;
+                        }
+                        Rectangle { horizontal_stretch: 1; }
+                        Button {
+                            text: "刷新";
+                            clicked => { root.refresh_library(); }
+                        }
+                    }
+
+                    Text {
+                        text: root.selected_classification_name;
+                        color: #f5f5f7;
+                        font_size: 30px;
+                        font_weight: 700;
+                    }
+
+                    if root.library_error != "": Rectangle {
+                        min_height: 48px;
+                        background: #3a2024;
+                        border_color: #9b4a55;
+                        border_width: 1px;
+                        border_radius: 10px;
+                        HorizontalLayout {
+                            padding_left: 14px;
+                            padding_right: 14px;
+                            spacing: 12px;
+                            Text {
+                                text: root.library_error;
+                                color: #ffc6cc;
+                                font_size: 12px;
+                                vertical_alignment: center;
+                                horizontal_stretch: 1;
+                                wrap: word-wrap;
+                            }
+                            Button {
+                                text: "重试";
+                                clicked => { root.refresh_library(); }
+                            }
+                            if root.requires_relogin: Button {
+                                text: "重新登录";
+                                clicked => { root.relogin(); }
+                            }
+                        }
+                    }
+
+                    if root.library_loading: Rectangle {
+                        height: 180px;
+                        background: #18191c;
+                        border_color: #36383e;
+                        border_width: 1px;
+                        border_radius: 12px;
+                        VerticalLayout {
+                            alignment: center;
+                            Text {
+                                text: "正在加载片库";
+                                color: #f5f5f7;
+                                font_size: 16px;
+                                font_weight: 650;
+                                horizontal_alignment: center;
+                            }
+                            Text {
+                                text: "网络任务在后台运行，窗口仍可操作。";
+                                color: #b6b7bd;
+                                font_size: 12px;
+                                horizontal_alignment: center;
+                            }
+                        }
+                    }
+
+                    if !root.library_loading && root.library_error == "" && root.collections.length == 0: Rectangle {
+                        height: 180px;
+                        background: #18191c;
+                        border_color: #36383e;
+                        border_width: 1px;
+                        border_radius: 12px;
+                        VerticalLayout {
+                            alignment: center;
+                            Text {
+                                text: "该分类暂无影视内容";
+                                color: #f5f5f7;
+                                font_size: 16px;
+                                font_weight: 650;
+                                horizontal_alignment: center;
+                            }
+                            Text {
+                                text: "刷新片库或选择其他分类。";
+                                color: #b6b7bd;
+                                font_size: 12px;
+                                horizontal_alignment: center;
+                            }
+                        }
+                    }
+
+                    if !root.library_loading && root.library_error == "" && root.collections.length > 0: GridLayout {
+                        spacing: 14px;
+                        for item[index] in root.collections: Rectangle {
+                            row: index / 7;
+                            col: Math.mod(index, 7);
+                            min_width: 90px;
+                            height: 232px;
+                            background: #18191c;
+                            border_color: #36383e;
+                            border_width: 1px;
+                            border_radius: 10px;
+
+                            VerticalLayout {
+                                padding: 8px;
+                                spacing: 7px;
+                                Rectangle {
+                                    height: 174px;
+                                    background: #24262b;
+                                    border_radius: 7px;
+                                    clip: true;
+                                    if item.has_cover: Image {
+                                        source: item.cover_image;
+                                        width: 100%;
+                                        height: 100%;
+                                        image_fit: cover;
+                                    }
+                                    if !item.has_cover: Text {
+                                        text: "封面";
+                                        color: #8f9098;
+                                        font_size: 12px;
+                                        horizontal_alignment: center;
+                                        vertical_alignment: center;
+                                    }
+                                }
+                                Text {
+                                    text: item.title;
+                                    color: #f5f5f7;
+                                    font_size: 12px;
+                                    font_weight: 650;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: item.release_year + " · " + item.video_type;
+                                    color: #8f9098;
+                                    font_size: 10px;
+                                    overflow: elide;
+                                }
+                            }
+
+                            TouchArea {
+                                clicked => { root.collection_clicked(item.collection_id); }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.current_view == "detail": ScrollView {
+                vertical_stretch: 1;
+                VerticalLayout {
+                    padding-top: 30px;
+                    padding-right: 32px;
+                    padding-bottom: 36px;
+                    padding-left: 32px;
+                    spacing: 20px;
+
+                    HorizontalLayout {
+                        Text {
+                            text: "内容详情";
+                            color: #5aa7ff;
+                            font_size: 12px;
+                            font_weight: 650;
+                        }
+                        Rectangle { horizontal_stretch: 1; }
+                        Button {
+                            text: "返回片库";
+                            clicked => { root.detail_back(); }
+                        }
+                    }
+
+                    if root.detail_loading: Rectangle {
+                        height: 180px;
+                        background: #18191c;
+                        border_color: #36383e;
+                        border_width: 1px;
+                        border_radius: 12px;
+                        Text {
+                            text: "正在加载详情与选集…";
+                            color: #b6b7bd;
+                            horizontal_alignment: center;
+                            vertical_alignment: center;
+                        }
+                    }
+
+                    if !root.detail_loading && root.detail_error != "": Rectangle {
+                        height: 180px;
+                        background: #3a2024;
+                        border_color: #9b4a55;
+                        border_width: 1px;
+                        border_radius: 12px;
+                        Text {
+                            text: root.detail_error;
+                            color: #ffc6cc;
+                            horizontal_alignment: center;
+                            vertical_alignment: center;
+                            wrap: word-wrap;
+                        }
+                    }
+
+                    if !root.detail_loading && root.detail_error == "": Rectangle {
+                        background: #18191c;
+                        border_color: #36383e;
+                        border_width: 1px;
+                        border_radius: 12px;
+
+                        HorizontalLayout {
+                            padding: 18px;
+                            spacing: 22px;
+
+                            Rectangle {
+                                width: 230px;
+                                height: 330px;
+                                background: #24262b;
+                                border_radius: 9px;
+                                clip: true;
+                                if root.detail_has_cover: Image {
+                                    source: root.detail_cover_image;
+                                    width: 100%;
+                                    height: 100%;
+                                    image_fit: cover;
+                                }
+                                if !root.detail_has_cover: Text {
+                                    text: "封面暂不可用";
+                                    color: #8f9098;
+                                    horizontal_alignment: center;
+                                    vertical_alignment: center;
+                                }
+                            }
+
+                            VerticalLayout {
+                                spacing: 10px;
+                                horizontal_stretch: 1;
+                                Text {
+                                    text: root.detail_video_type;
+                                    color: #5aa7ff;
+                                    font_size: 12px;
+                                }
+                                Text {
+                                    text: root.detail_title;
+                                    color: #f5f5f7;
+                                    font_size: 34px;
+                                    font_weight: 700;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: root.detail_release_year + " · " + root.detail_score;
+                                    color: #b6b7bd;
+                                    font_size: 12px;
+                                }
+                                Text {
+                                    text: root.detail_storyline != "" ? root.detail_storyline : "暂无剧情简介";
+                                    color: #b6b7bd;
+                                    font_size: 13px;
+                                    wrap: word-wrap;
+                                    vertical_stretch: 1;
+                                }
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    Button {
+                                        text: root.detail_is_movie ? "播放正片" : "播放选中集";
+                                        primary: true;
+                                        clicked => { root.play_episode(root.selected_episode_id); }
+                                    }
+                                    if root.playback_loading: Text {
+                                        text: "正在准备媒体流…";
+                                        color: #b6b7bd;
+                                        vertical_alignment: center;
+                                    }
+                                }
+                                if root.playback_error != "": Text {
+                                    text: root.playback_error;
+                                    color: #ffc6cc;
+                                    font_size: 12px;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
+                    }
+
+                    if !root.detail_loading && root.detail_error == "": Text {
+                        text: root.detail_is_movie ? "播放入口" : "选集";
+                        color: #f5f5f7;
+                        font_size: 16px;
+                        font_weight: 650;
+                    }
+
+                    for season in root.detail_seasons: Rectangle {
+                        background: #18191c;
+                        border_color: #36383e;
+                        border_width: 1px;
+                        border_radius: 10px;
+                        VerticalLayout {
+                            padding: 12px;
+                            spacing: 7px;
+                            Text {
+                                text: season.title;
+                                color: #f5f5f7;
+                                font_size: 13px;
+                                font_weight: 650;
+                            }
+                            for episode in season.episodes: Rectangle {
+                                height: 40px;
+                                background: episode.is_selected ? #263a51 : #202125;
+                                border_color: episode.is_selected ? #356b9d : transparent;
+                                border_width: 1px;
+                                border_radius: 7px;
+                                HorizontalLayout {
+                                    padding_left: 10px;
+                                    padding_right: 10px;
+                                    spacing: 10px;
+                                    Text {
+                                        text: episode.episode_number > 0 ? "第" + episode.episode_number + "集" : "正片";
+                                        color: #f5f5f7;
+                                        font_size: 12px;
+                                        vertical_alignment: center;
+                                    }
+                                    Text {
+                                        text: episode.title;
+                                        color: #b6b7bd;
+                                        font_size: 12px;
+                                        horizontal_stretch: 1;
+                                        vertical_alignment: center;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        text: episode.duration;
+                                        color: #8f9098;
+                                        font_size: 11px;
+                                        vertical_alignment: center;
+                                    }
+                                }
+                                TouchArea {
+                                    clicked => { root.episode_selected(episode.episode_id); }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+}
+
 export component AppWindow inherits Window {
     title: app_title;
     min_width: 900px;
@@ -49,6 +617,8 @@ export component AppWindow inherits Window {
     // View state
     in-out property <bool> is_logged_in: false;
     in-out property <string> current_view: "library"; // "library" | "detail" | "player"
+    in-out property <bool> apple_sidebar_visible: true;
+    in-out property <string> apple_search_input: "";
 
     // Login Form State
     in-out property <string> server_url_input: "192.168.1.100";
@@ -536,7 +1106,7 @@ export component AppWindow inherits Window {
     // 2. MAIN LOGGED-IN WORKSPACE
     // ==========================================
     VerticalLayout {
-        visible: root.is_logged_in;
+        visible: root.is_logged_in && root.current_view == "player";
         padding: 16px;
         spacing: 12px;
 
@@ -1434,5 +2004,51 @@ export component AppWindow inherits Window {
                 }
             }
         }
+    }
+
+    AppleWorkspace {
+        visible: root.is_logged_in && root.current_view != "player";
+        sidebar_visible: root.apple_sidebar_visible;
+        current_view: root.current_view;
+        classifications: root.classifications;
+        collections: root.collections;
+        selected_classification_id: root.selected_classification_id;
+        selected_classification_name: root.selected_classification_name;
+        collection_count: root.collection_count;
+        library_loading: root.library_loading;
+        library_error: root.library_error;
+        requires_relogin: root.requires_relogin;
+        session_nas_name: root.session_nas_name;
+        session_base_url: root.session_base_url;
+        session_user: root.session_user;
+        detail_title: root.detail_title;
+        detail_release_year: root.detail_release_year;
+        detail_video_type: root.detail_video_type;
+        detail_score: root.detail_score;
+        detail_storyline: root.detail_storyline;
+        detail_cover_image: root.detail_cover_image;
+        detail_has_cover: root.detail_has_cover;
+        detail_is_movie: root.detail_is_movie;
+        detail_seasons: root.detail_seasons;
+        selected_episode_id: root.selected_episode_id;
+        detail_loading: root.detail_loading;
+        detail_error: root.detail_error;
+        playback_loading: root.playback_loading;
+        playback_error: root.playback_error;
+        search_input: root.apple_search_input;
+
+        sidebar-toggled => {
+            root.apple_sidebar_visible = !root.apple_sidebar_visible;
+        }
+        search-submitted(query) => {
+            root.status_message = query == "" ? "请输入搜索内容。" : "搜索入口已准备，等待 Rust 查询接入：" + query;
+        }
+        select-classification(id) => { root.select_classification(id); }
+        refresh-library => { root.refresh_library_clicked(); }
+        relogin => { root.relogin_requested(); }
+        collection-clicked(id) => { root.collection_clicked(id); }
+        detail-back => { root.detail_back_clicked(); }
+        episode-selected(id) => { root.episode_selected(id); }
+        play-episode(id) => { root.play_episode_clicked(id); }
     }
 }

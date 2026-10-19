@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="z-video 低保真片库结构探索，只显示灰阶占位内容。" />
+    <title>z-video · 片库结构探索</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="wireframe-window" id="wireframeWindow">
+      <header class="window-bar" aria-label="应用窗口标题栏">
+        <div class="window-title-group">
+          <span class="window-title">z-video / 片库结构</span>
+          <span class="wire-label">低保真探索</span>
+        </div>
+        <div class="window-bar-actions">
+          <button class="text-control" type="button" data-action="toggle-sidebar" aria-controls="sidebar" aria-pressed="false">
+            侧边栏
+          </button>
+          <span class="window-state">窗口基准 1440 × 900</span>
+        </div>
+      </header>
+
+      <div class="app-layout" id="appLayout">
+        <aside class="sidebar" id="sidebar" aria-label="片库导航">
+          <div class="sidebar-heading">
+            <div class="app-placeholder" aria-hidden="true">APP</div>
+            <div>
+              <strong>片库</strong>
+              <span>导航结构占位</span>
+            </div>
+          </div>
+
+          <nav class="sidebar-nav" aria-label="主要片库入口">
+            <p class="nav-heading">片库</p>
+            <button class="nav-item is-selected" type="button" data-action="select-category" data-category="all" aria-current="page">
+              <span class="nav-glyph" aria-hidden="true">□</span>
+              <span>全部影片</span>
+              <span class="nav-count">36</span>
+            </button>
+            <button class="nav-item" type="button" data-action="select-category" data-category="movie">
+              <span class="nav-glyph" aria-hidden="true">□</span>
+              <span>电影</span>
+              <span class="nav-count">24</span>
+            </button>
+            <button class="nav-item" type="button" data-action="select-category" data-category="series">
+              <span class="nav-glyph" aria-hidden="true">□</span>
+              <span>剧集</span>
+              <span class="nav-count">12</span>
+            </button>
+
+            <p class="nav-heading nav-heading-secondary">浏览</p>
+            <button class="nav-item" type="button" data-action="select-category" data-category="recent">
+              <span class="nav-glyph" aria-hidden="true">□</span>
+              <span>最近添加</span>
+              <span class="nav-count">6</span>
+            </button>
+            <button class="nav-item" type="button" data-action="select-category" data-category="favorite">
+              <span class="nav-glyph" aria-hidden="true">□</span>
+              <span>我的收藏</span>
+              <span class="nav-count">4</span>
+            </button>
+            <button class="nav-item" type="button" data-action="select-category" data-category="resume">
+              <span class="nav-glyph" aria-hidden="true">□</span>
+              <span>继续观看</span>
+              <span class="nav-count">2</span>
+            </button>
+          </nav>
+
+          <div class="sidebar-footer">
+            <div class="connection-placeholder" role="status" aria-live="polite">
+              <span class="status-square" aria-hidden="true"></span>
+              <span>连接状态占位</span>
+            </div>
+            <button class="text-control" type="button" data-action="show-structure-note">结构说明</button>
+          </div>
+        </aside>
+
+        <main class="main-panel" id="mainPanel" tabindex="-1">
+          <header class="toolbar" aria-label="片库工具栏">
+            <div class="toolbar-leading">
+              <button class="back-control" id="backButton" type="button" data-action="go-back" hidden aria-label="返回片库">
+                返回
+              </button>
+              <div class="toolbar-heading">
+                <p id="toolbarContext">片库</p>
+                <h1 id="toolbarTitle">全部影片</h1>
+              </div>
+            </div>
+            <div class="toolbar-actions">
+              <form class="search-form" id="searchForm" role="search">
+                <label class="sr-only" for="searchInput">搜索片名或演员</label>
+                <span class="search-prefix" aria-hidden="true">搜索</span>
+                <input id="searchInput" type="search" autocomplete="off" placeholder="片名或演员" />
+                <span class="key-hint">Ctrl/Cmd+K</span>
+                <button class="clear-control" id="clearSearch" type="button" data-action="clear-search" hidden>清空</button>
+              </form>
+              <button class="text-control" type="button" data-action="toggle-filters" aria-expanded="false" aria-controls="filterBar">
+                筛选
+              </button>
+              <button class="text-control" type="button" data-action="toggle-sidebar" aria-controls="sidebar" aria-pressed="false">
+                侧边栏
+              </button>
+            </div>
+          </header>
+
+          <div class="content-scroll" id="contentScroll" tabindex="-1">
+            <div id="content" class="content" aria-live="polite"></div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <p class="sr-only" id="liveRegion" role="status" aria-live="polite"></p>
+    <noscript>
+      <p class="noscript-message">此线框需要启用 JavaScript 才能切换片库、搜索和详情状态。</p>
+    </noscript>
+    <script src="app.js" defer></script>
+  </body>
+</html>
