@@ -57,6 +57,8 @@ export struct SeasonUiItem {
 export global ShellTheme {
     out property <color> canvas: #101113;
     out property <color> surface: #18191c;
+    // The Skia candidate applies backdrop blur only to these low-frequency
+    // functional layers; cards, grids, detail content and video stay opaque.
     out property <color> sidebar_surface: #18191ccc;
     out property <color> toolbar_surface: #18191ccc;
     out property <color> surface_subtle: #202125;
@@ -629,6 +631,8 @@ component AppleWorkspace inherits Rectangle {
         if root.sidebar_visible: Rectangle {
             width: ShellTheme.sidebar_width;
             background: ShellTheme.sidebar_surface;
+            // Verified on the Windows Skia backend at 125% DPI.
+            backdrop-blur: 18px;
             border_color: ShellTheme.separator;
             border_width: 1px;
 
@@ -722,6 +726,8 @@ component AppleWorkspace inherits Rectangle {
                     width: parent.width;
                     height: parent.height;
                     background: ShellTheme.toolbar_surface;
+                    // Keep the glass effect on the toolbar only.
+                    backdrop-blur: 18px;
                     border_color: ShellTheme.separator;
                     border_width: 1px;
 
