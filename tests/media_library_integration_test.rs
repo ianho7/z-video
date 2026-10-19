@@ -1,9 +1,10 @@
+use slint::{Model, Timer};
 use std::sync::Arc;
 use std::time::Duration;
-use slint::{Model, Timer};
 use z_video::app::AppCoordinator;
 use z_video::media::image_cache::{decode_to_slint_image, ImageCache};
 use z_video::nas::client::MockNasClient;
+use z_video::nas::models::NasError;
 use z_video::player::MockPlayer;
 use z_video::storage::credentials::MemoryCredentialStore;
 
@@ -112,8 +113,11 @@ fn test_media_library_integration_comprehensive_suite() {
     // -------------------------------------------------------------
     // Scenario 4: Error handling and recovery
     // -------------------------------------------------------------
-    // Trigger network error directly on empty/broken classification
+    // An unknown classification must surface the NAS business error instead of
+    // looking like a successful empty page.
     let err = coordinator.load_collections_sync("non_existent_or_broken");
-    // MockNasClient returns page with empty or fallback
-    assert!(err.is_ok());
+    assert!(matches!(
+        err,
+        Err(NasError::Business { code, .. }) if code == "T000001"
+    ));
 }

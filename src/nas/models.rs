@@ -428,7 +428,7 @@ fn is_movie_type(video_type: &str) -> bool {
 /// Paginated collection list response data from `POST /zvideo/video/v2/list`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct CollectionPage {
-    #[serde(default)]
+    #[serde(default, alias = "collection_count", alias = "collectionCount")]
     pub count: usize,
     #[serde(default)]
     pub classification_name: Option<String>,

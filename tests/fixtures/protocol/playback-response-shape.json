@@ -1,0 +1,49 @@
+{
+  "fixture_version": 1,
+  "name": "playback-response-shape",
+  "evidence": [
+    {
+      "level": "static",
+      "source": "reference/player-api.md",
+      "scope": "静态播放地址参数和响应消费字段"
+    },
+    {
+      "level": "runtime",
+      "source": "reference/runtime-desktop-app-2026-10-16.md",
+      "scope": "官方客户端的 streams 与动态本地代理观察"
+    }
+  ],
+  "endpoints": [
+    { "method": "GET", "path": "/transcode/play", "purpose": "static-playback-candidate" },
+    { "method": "GET", "path": "/transcode/video/streams", "purpose": "official-runtime-stream-preparation" }
+  ],
+  "variants": {
+    "success": {
+      "http_status_type": "integer",
+      "code_types": ["integer", "string"],
+      "data": {
+        "presence": "required",
+        "type": "object",
+        "fields": {
+          "uri": { "types": ["string"], "value_omitted": true },
+          "play_format_list": { "types": ["array"], "value_omitted": true },
+          "current_fmt": { "types": ["string", "object", "null"], "value_omitted": true },
+          "resolution": { "types": ["string", "object", "null"], "value_omitted": true },
+          "audio_list": { "types": ["array"], "value_omitted": true },
+          "subtitle_list": { "types": ["array"], "value_omitted": true }
+        }
+      }
+    },
+    "http_200_business_error": {
+      "http_status_type": "integer",
+      "code_types": ["string", "integer"],
+      "data": { "presence": "absent_or_null", "type": "null_or_absent" },
+      "outcome": "business_error_not_empty_stream"
+    }
+  },
+  "safety": {
+    "values_omitted": true,
+    "raw_payload_included": false,
+    "note": "shape only; playback address and private media path are not stored"
+  }
+}

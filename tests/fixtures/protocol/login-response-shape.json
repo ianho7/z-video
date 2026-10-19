@@ -1,0 +1,50 @@
+{
+  "fixture_version": 1,
+  "name": "login-response-shape",
+  "evidence": [
+    {
+      "level": "static",
+      "source": "reference/reverse-engineering/zspace-windows-2.45-core-path.md",
+      "scope": "登录、公钥、MFA proof 和会话身份字段的静态调用边界"
+    },
+    {
+      "level": "runtime",
+      "source": "reference/runtime-login-play-2026-10-16.md",
+      "scope": "官方 Web 登录后进入极影视的运行时链路"
+    }
+  ],
+  "endpoints": [
+    { "method": "GET", "path": "/key/pub", "purpose": "public-key-and-sign" },
+    { "method": "POST", "path": "/auth/login", "purpose": "session-login" },
+    { "method": "GET", "path": "/zhelper/state", "purpose": "nas-identity-refinement" },
+    { "method": "POST", "path": "/sms/ucheck", "purpose": "opaque-mfa-proof" }
+  ],
+  "variants": {
+    "success": {
+      "http_status_type": "integer",
+      "code_types": ["integer", "string"],
+      "data": {
+        "presence": "required",
+        "type": "object",
+        "fields": {
+          "key": { "types": ["string"], "value_omitted": true },
+          "sign": { "types": ["string", "null"], "value_omitted": true },
+          "token": { "types": ["string"], "value_omitted": true },
+          "is_local": { "types": ["boolean", "integer_0_or_1"], "value_omitted": true },
+          "nas_id": { "types": ["string", "null"], "value_omitted": true },
+          "nasid": { "types": ["string", "null"], "value_omitted": true }
+        }
+      }
+    },
+    "business_error": {
+      "http_status_type": "integer",
+      "code_types": ["integer", "string"],
+      "data": { "presence": "absent_or_null", "type": "null_or_absent" }
+    }
+  },
+  "safety": {
+    "values_omitted": true,
+    "raw_payload_included": false,
+    "note": "shape only; no credential or session value is stored"
+  }
+}

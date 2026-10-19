@@ -2174,7 +2174,7 @@ impl NasClient for MockNasClient {
     fn get_collections(
         &self,
         session: &NasSession,
-        _classification_id: &str,
+        classification_id: &str,
         start: usize,
         limit: usize,
     ) -> Result<CollectionPage, NasError> {
@@ -2183,6 +2183,16 @@ impl NasClient for MockNasClient {
         }
         if session.token().is_none() {
             return Err(NasError::Unauthorized);
+        }
+        if !self
+            .mock_classifications
+            .iter()
+            .any(|item| item.id == classification_id && item.is_visible())
+        {
+            return Err(NasError::Business {
+                code: "T000001".to_string(),
+                message: "分类参数无效".to_string(),
+            });
         }
 
         let total = self.mock_collections.len();
@@ -2727,6 +2737,32 @@ mod tests {
         assert_eq!(series.seasons.len(), 2);
         assert_eq!(series.seasons[0].episodes.len(), 2);
         assert_eq!(series.seasons[1].episodes[0].title, "第二季·第1集");
+    }
+
+    #[test]
+    fn mock_client_rejects_unknown_classification_id_in_collection_owner() {
+        let client = MockNasClient::new();
+        let session = NasSession::new("http://192.168.1.50:5055".to_string());
+        session.set_authenticated(
+            "mock-token".to_string(),
+            "admin".to_string(),
+            None,
+            None,
+            None,
+        );
+
+        let valid_page = client
+            .get_collections(&session, "1", 1, 50)
+            .expect("known classification should keep the happy path");
+        assert_eq!(valid_page.list.len(), 4);
+
+        let error = client
+            .get_collections(&session, "not-a-real-category", 1, 50)
+            .expect_err("unknown classification must not reuse the success page");
+        assert!(matches!(
+            error,
+            NasError::Business { code, .. } if code == "T000001"
+        ));
     }
 
     #[test]

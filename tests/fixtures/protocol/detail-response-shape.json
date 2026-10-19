@@ -1,0 +1,57 @@
+{
+  "fixture_version": 1,
+  "name": "detail-response-shape",
+  "evidence": [
+    {
+      "level": "static",
+      "source": "reference/player-api.md",
+      "scope": "合集详情和剧集字段"
+    },
+    {
+      "level": "runtime",
+      "source": "reference/runtime-login-play-2026-10-16.md",
+      "scope": "登录会话中详情和剧集请求"
+    }
+  ],
+  "endpoints": [
+    { "method": "POST", "path": "/zvideo/collection/v2/info", "purpose": "collection-detail" }
+  ],
+  "variants": {
+    "success": {
+      "http_status_type": "integer",
+      "code_types": ["integer", "string"],
+      "data": {
+        "presence": "required",
+        "type": "object",
+        "fields": {
+          "collection_id": { "types": ["string"], "value_omitted": true },
+          "title": { "types": ["string"], "value_omitted": true },
+          "release_year": { "types": ["integer", "string"], "value_omitted": true },
+          "score": { "types": ["number", "string", "null"], "value_omitted": true },
+          "rating": { "types": ["number", "string", "null"], "value_omitted": true },
+          "list": { "types": ["array"], "value_omitted": true },
+          "version_list": { "types": ["array"], "value_omitted": true },
+          "video_list": { "types": ["array"], "value_omitted": true },
+          "episodes": { "types": ["array"], "value_omitted": true }
+        },
+        "episode_fields": {
+          "video_id": { "types": ["string"], "value_omitted": true },
+          "episode": { "types": ["integer", "string"], "value_omitted": true },
+          "season": { "types": ["integer", "string"], "value_omitted": true },
+          "title": { "types": ["string"], "value_omitted": true },
+          "file_path": { "types": ["string"], "value_omitted": true }
+        }
+      }
+    },
+    "business_error": {
+      "http_status_type": "integer",
+      "code_types": ["integer", "string"],
+      "data": { "presence": "absent_or_null", "type": "null_or_absent" }
+    }
+  },
+  "safety": {
+    "values_omitted": true,
+    "raw_payload_included": false,
+    "note": "shape only; episode paths and private metadata are not stored"
+  }
+}
