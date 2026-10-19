@@ -1,4 +1,5 @@
 pub mod app;
+pub mod continue_watching;
 pub mod diagnostics;
 pub mod media;
 pub mod metadata;
@@ -9,6 +10,7 @@ pub mod playback;
 pub mod storage;
 
 pub use app::AppCoordinator;
+pub use continue_watching::{build_continue_watching_item, ContinueWatchingItem};
 pub use media::{ImageCache, ImageRequestGate};
 pub use nas::{
     ApiResponse, AuthError, ClassificationItem, CloudPubKeyData, CollectionDetail, CollectionItem,
