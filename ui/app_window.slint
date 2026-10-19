@@ -903,7 +903,12 @@ component AppleWorkspace inherits Rectangle {
                     );
                 }
 
+                // Scroll content must pack to its preferred logical height;
+                // the grid owns its row heights and must not absorb the
+                // viewport's remaining height under the default stretch
+                // alignment.
                 VerticalLayout {
+                    alignment: start;
                     padding-top: 30px;
                     padding-right: 32px;
                     padding-bottom: 36px;
@@ -931,7 +936,13 @@ component AppleWorkspace inherits Rectangle {
                         }
                     }
 
+                    // Keep filter/sort controls at the logical token height.
+                    // Without an explicit non-stretching row, the content
+                    // layout can distribute the large-window free height to
+                    // this row and push the poster grid to the bottom.
                     HorizontalLayout {
+                        height: ShellTheme.control_height;
+                        vertical-stretch: 0;
                         spacing: 6px;
 
                         Text {
@@ -941,16 +952,22 @@ component AppleWorkspace inherits Rectangle {
                             vertical_alignment: center;
                         }
                         Button {
+                            height: ShellTheme.control_height;
+                            vertical-stretch: 0;
                             text: "全部";
                             primary: root.media_type_filter == "all";
                             clicked => { root.filter_changed("all"); }
                         }
                         Button {
+                            height: ShellTheme.control_height;
+                            vertical-stretch: 0;
                             text: "电影";
                             primary: root.media_type_filter == "movie";
                             clicked => { root.filter_changed("movie"); }
                         }
                         Button {
+                            height: ShellTheme.control_height;
+                            vertical-stretch: 0;
                             text: "剧集";
                             primary: root.media_type_filter == "tv";
                             clicked => { root.filter_changed("tv"); }
@@ -963,27 +980,37 @@ component AppleWorkspace inherits Rectangle {
                             vertical_alignment: center;
                         }
                         Button {
+                            height: ShellTheme.control_height;
+                            vertical-stretch: 0;
                             text: "默认";
                             primary: root.sort_order == "default";
                             clicked => { root.sort_changed("default"); }
                         }
                         Button {
+                            height: ShellTheme.control_height;
+                            vertical-stretch: 0;
                             text: "片名 A-Z";
                             primary: root.sort_order == "title_asc";
                             clicked => { root.sort_changed("title_asc"); }
                         }
                         Button {
+                            height: ShellTheme.control_height;
+                            vertical-stretch: 0;
                             text: "评分↓";
                             primary: root.sort_order == "score_desc";
                             clicked => { root.sort_changed("score_desc"); }
                         }
                         Button {
+                            height: ShellTheme.control_height;
+                            vertical-stretch: 0;
                             text: "年份↓";
                             primary: root.sort_order == "release_year_desc";
                             clicked => { root.sort_changed("release_year_desc"); }
                         }
                         Rectangle { horizontal_stretch: 1; }
                         Button {
+                            height: ShellTheme.control_height;
+                            vertical-stretch: 0;
                             text: "清除条件";
                             clicked => { root.clear_query(); }
                         }
@@ -1335,6 +1362,7 @@ component AppleWorkspace inherits Rectangle {
                         min_width: 0px;
                         preferred_width: 0px;
                         horizontal_stretch: 1;
+                        vertical_stretch: 0;
                         spacing: 14px;
 
                         for item[index] in root.collections: PosterCard {
