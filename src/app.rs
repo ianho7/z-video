@@ -41,6 +41,8 @@ pub struct AppCoordinator {
     discovery_cancellation: Arc<Mutex<Option<DiscoveryCancellation>>>,
     image_cache: ImageCache,
     image_request_gate: ImageRequestGate,
+    loaded_collections: Arc<Mutex<Vec<CollectionItem>>>,
+    search_generation: Arc<AtomicU64>,
     detail_state: Arc<Mutex<Option<CollectionDetail>>>,
     detail_request_generation: Arc<AtomicU64>,
     playback_request_generation: Arc<AtomicU64>,
@@ -66,6 +68,42 @@ struct ProgressReportGate {
 struct PendingResume {
     request_generation: u64,
     position_secs: f64,
+}
+
+const SEARCH_DEBOUNCE: Duration = Duration::from_millis(180);
+
+fn collection_ui_items(items: &[CollectionItem]) -> Vec<CollectionUiItem> {
+    items
+        .iter()
+        .map(|item| CollectionUiItem {
+            collection_id: item.collection_id.clone().into(),
+            title: item.title.clone().into(),
+            release_year: item.release_year.clone().into(),
+            video_type: item.display_type().to_string().into(),
+            score: item.display_score().into(),
+            cover_image: slint::Image::default(),
+            has_cover: false,
+        })
+        .collect()
+}
+
+fn collection_matches_query(item: &CollectionItem, query: &str) -> bool {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return true;
+    }
+
+    [
+        item.title.as_str(),
+        item.video_type.as_str(),
+        item.display_type(),
+        item.release_year.as_str(),
+        item.score.as_deref().unwrap_or_default(),
+        item.rating.as_deref().unwrap_or_default(),
+        item.storyline.as_deref().unwrap_or_default(),
+    ]
+    .iter()
+    .any(|value| value.to_lowercase().contains(&query))
 }
 
 impl ProgressReportGate {
@@ -126,6 +164,8 @@ impl AppCoordinator {
         let startup_restore_pending = Arc::new(AtomicBool::new(false));
         let image_cache =
             ImageCache::with_disk_cache(default_image_cache_dir(), 100, 64 * 1024 * 1024);
+        let loaded_collections = Arc::new(Mutex::new(Vec::new()));
+        let search_generation = Arc::new(AtomicU64::new(0));
         let detail_state = Arc::new(Mutex::new(None));
 
         let coordinator = Self {
@@ -138,6 +178,8 @@ impl AppCoordinator {
             discovery_cancellation: Arc::new(Mutex::new(None)),
             image_cache,
             image_request_gate: ImageRequestGate::new(),
+            loaded_collections,
+            search_generation,
             detail_state,
             detail_request_generation: Arc::new(AtomicU64::new(0)),
             playback_request_generation: Arc::new(AtomicU64::new(0)),
@@ -318,6 +360,8 @@ impl AppCoordinator {
         self.playback_request_generation
             .fetch_add(1, Ordering::SeqCst);
         self.image_request_gate.cancel();
+        self.search_generation.fetch_add(1, Ordering::SeqCst);
+        self.loaded_collections.lock().unwrap().clear();
         *self.detail_state.lock().unwrap() = None;
         *self.playback_session.lock().unwrap() = None;
 
@@ -327,6 +371,12 @@ impl AppCoordinator {
         self.ui
             .set_classifications(ModelRc::new(VecModel::default()));
         self.ui.set_collections(ModelRc::new(VecModel::default()));
+        self.ui.set_collection_count(0);
+        self.ui.set_apple_search_input("".into());
+        self.ui.set_search_active(false);
+        self.ui.set_search_loading(false);
+        self.ui.set_search_error("".into());
+        self.ui.set_search_scope("当前已加载范围：0 部".into());
         self.ui.set_playback_loading(false);
         self.ui.set_playback_error("".into());
         self.ui.set_requires_relogin(false);
@@ -472,6 +522,13 @@ impl AppCoordinator {
     /// Synchronously loads classifications from the NAS client into UI state.
     pub fn load_classifications_sync(&self) -> Result<(), NasError> {
         let operation = diagnostics::start_event("ui", "library.refresh");
+        self.search_generation.fetch_add(1, Ordering::SeqCst);
+        self.loaded_collections.lock().unwrap().clear();
+        self.ui.set_apple_search_input("".into());
+        self.ui.set_search_active(false);
+        self.ui.set_search_loading(false);
+        self.ui.set_search_error("".into());
+        self.ui.set_search_scope("当前已加载范围：0 部".into());
         self.ui.set_library_loading(true);
         self.ui.set_library_error("".into());
         self.ui.set_requires_relogin(false);
@@ -535,6 +592,15 @@ impl AppCoordinator {
     pub fn load_collections_sync(&self, classification_id: &str) -> Result<(), NasError> {
         let operation = diagnostics::start_event("ui", "library.collections");
         let request_id = self.image_request_gate.begin();
+        self.search_generation.fetch_add(1, Ordering::SeqCst);
+        self.loaded_collections.lock().unwrap().clear();
+        self.ui.set_apple_search_input("".into());
+        self.ui.set_search_active(false);
+        self.ui.set_search_loading(false);
+        self.ui.set_search_error("".into());
+        self.ui.set_search_scope("当前已加载范围：0 部".into());
+        self.ui.set_collection_count(0);
+        self.ui.set_collections(ModelRc::new(VecModel::default()));
         self.ui.set_library_loading(true);
         self.ui.set_library_error("".into());
         self.ui.set_requires_relogin(false);
@@ -550,21 +616,12 @@ impl AppCoordinator {
                     return Ok(());
                 }
                 let count = page.list.len();
+                *self.loaded_collections.lock().unwrap() = page.list.clone();
                 self.ui.set_collection_count(count as i32);
+                self.ui
+                    .set_search_scope(format!("当前已加载范围：{} 部", count).into());
 
-                let ui_items: Vec<CollectionUiItem> = page
-                    .list
-                    .iter()
-                    .map(|item| CollectionUiItem {
-                        collection_id: item.collection_id.clone().into(),
-                        title: item.title.clone().into(),
-                        release_year: item.release_year.clone().into(),
-                        video_type: item.display_type().to_string().into(),
-                        score: item.display_score().into(),
-                        cover_image: slint::Image::default(),
-                        has_cover: false,
-                    })
-                    .collect();
+                let ui_items = collection_ui_items(&page.list);
 
                 let model = Rc::new(VecModel::from(ui_items));
                 self.ui.set_collections(ModelRc::from(model));
@@ -1003,6 +1060,158 @@ impl AppCoordinator {
         }
     }
 
+    fn restore_loaded_collections(
+        ui: &AppWindow,
+        items: Vec<CollectionItem>,
+        nas_client: &Arc<dyn NasClient>,
+        session: &Arc<NasSession>,
+        image_cache: &ImageCache,
+        image_request_gate: &ImageRequestGate,
+    ) {
+        let count = items.len();
+        let request_id = image_request_gate.begin();
+        ui.set_collections(ModelRc::from(Rc::new(VecModel::from(collection_ui_items(&items)))));
+        ui.set_collection_count(count as i32);
+        ui.set_search_active(false);
+        ui.set_search_loading(false);
+        ui.set_search_error("".into());
+        ui.set_search_scope(format!("当前已加载范围：{} 部", count).into());
+        AppCoordinator::spawn_poster_fetching(
+            ui.as_weak(),
+            Arc::clone(nas_client),
+            Arc::clone(session),
+            image_cache.clone(),
+            image_request_gate.clone(),
+            request_id,
+            items,
+        );
+    }
+
+    fn start_local_collection_search(
+        ui_weak: slint::Weak<AppWindow>,
+        snapshot: Vec<CollectionItem>,
+        query: String,
+        source_count: usize,
+        generation: u64,
+        generation_gate: Arc<AtomicU64>,
+        image_cache: ImageCache,
+        image_request_gate: ImageRequestGate,
+        nas_client: Arc<dyn NasClient>,
+        session: Arc<NasSession>,
+        delayed: bool,
+    ) {
+        let execute = move || {
+            if generation_gate.load(Ordering::SeqCst) != generation {
+                return;
+            }
+
+            let ui_weak = ui_weak.clone();
+            let generation_gate = Arc::clone(&generation_gate);
+            let image_cache = image_cache.clone();
+            let image_request_gate = image_request_gate.clone();
+            let nas_client = Arc::clone(&nas_client);
+            let session = Arc::clone(&session);
+            let query_for_thread = query.clone();
+            let query_for_ui = query_for_thread.clone();
+
+            std::thread::spawn(move || {
+                let matches: Vec<CollectionItem> = snapshot
+                    .into_iter()
+                    .filter(|item| collection_matches_query(item, &query_for_thread))
+                    .collect();
+
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(ui) = ui_weak.upgrade() else { return };
+                    if generation_gate.load(Ordering::SeqCst) != generation
+                        || ui.get_apple_search_input().as_str() != query_for_ui
+                    {
+                        return;
+                    }
+
+                    let count = matches.len();
+                    let request_id = image_request_gate.begin();
+                    ui.set_collections(ModelRc::from(Rc::new(VecModel::from(
+                        collection_ui_items(&matches),
+                    ))));
+                    ui.set_collection_count(count as i32);
+                    ui.set_search_active(true);
+                    ui.set_search_loading(false);
+                    ui.set_search_error("".into());
+                    ui.set_search_scope(
+                        format!("仅搜索当前已加载 {} 部 · 匹配 {} 部", source_count, count).into(),
+                    );
+                    ui.set_status_message(
+                        format!("搜索完成：已加载范围内匹配 {} 部影视作品。", count).into(),
+                    );
+                    AppCoordinator::spawn_poster_fetching(
+                        ui.as_weak(),
+                        nas_client,
+                        session,
+                        image_cache,
+                        image_request_gate,
+                        request_id,
+                        matches,
+                    );
+                });
+            });
+        };
+
+        if delayed {
+            slint::Timer::single_shot(SEARCH_DEBOUNCE, execute);
+        } else {
+            execute();
+        }
+    }
+
+    fn handle_local_search_input(
+        ui: &AppWindow,
+        query: String,
+        delayed: bool,
+        loaded_collections: &Arc<Mutex<Vec<CollectionItem>>>,
+        search_generation: &Arc<AtomicU64>,
+        image_cache: &ImageCache,
+        image_request_gate: &ImageRequestGate,
+        nas_client: &Arc<dyn NasClient>,
+        session: &Arc<NasSession>,
+    ) {
+        let generation = search_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let query = query.trim().to_string();
+        ui.set_search_error("".into());
+
+        let snapshot = loaded_collections.lock().unwrap().clone();
+        if query.is_empty() {
+            AppCoordinator::restore_loaded_collections(
+                ui,
+                snapshot,
+                nas_client,
+                session,
+                image_cache,
+                image_request_gate,
+            );
+            ui.set_status_message("已清空搜索，恢复当前已加载片库。".into());
+            return;
+        }
+
+        let source_count = snapshot.len();
+        ui.set_search_active(true);
+        ui.set_search_loading(true);
+        ui.set_search_scope(format!("仅搜索当前已加载 {} 部", source_count).into());
+        ui.set_status_message("正在等待搜索输入稳定...".into());
+        AppCoordinator::start_local_collection_search(
+            ui.as_weak(),
+            snapshot,
+            query,
+            source_count,
+            generation,
+            Arc::clone(search_generation),
+            image_cache.clone(),
+            image_request_gate.clone(),
+            Arc::clone(nas_client),
+            Arc::clone(session),
+            delayed,
+        );
+    }
+
     /// Spawns background threads to asynchronously fetch missing poster images.
     fn spawn_poster_fetching(
         ui_weak: slint::Weak<AppWindow>,
@@ -1107,10 +1316,96 @@ impl AppCoordinator {
         let session = Arc::clone(&self.session);
         let image_cache = self.image_cache.clone();
         let image_request_gate = self.image_request_gate.clone();
+        let loaded_collections = Arc::clone(&self.loaded_collections);
+        let search_generation = Arc::clone(&self.search_generation);
 
+        let ui_weak_search = self.ui.as_weak();
+        let loaded_collections_for_search = Arc::clone(&loaded_collections);
+        let search_generation_for_search = Arc::clone(&search_generation);
+        let image_cache_for_search = image_cache.clone();
+        let image_request_gate_for_search = image_request_gate.clone();
+        let nas_client_for_search = Arc::clone(&nas_client);
+        let session_for_search = Arc::clone(&session);
+        self.ui.on_search_changed(move |query| {
+            let Some(ui) = ui_weak_search.upgrade() else {
+                return;
+            };
+            AppCoordinator::handle_local_search_input(
+                &ui,
+                query.to_string(),
+                true,
+                &loaded_collections_for_search,
+                &search_generation_for_search,
+                &image_cache_for_search,
+                &image_request_gate_for_search,
+                &nas_client_for_search,
+                &session_for_search,
+            );
+        });
+
+        let ui_weak_search = self.ui.as_weak();
+        let loaded_collections_for_search = Arc::clone(&loaded_collections);
+        let search_generation_for_search = Arc::clone(&search_generation);
+        let image_cache_for_search = image_cache.clone();
+        let image_request_gate_for_search = image_request_gate.clone();
+        let nas_client_for_search = Arc::clone(&nas_client);
+        let session_for_search = Arc::clone(&session);
+        self.ui.on_search_submitted(move |query| {
+            let Some(ui) = ui_weak_search.upgrade() else {
+                return;
+            };
+            AppCoordinator::handle_local_search_input(
+                &ui,
+                query.to_string(),
+                false,
+                &loaded_collections_for_search,
+                &search_generation_for_search,
+                &image_cache_for_search,
+                &image_request_gate_for_search,
+                &nas_client_for_search,
+                &session_for_search,
+            );
+        });
+
+        let ui_weak_search = self.ui.as_weak();
+        let loaded_collections_for_search = Arc::clone(&loaded_collections);
+        let search_generation_for_search = Arc::clone(&search_generation);
+        let image_cache_for_search = image_cache.clone();
+        let image_request_gate_for_search = image_request_gate.clone();
+        let nas_client_for_search = Arc::clone(&nas_client);
+        let session_for_search = Arc::clone(&session);
+        self.ui.on_retry_search(move || {
+            let Some(ui) = ui_weak_search.upgrade() else {
+                return;
+            };
+            let query = ui.get_apple_search_input().to_string();
+            AppCoordinator::handle_local_search_input(
+                &ui,
+                query,
+                false,
+                &loaded_collections_for_search,
+                &search_generation_for_search,
+                &image_cache_for_search,
+                &image_request_gate_for_search,
+                &nas_client_for_search,
+                &session_for_search,
+            );
+        });
+
+        let loaded_collections_for_classification = Arc::clone(&loaded_collections);
+        let search_generation_for_classification = Arc::clone(&search_generation);
         self.ui.on_select_classification(move |class_id_slint| {
             let Some(ui) = ui_weak.upgrade() else { return };
             let target_id = class_id_slint.to_string();
+
+            search_generation_for_classification.fetch_add(1, Ordering::SeqCst);
+            loaded_collections_for_classification.lock().unwrap().clear();
+            ui.set_apple_search_input("".into());
+            ui.set_search_active(false);
+            ui.set_search_loading(false);
+            ui.set_search_error("".into());
+            ui.set_search_scope("当前已加载范围：0 部".into());
+            ui.set_collection_count(0);
 
             let cat_model = ui.get_classifications();
             let count = cat_model.row_count();
@@ -1140,6 +1435,7 @@ impl AppCoordinator {
             let image_request_gate_for_thread = image_request_gate.clone();
             let nas_client_for_posters = Arc::clone(&nas_client);
             let session_for_posters = Arc::clone(&session);
+            let loaded_collections_for_thread = Arc::clone(&loaded_collections_for_classification);
             let ui_weak_bg = ui_weak.clone();
             let operation = diagnostics::start_event("ui", "library.select_classification");
             let selected_id_for_log = target_id.clone();
@@ -1171,21 +1467,11 @@ impl AppCoordinator {
                     match res {
                         Ok(page) => {
                             let total = page.list.len();
+                            *loaded_collections_for_thread.lock().unwrap() = page.list.clone();
                             ui.set_collection_count(total as i32);
+                            ui.set_search_scope(format!("当前已加载范围：{} 部", total).into());
 
-                            let ui_items: Vec<CollectionUiItem> = page
-                                .list
-                                .iter()
-                                .map(|col| CollectionUiItem {
-                                    collection_id: col.collection_id.clone().into(),
-                                    title: col.title.clone().into(),
-                                    release_year: col.release_year.clone().into(),
-                                    video_type: col.display_type().to_string().into(),
-                                    score: col.display_score().into(),
-                                    cover_image: slint::Image::default(),
-                                    has_cover: false,
-                                })
-                                .collect();
+                            let ui_items = collection_ui_items(&page.list);
 
                             let model = Rc::new(VecModel::from(ui_items));
                             ui.set_collections(ModelRc::from(model));
@@ -1224,10 +1510,20 @@ impl AppCoordinator {
         let startup_last_playback = Arc::clone(&self.startup_last_playback);
         let image_cache = self.image_cache.clone();
         let image_request_gate = self.image_request_gate.clone();
+        let loaded_collections = Arc::clone(&loaded_collections);
+        let search_generation = Arc::clone(&search_generation);
 
         self.ui.on_refresh_library_clicked(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
             let sel_id = ui.get_selected_classification_id().to_string();
+            search_generation.fetch_add(1, Ordering::SeqCst);
+            loaded_collections.lock().unwrap().clear();
+            ui.set_apple_search_input("".into());
+            ui.set_search_active(false);
+            ui.set_search_loading(false);
+            ui.set_search_error("".into());
+            ui.set_search_scope("当前已加载范围：0 部".into());
+            ui.set_collection_count(0);
             ui.set_library_loading(true);
             ui.set_library_error("".into());
             ui.set_requires_relogin(false);
@@ -1249,6 +1545,7 @@ impl AppCoordinator {
                 .unwrap_or(sel_id);
             let image_cache_for_thread = image_cache.clone();
             let image_request_gate_for_thread = image_request_gate.clone();
+            let loaded_collections_for_thread = Arc::clone(&loaded_collections);
             let ui_weak_bg = ui_weak.clone();
             let startup_restore_pending_for_thread = Arc::clone(&startup_restore_pending);
             let operation = diagnostics::start_event("ui", "library.refresh");
@@ -1385,21 +1682,13 @@ impl AppCoordinator {
 
                     match col_res {
                         Ok(page) => {
-                            let ui_cols: Vec<CollectionUiItem> = page
-                                .list
-                                .iter()
-                                .map(|c| CollectionUiItem {
-                                    collection_id: c.collection_id.clone().into(),
-                                    title: c.title.clone().into(),
-                                    release_year: c.release_year.clone().into(),
-                                    video_type: c.display_type().to_string().into(),
-                                    score: c.display_score().into(),
-                                    cover_image: slint::Image::default(),
-                                    has_cover: false,
-                                })
-                                .collect();
+                            *loaded_collections_for_thread.lock().unwrap() = page.list.clone();
+                            let ui_cols = collection_ui_items(&page.list);
                             ui.set_collections(ModelRc::from(Rc::new(VecModel::from(ui_cols))));
                             ui.set_collection_count(page.list.len() as i32);
+                            ui.set_search_scope(
+                                format!("当前已加载范围：{} 部", page.list.len()).into(),
+                            );
                             ui.set_status_message("片库已刷新完成。".into());
                             AppCoordinator::spawn_poster_fetching(
                                 ui.as_weak(),
