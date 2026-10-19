@@ -38,6 +38,115 @@ export struct SeasonUiItem {
     episodes: [EpisodeUiItem],
 }
 
+// A local copy of the standard focus/click bridge. Keeping it beside the
+// card makes the card a real focus target while retaining the existing Rust
+// collection-click callback.
+component PosterCardFocusTouchArea {
+    in property <bool> enabled: true;
+    out property <bool> has_focus <=> focus_scope.has-focus;
+    out property <bool> has_hover <=> touch_area.has-hover;
+    callback clicked <=> touch_area.clicked;
+
+    forward-focus: focus_scope;
+
+    touch_area := TouchArea {
+        enabled: root.enabled;
+    }
+
+    focus_scope := FocusScope {
+        width: 0px;
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == Key.Space || event.text == Key.Return {
+                touch_area.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+}
+
+// Keep the poster geometry independent from the source image dimensions and
+// title preferred size. The grid owns the card width; this component only
+// fills that fixed width with a 2:3 cover frame and elided metadata.
+component PosterCard inherits Rectangle {
+    in property <CollectionUiItem> item;
+    in property <length> card_width: 150px;
+    callback activated(string);
+
+    width: root.card_width;
+    height: root.card_width * 1.5 + 48px;
+    background: #18191c;
+    border_color: #36383e;
+    border_width: 1px;
+    border_radius: 10px;
+
+    accessible-role: button;
+    accessible-label: root.item.title;
+    accessible-action-default => { root.activated(root.item.collection_id); }
+    forward-focus: focus_touch_area;
+
+    VerticalLayout {
+        padding: 8px;
+        spacing: 7px;
+
+        Rectangle {
+            width: 100%;
+            height: self.width * 1.5;
+            background: #24262b;
+            border_radius: 7px;
+            clip: true;
+
+            if root.item.has_cover: Image {
+                source: root.item.cover_image;
+                width: 100%;
+                height: 100%;
+                image_fit: cover;
+            }
+            if !root.item.has_cover: Text {
+                text: "封面";
+                color: #8f9098;
+                font_size: 12px;
+                horizontal_alignment: center;
+                vertical_alignment: center;
+            }
+        }
+
+        Text {
+            text: root.item.title;
+            color: #f5f5f7;
+            font_size: 12px;
+            font_weight: 650;
+            width: 100%;
+            overflow: elide;
+        }
+        Text {
+            text: root.item.release_year + " · " + root.item.video_type;
+            color: #8f9098;
+            font_size: 10px;
+            width: 100%;
+            overflow: elide;
+        }
+    }
+
+    if focus_touch_area.has_focus: Rectangle {
+        x: 1px;
+        y: 1px;
+        width: parent.width - 2px;
+        height: parent.height - 2px;
+        border_color: #5aa7ff;
+        border_width: 2px;
+        border_radius: 9px;
+        background: transparent;
+    }
+
+    focus_touch_area := PosterCardFocusTouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => { root.activated(root.item.collection_id); }
+    }
+}
+
 // The approved HTML prototype keeps the functional shell separate from the
 // media content. This component is the first native slice of that structure.
 // It deliberately consumes the existing Rust-facing models and callbacks so
@@ -353,57 +462,30 @@ component AppleWorkspace inherits Rectangle {
                     }
 
                     if !root.library_loading && root.library_error == "" && root.collections.length > 0: GridLayout {
+                        // The content width is the only input to the column
+                        // count. A 140px target yields about seven columns at
+                        // the 1440px reference size and fewer columns when
+                        // the sidebar leaves a narrow viewport.
+                        property <length> min_card_width: 140px;
+                        property <length> available_width: root.width
+                            - (root.sidebar_visible ? 220px : 0px) - 64px;
+                        property <int> raw_columns: Math.floor((self.available_width + self.spacing) / (self.min_card_width + self.spacing));
+                        property <int> columns: Math.max(1, Math.min(12, self.raw_columns));
+                        property <length> card_width: self.columns > 0
+                            ? (self.available_width - (self.columns - 1) * self.spacing) / self.columns
+                            : self.min_card_width;
+                        width: 100%;
+                        min_width: 0px;
+                        preferred_width: 0px;
+                        horizontal_stretch: 1;
                         spacing: 14px;
-                        for item[index] in root.collections: Rectangle {
-                            row: index / 7;
-                            col: Math.mod(index, 7);
-                            min_width: 90px;
-                            height: 232px;
-                            background: #18191c;
-                            border_color: #36383e;
-                            border_width: 1px;
-                            border_radius: 10px;
 
-                            VerticalLayout {
-                                padding: 8px;
-                                spacing: 7px;
-                                Rectangle {
-                                    height: 174px;
-                                    background: #24262b;
-                                    border_radius: 7px;
-                                    clip: true;
-                                    if item.has_cover: Image {
-                                        source: item.cover_image;
-                                        width: 100%;
-                                        height: 100%;
-                                        image_fit: cover;
-                                    }
-                                    if !item.has_cover: Text {
-                                        text: "封面";
-                                        color: #8f9098;
-                                        font_size: 12px;
-                                        horizontal_alignment: center;
-                                        vertical_alignment: center;
-                                    }
-                                }
-                                Text {
-                                    text: item.title;
-                                    color: #f5f5f7;
-                                    font_size: 12px;
-                                    font_weight: 650;
-                                    overflow: elide;
-                                }
-                                Text {
-                                    text: item.release_year + " · " + item.video_type;
-                                    color: #8f9098;
-                                    font_size: 10px;
-                                    overflow: elide;
-                                }
-                            }
-
-                            TouchArea {
-                                clicked => { root.collection_clicked(item.collection_id); }
-                            }
+                        for item[index] in root.collections: PosterCard {
+                            row: index / parent.columns;
+                            col: Math.mod(index, parent.columns);
+                            card_width: parent.card_width;
+                            item: item;
+                            activated(id) => { root.collection_clicked(id); }
                         }
                     }
                 }
