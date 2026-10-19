@@ -441,6 +441,77 @@ component PosterCard inherits Rectangle {
     }
 }
 
+// Episode rows remain real keyboard targets when the detail page is reached
+// without a mouse. The row owns only presentation and forwards selection to
+// the existing Rust callback.
+component DetailEpisodeRow inherits Rectangle {
+    in property <EpisodeUiItem> episode;
+    callback activated(string);
+
+    height: 46px;
+    background: root.episode.is_selected ? ShellTheme.accent_soft
+        : episode_focus_touch.has_hover ? ShellTheme.surface_elevated : ShellTheme.surface_subtle;
+    border_color: root.episode.is_selected ? ShellTheme.accent_soft_strong
+        : episode_focus_touch.has_focus ? ShellTheme.accent : ShellTheme.separator;
+    border_width: 1px;
+    border_radius: 8px;
+    animate background { duration: 160ms; }
+    animate border_color { duration: 160ms; }
+
+    accessible-role: button;
+    accessible-label: root.episode.title != "" ? root.episode.title : "剧集";
+    accessible-checked: root.episode.is_selected;
+    accessible-action-default => { root.activated(root.episode.episode_id); }
+    forward-focus: episode_focus_touch;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 12px;
+
+        Text {
+            text: root.episode.episode_number > 0
+                ? "第" + root.episode.episode_number + "集"
+                : "正片";
+            color: root.episode.is_selected ? ShellTheme.accent_strong : ShellTheme.text_tertiary;
+            font_size: 11px;
+            font_weight: 700;
+            vertical_alignment: center;
+        }
+        Text {
+            text: root.episode.title != "" ? root.episode.title : "未命名剧集";
+            color: root.episode.is_selected ? ShellTheme.text : ShellTheme.text_secondary;
+            font_size: 12px;
+            horizontal_stretch: 1;
+            vertical_alignment: center;
+            overflow: elide;
+        }
+        if root.episode.duration != "": Text {
+            text: root.episode.duration;
+            color: ShellTheme.text_tertiary;
+            font_size: 11px;
+            vertical_alignment: center;
+        }
+    }
+
+    if episode_focus_touch.has_focus: Rectangle {
+        x: 1px;
+        y: 1px;
+        width: parent.width - 2px;
+        height: parent.height - 2px;
+        border_color: ShellTheme.accent;
+        border_width: 2px;
+        border_radius: 7px;
+        background: transparent;
+    }
+
+    episode_focus_touch := PosterCardFocusTouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => { root.activated(root.episode.episode_id); }
+    }
+}
+
 // The approved HTML prototype keeps the functional shell separate from the
 // media content. This component is the first native slice of that structure.
 // It deliberately consumes the existing Rust-facing models and callbacks so
@@ -502,9 +573,25 @@ component AppleWorkspace inherits Rectangle {
     callback episode_selected(string);
     callback play_episode(string);
 
+    changed current_view => {
+        if root.current_view == "detail" { workspace_focus.focus(); }
+    }
+
     background: ShellTheme.canvas;
 
-    HorizontalLayout {
+    workspace_focus := FocusScope {
+        width: 100%;
+        height: 100%;
+        focus-on-click: true;
+
+        KeyBinding {
+            keys: @keys(Escape);
+            activated => {
+                if root.current_view == "detail" { root.detail_back(); }
+            }
+        }
+
+        HorizontalLayout {
         spacing: 0px;
 
         if root.sidebar_visible: Rectangle {
@@ -660,6 +747,12 @@ component AppleWorkspace inherits Rectangle {
                 KeyBinding {
                     keys: @keys(Control + K);
                     activated => { search_field.focus(); }
+                }
+                KeyBinding {
+                    keys: @keys(Escape);
+                    activated => {
+                        if root.current_view == "detail" { root.detail_back(); }
+                    }
                 }
             }
 
@@ -1044,18 +1137,26 @@ component AppleWorkspace inherits Rectangle {
             if root.current_view == "detail": ScrollView {
                 vertical_stretch: 1;
                 VerticalLayout {
-                    padding-top: 30px;
+                    padding-top: 28px;
                     padding-right: 32px;
-                    padding-bottom: 36px;
+                    padding-bottom: 40px;
                     padding-left: 32px;
                     spacing: 20px;
 
                     HorizontalLayout {
+                        spacing: 12px;
                         Text {
                             text: "内容详情";
                             color: ShellTheme.accent;
                             font_size: 12px;
                             font_weight: 650;
+                            vertical_alignment: center;
+                        }
+                        Text {
+                            text: "· 详情替换片库主内容";
+                            color: ShellTheme.text_tertiary;
+                            font_size: 11px;
+                            vertical_alignment: center;
                         }
                         Rectangle { horizontal_stretch: 1; }
                         ShellButton {
@@ -1066,31 +1167,58 @@ component AppleWorkspace inherits Rectangle {
                     }
 
                     if root.detail_loading: Rectangle {
-                        height: 180px;
+                        min_height: 280px;
                         background: ShellTheme.surface;
                         border_color: ShellTheme.separator;
                         border_width: 1px;
                         border_radius: 12px;
-                        Text {
-                            text: "正在加载详情与选集…";
-                            color: ShellTheme.text_secondary;
-                            horizontal_alignment: center;
-                            vertical_alignment: center;
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 8px;
+                            Text {
+                                text: "正在加载详情与选集…";
+                                color: ShellTheme.text;
+                                font_size: 16px;
+                                font_weight: 650;
+                                horizontal_alignment: center;
+                            }
+                            Text {
+                                text: "网络请求在后台执行，片库列表保持在独立页面之外";
+                                color: ShellTheme.text_secondary;
+                                font_size: 12px;
+                                horizontal_alignment: center;
+                            }
                         }
                     }
 
                     if !root.detail_loading && root.detail_error != "": Rectangle {
-                        height: 180px;
+                        min_height: 280px;
                         background: ShellTheme.danger_surface;
                         border_color: ShellTheme.danger_border;
                         border_width: 1px;
                         border_radius: 12px;
-                        Text {
-                            text: root.detail_error;
-                            color: ShellTheme.danger_text;
-                            horizontal_alignment: center;
-                            vertical_alignment: center;
-                            wrap: word-wrap;
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 10px;
+                            Text {
+                                text: "详情加载失败";
+                                color: ShellTheme.danger_text;
+                                font_size: 17px;
+                                font_weight: 700;
+                                horizontal_alignment: center;
+                            }
+                            Text {
+                                text: root.detail_error;
+                                color: ShellTheme.danger_text;
+                                font_size: 12px;
+                                horizontal_alignment: center;
+                                wrap: word-wrap;
+                            }
+                            ShellButton {
+                                compact: true;
+                                text: "返回片库";
+                                clicked => { root.detail_back(); }
+                            }
                         }
                     }
 
@@ -1101,12 +1229,12 @@ component AppleWorkspace inherits Rectangle {
                         border_radius: 12px;
 
                         HorizontalLayout {
-                            padding: 18px;
-                            spacing: 22px;
+                            padding: 24px;
+                            spacing: 28px;
 
                             Rectangle {
-                                width: 230px;
-                                height: 330px;
+                                width: 240px;
+                                height: 344px;
                                 background: ShellTheme.surface_elevated;
                                 border_radius: 9px;
                                 clip: true;
@@ -1116,52 +1244,79 @@ component AppleWorkspace inherits Rectangle {
                                     height: 100%;
                                     image_fit: cover;
                                 }
-                                if !root.detail_has_cover: Text {
-                                    text: "封面暂不可用";
-                                    color: ShellTheme.text_tertiary;
-                                    horizontal_alignment: center;
-                                    vertical_alignment: center;
+                                if !root.detail_has_cover: VerticalLayout {
+                                    alignment: center;
+                                    spacing: 8px;
+                                    Text {
+                                        text: "暂无封面";
+                                        color: ShellTheme.text_secondary;
+                                        font_size: 15px;
+                                        font_weight: 650;
+                                        horizontal_alignment: center;
+                                    }
+                                    Text {
+                                        text: "NAS 未提供可用图片";
+                                        color: ShellTheme.text_tertiary;
+                                        font_size: 11px;
+                                        horizontal_alignment: center;
+                                    }
                                 }
                             }
 
                             VerticalLayout {
-                                spacing: 10px;
+                                spacing: 14px;
+                                vertical_stretch: 1;
                                 horizontal_stretch: 1;
                                 Text {
-                                    text: root.detail_video_type;
+                                    text: root.detail_video_type != "" ? root.detail_video_type : "影视";
                                     color: ShellTheme.accent;
                                     font_size: 12px;
+                                    font_weight: 650;
                                 }
                                 Text {
-                                    text: root.detail_title;
+                                    text: root.detail_title != "" ? root.detail_title : "未命名影视";
                                     color: ShellTheme.text;
                                     font_size: 34px;
                                     font_weight: 700;
-                                    overflow: elide;
-                                }
-                                Text {
-                                    text: root.detail_release_year + " · " + root.detail_score;
-                                    color: ShellTheme.text_secondary;
-                                    font_size: 12px;
-                                }
-                                Text {
-                                    text: root.detail_storyline != "" ? root.detail_storyline : "暂无剧情简介";
-                                    color: ShellTheme.text_secondary;
-                                    font_size: 13px;
                                     wrap: word-wrap;
-                                    vertical_stretch: 1;
                                 }
+                                HorizontalLayout {
+                                    spacing: 0px;
+                                    Text {
+                                        text: root.detail_release_year != "" ? root.detail_release_year : "年份未知";
+                                        color: ShellTheme.text_secondary;
+                                        font_size: 12px;
+                                    }
+                                    Text {
+                                        text: "  ·  ";
+                                        color: ShellTheme.text_tertiary;
+                                        font_size: 12px;
+                                    }
+                                    Text {
+                                        text: root.detail_is_movie ? "电影" : "剧集";
+                                        color: ShellTheme.text_secondary;
+                                        font_size: 12px;
+                                    }
+                                    if root.detail_score != "": Text {
+                                        text: "  ·  评分 " + root.detail_score;
+                                        color: ShellTheme.text_secondary;
+                                        font_size: 12px;
+                                    }
+                                }
+                                Rectangle { vertical_stretch: 1; }
                                 HorizontalLayout {
                                     spacing: 10px;
                                     ShellButton {
-                                        compact: true;
+                                        compact: false;
                                         text: root.detail_is_movie ? "播放正片" : "播放选中集";
                                         primary: true;
+                                        action_enabled: root.selected_episode_id != "" && !root.playback_loading;
                                         clicked => { root.play_episode(root.selected_episode_id); }
                                     }
                                     if root.playback_loading: Text {
                                         text: "正在准备媒体流…";
                                         color: ShellTheme.text_secondary;
+                                        font_size: 12px;
                                         vertical_alignment: center;
                                     }
                                 }
@@ -1178,8 +1333,33 @@ component AppleWorkspace inherits Rectangle {
                     if !root.detail_loading && root.detail_error == "": Text {
                         text: root.detail_is_movie ? "播放入口" : "选集";
                         color: ShellTheme.text;
-                        font_size: 16px;
+                        font_size: 17px;
                         font_weight: 650;
+                    }
+
+                    if !root.detail_loading && root.detail_error == "" && root.detail_seasons.length == 0: Rectangle {
+                        min_height: 86px;
+                        background: ShellTheme.surface;
+                        border_color: ShellTheme.separator;
+                        border_width: 1px;
+                        border_radius: 10px;
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 4px;
+                            Text {
+                                text: "暂无可用剧集";
+                                color: ShellTheme.text_secondary;
+                                font_size: 13px;
+                                font_weight: 650;
+                                horizontal_alignment: center;
+                            }
+                            Text {
+                                text: "详情已加载，但服务端未返回可播放 Episode";
+                                color: ShellTheme.text_tertiary;
+                                font_size: 11px;
+                                horizontal_alignment: center;
+                            }
+                        }
                     }
 
                     for season in root.detail_seasons: Rectangle {
@@ -1188,54 +1368,49 @@ component AppleWorkspace inherits Rectangle {
                         border_width: 1px;
                         border_radius: 10px;
                         VerticalLayout {
-                            padding: 12px;
-                            spacing: 7px;
+                            padding: 14px;
+                            spacing: 9px;
                             Text {
-                                text: season.title;
+                                text: season.title != "" ? season.title : "第" + season.season_number + "季";
                                 color: ShellTheme.text;
-                                font_size: 13px;
+                                font_size: 14px;
                                 font_weight: 650;
                             }
-                            for episode in season.episodes: Rectangle {
-                                height: 40px;
-                                background: episode.is_selected ? ShellTheme.accent_soft : ShellTheme.surface_subtle;
-                                border_color: episode.is_selected ? ShellTheme.accent_soft_strong : transparent;
-                                border_width: 1px;
-                                border_radius: 7px;
-                                HorizontalLayout {
-                                    padding_left: 10px;
-                                    padding_right: 10px;
-                                    spacing: 10px;
-                                    Text {
-                                        text: episode.episode_number > 0 ? "第" + episode.episode_number + "集" : "正片";
-                                        color: ShellTheme.text;
-                                        font_size: 12px;
-                                        vertical_alignment: center;
-                                    }
-                                    Text {
-                                        text: episode.title;
-                                        color: ShellTheme.text_secondary;
-                                        font_size: 12px;
-                                        horizontal_stretch: 1;
-                                        vertical_alignment: center;
-                                        overflow: elide;
-                                    }
-                                    Text {
-                                        text: episode.duration;
-                                        color: ShellTheme.text_tertiary;
-                                        font_size: 11px;
-                                        vertical_alignment: center;
-                                    }
-                                }
-                                TouchArea {
-                                    clicked => { root.episode_selected(episode.episode_id); }
-                                }
+                            for episode in season.episodes: DetailEpisodeRow {
+                                episode: episode;
+                                activated(id) => { root.episode_selected(id); }
+                            }
+                        }
+                    }
+
+                    if !root.detail_loading && root.detail_error == "": Rectangle {
+                        background: ShellTheme.surface;
+                        border_color: ShellTheme.separator;
+                        border_width: 1px;
+                        border_radius: 10px;
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 8px;
+                            Text {
+                                text: "简介";
+                                color: ShellTheme.text;
+                                font_size: 15px;
+                                font_weight: 650;
+                            }
+                            Text {
+                                text: root.detail_storyline != ""
+                                    ? root.detail_storyline
+                                    : "暂无剧情简介（NAS 未提供）";
+                                color: ShellTheme.text_secondary;
+                                font_size: 13px;
+                                wrap: word-wrap;
                             }
                         }
                     }
                 }
             }
         }
+    }
     }
 
 }

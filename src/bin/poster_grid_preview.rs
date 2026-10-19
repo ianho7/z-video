@@ -4,14 +4,16 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
-use z_video::app::{AppCoordinator, ClassificationUiItem, CollectionUiItem};
+use z_video::app::{
+    AppCoordinator, ClassificationUiItem, CollectionUiItem, EpisodeUiItem, SeasonUiItem,
+};
 use z_video::media::image_cache::{slint_image_from_decoded, DecodedImage};
 use z_video::nas::client::MockNasClient;
 use z_video::player::MockPlayer;
 use z_video::storage::credentials::MemoryCredentialStore;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (width, height, output, hold_ms) = parse_args()?;
+    let (width, height, output, hold_ms, view, detail_state) = parse_args()?;
     let coordinator = AppCoordinator::with_deps(
         Arc::new(MockPlayer::new()),
         false,
@@ -39,6 +41,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     window.set_collections(ModelRc::from(Rc::new(
         VecModel::from(fixture_collections()),
     )));
+    if view == "detail" {
+        configure_detail_fixture(&window, &detail_state);
+    }
 
     window
         .window()
@@ -74,12 +79,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn parse_args() -> Result<(u32, u32, PathBuf, u64), Box<dyn std::error::Error>> {
+fn parse_args() -> Result<(u32, u32, PathBuf, u64, String, String), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     let mut width = 1440;
     let mut height = 900;
     let mut output = PathBuf::from("poster-grid-preview.png");
     let mut hold_ms = 600;
+    let mut view = "library".to_string();
+    let mut detail_state = "complete".to_string();
     let mut index = 1;
     while index < args.len() {
         match args[index].as_str() {
@@ -105,6 +112,17 @@ fn parse_args() -> Result<(u32, u32, PathBuf, u64), Box<dyn std::error::Error>> 
                     .ok_or("--hold-ms requires a value")?
                     .parse()?;
             }
+            "--view" => {
+                index += 1;
+                view = args.get(index).ok_or("--view requires a value")?.clone();
+            }
+            "--detail-state" => {
+                index += 1;
+                detail_state = args
+                    .get(index)
+                    .ok_or("--detail-state requires a value")?
+                    .clone();
+            }
             value => return Err(format!("unknown argument: {value}").into()),
         }
         index += 1;
@@ -112,7 +130,98 @@ fn parse_args() -> Result<(u32, u32, PathBuf, u64), Box<dyn std::error::Error>> 
     if width == 0 || height == 0 {
         return Err("preview dimensions must be positive".into());
     }
-    Ok((width, height, output, hold_ms))
+    if !matches!(view.as_str(), "library" | "detail") {
+        return Err("--view must be library or detail".into());
+    }
+    if !matches!(detail_state.as_str(), "complete" | "missing-cover" | "empty-episodes" | "error")
+    {
+        return Err(
+            "--detail-state must be complete, missing-cover, empty-episodes, or error".into(),
+        );
+    }
+    Ok((width, height, output, hold_ms, view, detail_state))
+}
+
+fn configure_detail_fixture(window: &z_video::app::AppWindow, state: &str) {
+    window.set_current_view("detail".into());
+    window.set_detail_title("脱敏剧集 · 夜航样本".into());
+    window.set_detail_release_year("2024".into());
+    window.set_detail_video_type("电视剧".into());
+    window.set_detail_score("8.8".into());
+    window.set_detail_storyline(
+        "一组脱敏角色在沿海城市寻找失落的档案，旅途中逐步拼出一段关于家庭与选择的记忆。"
+            .into(),
+    );
+    window.set_detail_loading(false);
+    window.set_playback_loading(false);
+    window.set_playback_error("".into());
+
+    match state {
+        "error" => {
+            window.set_detail_has_cover(false);
+            window.set_detail_seasons(ModelRc::from(Rc::new(VecModel::from(Vec::<SeasonUiItem>::new()))));
+            window.set_selected_episode_id("".into());
+            window.set_detail_error("fixture：详情服务暂时不可用，请稍后重试".into());
+        }
+        "missing-cover" => {
+            window.set_detail_has_cover(false);
+            window.set_detail_cover_image(slint::Image::default());
+            window.set_detail_error("".into());
+            set_fixture_seasons(window, true);
+        }
+        "empty-episodes" => {
+            window.set_detail_has_cover(true);
+            window.set_detail_cover_image(fixture_image(600, 900, [44, 74, 112, 255], [110, 160, 190, 255]));
+            window.set_detail_error("".into());
+            window.set_detail_seasons(ModelRc::from(Rc::new(VecModel::from(Vec::<SeasonUiItem>::new()))));
+            window.set_selected_episode_id("".into());
+        }
+        _ => {
+            window.set_detail_has_cover(true);
+            window.set_detail_cover_image(fixture_image(600, 900, [44, 74, 112, 255], [110, 160, 190, 255]));
+            window.set_detail_error("".into());
+            set_fixture_seasons(window, true);
+        }
+    }
+}
+
+fn set_fixture_seasons(window: &z_video::app::AppWindow, include_second_season: bool) {
+    let first_season = SeasonUiItem {
+        season_number: 1,
+        title: "第一季 · 6 集".into(),
+        episodes: ModelRc::from(Rc::new(VecModel::from(vec![
+            EpisodeUiItem {
+                episode_id: "fixture-s1e1".into(),
+                episode_number: 1,
+                title: "潮汐线".into(),
+                duration: "45 分钟".into(),
+                is_selected: true,
+            },
+            EpisodeUiItem {
+                episode_id: "fixture-s1e2".into(),
+                episode_number: 2,
+                title: "回声室".into(),
+                duration: "47 分钟".into(),
+                is_selected: false,
+            },
+        ]))),
+    };
+    let mut seasons = vec![first_season];
+    if include_second_season {
+        seasons.push(SeasonUiItem {
+            season_number: 2,
+            title: "第二季 · 4 集".into(),
+            episodes: ModelRc::from(Rc::new(VecModel::from(vec![EpisodeUiItem {
+                episode_id: "fixture-s2e1".into(),
+                episode_number: 1,
+                title: "远岸".into(),
+                duration: "49 分钟".into(),
+                is_selected: false,
+            }]))),
+        });
+    }
+    window.set_detail_seasons(ModelRc::from(Rc::new(VecModel::from(seasons))));
+    window.set_selected_episode_id("fixture-s1e1".into());
 }
 
 fn fixture_collections() -> Vec<CollectionUiItem> {
