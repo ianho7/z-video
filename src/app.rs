@@ -46,6 +46,8 @@ pub struct AppCoordinator {
     image_request_gate: ImageRequestGate,
     last_poster_range: Arc<Mutex<Option<PosterLoadRange>>>,
     loaded_collections: Arc<Mutex<Vec<CollectionItem>>>,
+    browse_context: Arc<Mutex<BrowseContext>>,
+    browse_restore_notice: Arc<Mutex<Option<String>>>,
     search_generation: Arc<AtomicU64>,
     detail_state: Arc<Mutex<Option<CollectionDetail>>>,
     detail_request_generation: Arc<AtomicU64>,
@@ -95,6 +97,17 @@ const POSTER_INITIAL_WINDOW: usize = 24;
 struct PosterLoadRange {
     start: usize,
     end: usize,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+struct BrowseContext {
+    classification_id: String,
+    query: String,
+    media_type: String,
+    sort_order: String,
+    scroll_offset: f32,
+    focused_collection_id: String,
+    focused_collection_index: Option<usize>,
 }
 
 /// Returns the loaded model slice that can affect the current viewport.
@@ -339,6 +352,41 @@ fn query_scope(
     )
 }
 
+fn remember_browse_context(
+    browse_context: &Arc<Mutex<BrowseContext>>,
+    ui: &AppWindow,
+    scroll_offset: Option<f32>,
+    focused_collection_id: Option<&str>,
+) {
+    let mut context = browse_context.lock().unwrap();
+    context.classification_id = ui.get_selected_classification_id().to_string();
+    context.query = ui.get_apple_search_input().to_string();
+    context.media_type = ui.get_media_type_filter().to_string();
+    context.sort_order = ui.get_sort_order().to_string();
+    if let Some(scroll_offset) = scroll_offset {
+        context.scroll_offset = scroll_offset.max(0.0);
+    }
+    if let Some(collection_id) = focused_collection_id {
+        context.focused_collection_id = collection_id.to_string();
+        context.focused_collection_index = (0..ui.get_collections().row_count()).find(|index| {
+            ui.get_collections()
+                .row_data(*index)
+                .is_some_and(|item| item.collection_id.as_str() == collection_id)
+        });
+    }
+}
+
+fn reset_browse_context(browse_context: &Arc<Mutex<BrowseContext>>, ui: &AppWindow) {
+    let mut context = browse_context.lock().unwrap();
+    context.classification_id = ui.get_selected_classification_id().to_string();
+    context.query.clear();
+    context.media_type = MEDIA_TYPE_ALL.to_string();
+    context.sort_order = SORT_DEFAULT.to_string();
+    context.scroll_offset = 0.0;
+    context.focused_collection_id.clear();
+    context.focused_collection_index = None;
+}
+
 fn initial_poster_range_for_ui(ui: &AppWindow) -> PosterLoadRange {
     visible_poster_range(
         ui.get_collections().row_count(),
@@ -456,6 +504,8 @@ impl AppCoordinator {
         let image_cache =
             ImageCache::with_disk_cache(default_image_cache_dir(), 100, 64 * 1024 * 1024);
         let loaded_collections = Arc::new(Mutex::new(Vec::new()));
+        let browse_context = Arc::new(Mutex::new(BrowseContext::default()));
+        let browse_restore_notice = Arc::new(Mutex::new(None));
         let search_generation = Arc::new(AtomicU64::new(0));
         let detail_state = Arc::new(Mutex::new(None));
 
@@ -471,6 +521,8 @@ impl AppCoordinator {
             image_request_gate: ImageRequestGate::new(),
             last_poster_range: Arc::new(Mutex::new(None)),
             loaded_collections,
+            browse_context,
+            browse_restore_notice,
             search_generation,
             detail_state,
             detail_request_generation: Arc::new(AtomicU64::new(0)),
@@ -1536,6 +1588,127 @@ impl AppCoordinator {
         );
     }
 
+    fn restore_browse_context(
+        ui: &AppWindow,
+        context: BrowseContext,
+        source_items: Vec<CollectionItem>,
+        nas_client: &Arc<dyn NasClient>,
+        session: &Arc<NasSession>,
+        image_cache: &ImageCache,
+        image_request_gate: &ImageRequestGate,
+        last_poster_range: &Arc<Mutex<Option<PosterLoadRange>>>,
+    ) {
+        let classifications = ui.get_classifications();
+        let mut classification_name = None;
+        for index in 0..classifications.row_count() {
+            if let Some(mut item) = classifications.row_data(index) {
+                let selected = item.id.as_str() == context.classification_id;
+                item.is_selected = selected;
+                if selected {
+                    classification_name = Some(item.name.to_string());
+                }
+                classifications.set_row_data(index, item);
+            }
+        }
+        if let Some(classification_name) = classification_name {
+            ui.set_selected_classification_id(context.classification_id.clone().into());
+            ui.set_selected_classification_name(classification_name.into());
+        }
+
+        let matches = apply_collection_query(
+            &source_items,
+            &context.query,
+            &context.media_type,
+            &context.sort_order,
+        )
+        .unwrap_or_else(|_| source_items.clone());
+        let expected_ids: Vec<String> = matches
+            .iter()
+            .map(|item| item.collection_id.clone())
+            .collect();
+        let current_ids: Vec<String> = (0..ui.get_collections().row_count())
+            .filter_map(|index| ui.get_collections().row_data(index))
+            .map(|item| item.collection_id.to_string())
+            .collect();
+        let model_changed = current_ids != expected_ids;
+
+        ui.set_apple_search_input(context.query.clone().into());
+        ui.set_media_type_filter(context.media_type.clone().into());
+        ui.set_sort_order(context.sort_order.clone().into());
+        ui.set_collection_count(matches.len() as i32);
+        ui.set_search_active(
+            !context.query.trim().is_empty()
+                || context.media_type != MEDIA_TYPE_ALL
+                || context.sort_order != SORT_DEFAULT,
+        );
+        ui.set_search_loading(false);
+        ui.set_search_error("".into());
+        ui.set_search_scope(
+            query_scope(
+                source_items.len(),
+                matches.len(),
+                &context.query,
+                &context.media_type,
+                &context.sort_order,
+            )
+            .into(),
+        );
+
+        if model_changed {
+            let request_id = image_request_gate.begin();
+            ui.set_collections(ModelRc::from(Rc::new(VecModel::from(
+                collection_ui_items(&matches),
+            ))));
+            AppCoordinator::spawn_visible_poster_fetching(
+                ui,
+                Arc::clone(nas_client),
+                Arc::clone(session),
+                image_cache.clone(),
+                image_request_gate.clone(),
+                request_id,
+                initial_poster_range_for_ui(ui),
+                &matches,
+                last_poster_range,
+            );
+        }
+
+        let focus_target = matches
+            .iter()
+            .find(|item| item.collection_id == context.focused_collection_id)
+            .map(|item| item.collection_id.clone())
+            .or_else(|| {
+                context
+                    .focused_collection_index
+                    .and_then(|index| matches.get(index.min(matches.len().saturating_sub(1))))
+                    .map(|item| item.collection_id.clone())
+            });
+        let focus_was_restored = focus_target
+            .as_deref()
+            .is_some_and(|id| id == context.focused_collection_id);
+        let has_focus_target = focus_target.is_some();
+
+        ui.set_library_scroll_offset(context.scroll_offset.max(0.0));
+        ui.set_library_restore_scroll_offset(context.scroll_offset.max(0.0));
+        ui.set_library_focus_collection_id("".into());
+        ui.set_current_view("library".into());
+        if let Some(focus_target) = focus_target.as_deref() {
+            ui.set_library_focus_collection_id(focus_target.into());
+        }
+
+        ui.set_status_message(
+            if focus_was_restored {
+                "已返回片库，恢复查询、筛选、排序、滚动位置和焦点。"
+            } else if context.focused_collection_id.trim().is_empty() {
+                "已返回片库，恢复查询、筛选、排序和滚动位置。"
+            } else if has_focus_target {
+                "打开的影视已不在当前结果中，已将焦点移到邻近内容。"
+            } else {
+                "打开的影视已不在当前结果中，已返回当前片库内容区。"
+            }
+            .into(),
+        );
+    }
+
     fn start_local_collection_query(
         ui_weak: slint::Weak<AppWindow>,
         snapshot: Vec<CollectionItem>,
@@ -1896,6 +2069,8 @@ impl AppCoordinator {
         let image_cache = self.image_cache.clone();
         let image_request_gate = self.image_request_gate.clone();
         let loaded_collections = Arc::clone(&self.loaded_collections);
+        let browse_context = Arc::clone(&self.browse_context);
+        let browse_restore_notice = Arc::clone(&self.browse_restore_notice);
         let search_generation = Arc::clone(&self.search_generation);
         let last_poster_range = Arc::clone(&self.last_poster_range);
         let startup_last_playback = Arc::clone(&self.startup_last_playback);
@@ -1909,10 +2084,12 @@ impl AppCoordinator {
         let nas_client_for_search = Arc::clone(&nas_client);
         let session_for_search = Arc::clone(&session);
         let last_poster_range_for_search = Arc::clone(&last_poster_range);
+        let browse_context_for_search = Arc::clone(&browse_context);
         self.ui.on_search_changed(move |query| {
             let Some(ui) = ui_weak_search.upgrade() else {
                 return;
             };
+            remember_browse_context(&browse_context_for_search, &ui, None, None);
             AppCoordinator::handle_local_query_input(
                 &ui,
                 query.to_string(),
@@ -1937,10 +2114,12 @@ impl AppCoordinator {
         let nas_client_for_search = Arc::clone(&nas_client);
         let session_for_search = Arc::clone(&session);
         let last_poster_range_for_search = Arc::clone(&last_poster_range);
+        let browse_context_for_search = Arc::clone(&browse_context);
         self.ui.on_search_submitted(move |query| {
             let Some(ui) = ui_weak_search.upgrade() else {
                 return;
             };
+            remember_browse_context(&browse_context_for_search, &ui, None, None);
             AppCoordinator::handle_local_query_input(
                 &ui,
                 query.to_string(),
@@ -1965,11 +2144,13 @@ impl AppCoordinator {
         let nas_client_for_search = Arc::clone(&nas_client);
         let session_for_search = Arc::clone(&session);
         let last_poster_range_for_search = Arc::clone(&last_poster_range);
+        let browse_context_for_search = Arc::clone(&browse_context);
         self.ui.on_retry_search(move || {
             let Some(ui) = ui_weak_search.upgrade() else {
                 return;
             };
             let query = ui.get_apple_search_input().to_string();
+            remember_browse_context(&browse_context_for_search, &ui, None, None);
             AppCoordinator::handle_local_query_input(
                 &ui,
                 query,
@@ -1994,11 +2175,13 @@ impl AppCoordinator {
         let nas_client_for_filter = Arc::clone(&nas_client);
         let session_for_filter = Arc::clone(&session);
         let last_poster_range_for_filter = Arc::clone(&last_poster_range);
+        let browse_context_for_filter = Arc::clone(&browse_context);
         self.ui.on_filter_changed(move |media_type| {
             let Some(ui) = ui_weak_filter.upgrade() else {
                 return;
             };
             ui.set_media_type_filter(media_type.clone());
+            remember_browse_context(&browse_context_for_filter, &ui, None, None);
             AppCoordinator::handle_local_query_input(
                 &ui,
                 ui.get_apple_search_input().to_string(),
@@ -2023,11 +2206,13 @@ impl AppCoordinator {
         let nas_client_for_sort = Arc::clone(&nas_client);
         let session_for_sort = Arc::clone(&session);
         let last_poster_range_for_sort = Arc::clone(&last_poster_range);
+        let browse_context_for_sort = Arc::clone(&browse_context);
         self.ui.on_sort_changed(move |sort_order| {
             let Some(ui) = ui_weak_sort.upgrade() else {
                 return;
             };
             ui.set_sort_order(sort_order.clone());
+            remember_browse_context(&browse_context_for_sort, &ui, None, None);
             AppCoordinator::handle_local_query_input(
                 &ui,
                 ui.get_apple_search_input().to_string(),
@@ -2052,6 +2237,7 @@ impl AppCoordinator {
         let nas_client_for_clear = Arc::clone(&nas_client);
         let session_for_clear = Arc::clone(&session);
         let last_poster_range_for_clear = Arc::clone(&last_poster_range);
+        let browse_context_for_clear = Arc::clone(&browse_context);
         self.ui.on_clear_query(move || {
             let Some(ui) = ui_weak_clear.upgrade() else {
                 return;
@@ -2059,6 +2245,7 @@ impl AppCoordinator {
             ui.set_apple_search_input("".into());
             ui.set_media_type_filter(MEDIA_TYPE_ALL.into());
             ui.set_sort_order(SORT_DEFAULT.into());
+            remember_browse_context(&browse_context_for_clear, &ui, None, None);
             AppCoordinator::handle_local_query_input(
                 &ui,
                 "".to_string(),
@@ -2082,6 +2269,7 @@ impl AppCoordinator {
         let image_cache_for_scroll = image_cache.clone();
         let image_request_gate_for_scroll = image_request_gate.clone();
         let last_poster_range_for_scroll = Arc::clone(&last_poster_range);
+        let browse_context_for_scroll = Arc::clone(&browse_context);
         self.ui
             .on_library_scrolled(move |scroll_offset, viewport_height, grid_top, card_width, columns| {
             let Some(ui) = ui_weak_scroll.upgrade() else {
@@ -2093,6 +2281,16 @@ impl AppCoordinator {
             {
                 return;
             }
+
+            let scroll_offset = scroll_offset.max(0.0);
+            remember_browse_context(
+                &browse_context_for_scroll,
+                &ui,
+                Some(scroll_offset),
+                None,
+            );
+            ui.set_library_scroll_offset(scroll_offset);
+            ui.set_library_restore_scroll_offset(scroll_offset);
 
             let range = visible_poster_range(
                 ui.get_collections().row_count(),
@@ -2122,6 +2320,7 @@ impl AppCoordinator {
         });
 
         let loaded_collections_for_classification = Arc::clone(&loaded_collections);
+        let browse_context_for_classification = Arc::clone(&browse_context);
         let search_generation_for_classification = Arc::clone(&search_generation);
         let last_poster_range_for_classification = Arc::clone(&last_poster_range);
         self.ui.on_select_classification(move |class_id_slint| {
@@ -2156,6 +2355,10 @@ impl AppCoordinator {
 
             ui.set_selected_classification_id(target_id.clone().into());
             ui.set_selected_classification_name(target_name.into());
+            reset_browse_context(&browse_context_for_classification, &ui);
+            ui.set_library_scroll_offset(0.0);
+            ui.set_library_restore_scroll_offset(0.0);
+            ui.set_library_focus_collection_id("".into());
             continue_watching_generation.fetch_add(1, Ordering::SeqCst);
             AppCoordinator::clear_continue_watching(&ui);
             ui.set_library_loading(true);
@@ -2175,6 +2378,7 @@ impl AppCoordinator {
             let startup_last_playback_for_thread = Arc::clone(&startup_last_playback);
             let continue_watching_generation_for_thread =
                 Arc::clone(&continue_watching_generation);
+            let browse_restore_notice_for_thread = Arc::clone(&browse_restore_notice);
             let operation = diagnostics::start_event("ui", "library.select_classification");
             let selected_id_for_log = target_id.clone();
 
@@ -2238,6 +2442,13 @@ impl AppCoordinator {
                                 &page.list,
                                 &last_poster_range_for_thread,
                             );
+                            if let Some(notice) = browse_restore_notice_for_thread
+                                .lock()
+                                .unwrap()
+                                .take()
+                            {
+                                ui.set_status_message(notice.into());
+                            }
                         }
                         Err(err) => {
                             ui.set_library_error(err.user_recovery_hint().into());
@@ -2263,6 +2474,7 @@ impl AppCoordinator {
         let image_request_gate = self.image_request_gate.clone();
         let continue_watching_generation = Arc::clone(&self.continue_watching_generation);
         let loaded_collections = Arc::clone(&loaded_collections);
+        let browse_context_for_refresh = Arc::clone(&browse_context);
         let search_generation = Arc::clone(&search_generation);
         let last_poster_range_for_refresh = Arc::clone(&last_poster_range);
 
@@ -2276,6 +2488,10 @@ impl AppCoordinator {
             ui.set_apple_search_input("".into());
             ui.set_media_type_filter(MEDIA_TYPE_ALL.into());
             ui.set_sort_order(SORT_DEFAULT.into());
+            reset_browse_context(&browse_context_for_refresh, &ui);
+            ui.set_library_scroll_offset(0.0);
+            ui.set_library_restore_scroll_offset(0.0);
+            ui.set_library_focus_collection_id("".into());
             ui.set_search_active(false);
             ui.set_search_loading(false);
             ui.set_search_error("".into());
@@ -2552,10 +2768,17 @@ impl AppCoordinator {
         let playback_session = Arc::clone(&self.playback_session);
         let image_request_gate = self.image_request_gate.clone();
         let startup_last_playback = Arc::clone(&self.startup_last_playback);
+        let browse_context_for_collection = Arc::clone(&browse_context);
         self.ui.on_collection_clicked(move |col_id| {
             let Some(ui) = ui_weak.upgrade() else { return };
             let classification_id = ui.get_selected_classification_id().to_string();
             let collection_id = col_id.to_string();
+            remember_browse_context(
+                &browse_context_for_collection,
+                &ui,
+                None,
+                Some(&collection_id),
+            );
             let preferred_episode_id = startup_last_playback
                 .lock()
                 .unwrap()
@@ -2679,6 +2902,12 @@ impl AppCoordinator {
         let playback_session = Arc::clone(&self.playback_session);
         let image_request_gate = self.image_request_gate.clone();
         let last_poster_range = Arc::clone(&self.last_poster_range);
+        let browse_context_for_back = Arc::clone(&self.browse_context);
+        let loaded_collections_for_back = Arc::clone(&self.loaded_collections);
+        let nas_client_for_back = Arc::clone(&self.nas_client);
+        let session_for_back = Arc::clone(&self.session);
+        let image_cache_for_back = self.image_cache.clone();
+        let browse_restore_notice_for_back = Arc::clone(&self.browse_restore_notice);
         self.ui.on_detail_back_clicked(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
             detail_request_generation.fetch_add(1, Ordering::SeqCst);
@@ -2689,8 +2918,44 @@ impl AppCoordinator {
             *playback_session.lock().unwrap() = None;
             ui.set_playback_loading(false);
             ui.set_playback_error("".into());
-            ui.set_current_view("library".into());
-            ui.set_status_message("已返回片库，保留当前分类和浏览位置。".into());
+
+            let context = browse_context_for_back.lock().unwrap().clone();
+            let source_classification_exists = (0..ui.get_classifications().row_count()).any(|index| {
+                ui.get_classifications()
+                    .row_data(index)
+                    .is_some_and(|item| item.id.as_str() == context.classification_id)
+            });
+
+            if source_classification_exists {
+                let source_items = loaded_collections_for_back.lock().unwrap().clone();
+                AppCoordinator::restore_browse_context(
+                    &ui,
+                    context,
+                    source_items,
+                    &nas_client_for_back,
+                    &session_for_back,
+                    &image_cache_for_back,
+                    &image_request_gate,
+                    &last_poster_range,
+                );
+            } else {
+                let fallback = (0..ui.get_classifications().row_count()).find_map(|index| {
+                    ui.get_classifications().row_data(index).and_then(|item| {
+                        (!item.id.trim().is_empty()).then(|| (item.id.to_string(), item.name.to_string()))
+                    })
+                });
+                ui.set_current_view("library".into());
+                ui.set_library_focus_collection_id("".into());
+                if let Some((fallback_id, fallback_name)) = fallback {
+                    *browse_restore_notice_for_back.lock().unwrap() = Some(format!(
+                        "原分类已不可用，已切换到有效分类「{}」。",
+                        fallback_name
+                    ));
+                    ui.invoke_select_classification(fallback_id.into());
+                } else {
+                    ui.set_status_message("原分类已不可用，当前没有可用片库分类。".into());
+                }
+            }
         });
 
         let ui_weak = self.ui.as_weak();

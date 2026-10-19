@@ -11,13 +11,33 @@ use z_video::player::MockPlayer;
 use z_video::storage::credentials::MemoryCredentialStore;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (width, height, output, hold_ms, media_type, sort_order) = parse_args()?;
+    let (
+        width,
+        height,
+        output,
+        hold_ms,
+        media_type,
+        sort_order,
+        detail_roundtrip,
+        detail_output,
+        back_output,
+    ) = parse_args()?;
     let coordinator = AppCoordinator::with_deps(
         Arc::new(MockPlayer::new()),
         false,
         Arc::new(MockNasClient::new()),
         Arc::new(MemoryCredentialStore::new()),
     )?;
+    if detail_roundtrip {
+        coordinator.perform_login(
+            "http://192.168.1.50:5055",
+            "admin",
+            "password123",
+            None,
+            false,
+        )?;
+        coordinator.load_collections_sync("1")?;
+    }
     let window = coordinator.window().clone_strong();
 
     window.set_is_logged_in(true);
@@ -79,7 +99,53 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             width,
             height
         );
-        if hold_ms <= 600 {
+        if detail_roundtrip {
+            let detail_output = detail_output.clone();
+            let back_output = back_output.clone();
+            let detail_window = window.clone_strong();
+            detail_window.invoke_collection_clicked("c04".into());
+            Timer::single_shot(Duration::from_millis(700), move || {
+                let result = match detail_window.window().take_snapshot() {
+                    Ok(snapshot) => save_snapshot(&snapshot, &detail_output),
+                    Err(error) => Err(error.into()),
+                };
+                if let Err(error) = result {
+                    eprintln!("detail preview snapshot failed: {error}");
+                    std::process::exit(1);
+                }
+                eprintln!(
+                    "detail preview saved: {} ({}x{})",
+                    detail_output.display(),
+                    width,
+                    height
+                );
+                let back_window = detail_window.clone_strong();
+                back_window.invoke_detail_back_clicked();
+                Timer::single_shot(Duration::from_millis(350), move || {
+                    let result = match back_window.window().take_snapshot() {
+                        Ok(snapshot) => save_snapshot(&snapshot, &back_output),
+                        Err(error) => Err(error.into()),
+                    };
+                    if let Err(error) = result {
+                        eprintln!("back preview snapshot failed: {error}");
+                        std::process::exit(1);
+                    }
+                    eprintln!(
+                        "back preview saved: {} ({}x{})",
+                        back_output.display(),
+                        width,
+                        height
+                    );
+                    if hold_ms <= 1_650 {
+                        let _ = slint::quit_event_loop();
+                    } else {
+                        Timer::single_shot(Duration::from_millis(hold_ms - 1_650), || {
+                            let _ = slint::quit_event_loop();
+                        });
+                    }
+                });
+            });
+        } else if hold_ms <= 600 {
             let _ = slint::quit_event_loop();
         } else {
             Timer::single_shot(Duration::from_millis(hold_ms - 600), || {
@@ -92,7 +158,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn parse_args() -> Result<(u32, u32, PathBuf, u64, String, String), Box<dyn std::error::Error>> {
+fn parse_args() -> Result<
+    (u32, u32, PathBuf, u64, String, String, bool, PathBuf, PathBuf),
+    Box<dyn std::error::Error>,
+> {
     let args: Vec<String> = env::args().collect();
     let mut width = 1440;
     let mut height = 900;
@@ -100,6 +169,9 @@ fn parse_args() -> Result<(u32, u32, PathBuf, u64, String, String), Box<dyn std:
     let mut hold_ms = 600;
     let mut media_type = "all".to_string();
     let mut sort_order = "default".to_string();
+    let mut detail_roundtrip = false;
+    let mut detail_output = PathBuf::from("poster-grid-detail.png");
+    let mut back_output = PathBuf::from("poster-grid-back.png");
     let mut index = 1;
     while index < args.len() {
         match args[index].as_str() {
@@ -139,6 +211,17 @@ fn parse_args() -> Result<(u32, u32, PathBuf, u64, String, String), Box<dyn std:
                     .ok_or("--sort-order requires a value")?
                     .to_string();
             }
+            "--detail-roundtrip" => detail_roundtrip = true,
+            "--detail-output" => {
+                index += 1;
+                detail_output =
+                    PathBuf::from(args.get(index).ok_or("--detail-output requires a path")?);
+            }
+            "--back-output" => {
+                index += 1;
+                back_output =
+                    PathBuf::from(args.get(index).ok_or("--back-output requires a path")?);
+            }
             value => return Err(format!("unknown argument: {value}").into()),
         }
         index += 1;
@@ -146,7 +229,17 @@ fn parse_args() -> Result<(u32, u32, PathBuf, u64, String, String), Box<dyn std:
     if width == 0 || height == 0 {
         return Err("preview dimensions must be positive".into());
     }
-    Ok((width, height, output, hold_ms, media_type, sort_order))
+    Ok((
+        width,
+        height,
+        output,
+        hold_ms,
+        media_type,
+        sort_order,
+        detail_roundtrip,
+        detail_output,
+        back_output,
+    ))
 }
 
 fn media_type_label(media_type: &str) -> &'static str {

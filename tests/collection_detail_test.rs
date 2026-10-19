@@ -14,7 +14,6 @@ fn pump_detail_event_loop() {
     slint::run_event_loop_until_quit().expect("detail event loop should run");
 }
 
-#[test]
 fn coordinator_navigates_selects_episode_and_returns_without_reloading_library() {
     let coordinator = AppCoordinator::with_deps(
         Arc::new(MockPlayer::new()),
@@ -65,4 +64,64 @@ fn coordinator_navigates_selects_episode_and_returns_without_reloading_library()
     assert_eq!(coordinator.window().get_current_view(), "library");
     assert_eq!(coordinator.window().get_selected_classification_id(), classification_id);
     assert_eq!(coordinator.window().get_collections().row_count(), collection_count);
+}
+
+fn coordinator_restores_query_filter_sort_scroll_and_focus_after_detail() {
+    let coordinator = AppCoordinator::with_deps(
+        Arc::new(MockPlayer::new()),
+        false,
+        Arc::new(MockNasClient::new()),
+        Arc::new(MemoryCredentialStore::new()),
+    )
+    .expect("coordinator should initialize");
+
+    coordinator
+        .perform_login(
+            "http://192.168.1.50:5055",
+            "admin",
+            "password123",
+            None,
+            false,
+        )
+        .expect("mock login should succeed");
+
+    coordinator.window().set_apple_search_input("电影".into());
+    coordinator
+        .window()
+        .invoke_search_submitted("电影".into());
+    pump_detail_event_loop();
+    coordinator.window().invoke_filter_changed("movie".into());
+    pump_detail_event_loop();
+    coordinator
+        .window()
+        .invoke_sort_changed("score_desc".into());
+    pump_detail_event_loop();
+    coordinator.window().invoke_library_scrolled(
+        360.0,
+        600.0,
+        0.0,
+        160.0,
+        6,
+    );
+
+    coordinator
+        .window()
+        .invoke_collection_clicked("c04".into());
+    pump_detail_event_loop();
+    assert_eq!(coordinator.window().get_current_view(), "detail");
+
+    coordinator.window().invoke_detail_back_clicked();
+
+    assert_eq!(coordinator.window().get_current_view(), "library");
+    assert_eq!(coordinator.window().get_apple_search_input(), "电影");
+    assert_eq!(coordinator.window().get_media_type_filter(), "movie");
+    assert_eq!(coordinator.window().get_sort_order(), "score_desc");
+    assert_eq!(coordinator.window().get_library_scroll_offset(), 360.0);
+    assert_eq!(coordinator.window().get_library_focus_collection_id(), "c04");
+}
+
+#[test]
+fn collection_detail_navigation_and_context_restore() {
+    coordinator_navigates_selects_episode_and_returns_without_reloading_library();
+    coordinator_restores_query_filter_sort_scroll_and_focus_after_detail();
 }
