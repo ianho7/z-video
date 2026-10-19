@@ -1883,6 +1883,7 @@ impl Default for MockNasClient {
                 storyline: Some(
                     "近未来的地球黄沙遍野，前NASA宇航员库珀穿过虫洞寻找人类新家园。".to_string(),
                 ),
+                history: None,
                 seasons: vec![Season {
                     season_number: 1,
                     title: "正片".to_string(),
@@ -1911,6 +1912,7 @@ impl Default for MockNasClient {
                 score: Some("8.8".to_string()),
                 rating: None,
                 storyline: Some("一段用于验证选集的测试剧情。".to_string()),
+                history: None,
                 seasons: vec![
                     Season {
                         season_number: 1,

@@ -103,7 +103,6 @@ impl Player for MockPlayer {
         drop(inner);
 
         self.dispatch_event(PlayerEvent::StateChanged(PlaybackState::Stopped));
-        self.dispatch_event(PlayerEvent::ProgressChanged(PlaybackProgress::new(0.0, 0.0)));
         Ok(())
     }
 

@@ -276,6 +276,13 @@ fn test_nas_auth_integration_comprehensive_suite() {
             .get_mfa_status_hint()
             .contains("新设备"));
     }
+
+    // Slint's platform and Winit event loop are thread-affine. The Rust test
+    // harness may run separate #[test] functions on different worker threads,
+    // so keep every AppCoordinator scenario in this one test entry point.
+    remember_false_removes_previous_saved_credentials();
+    credential_restore_failure_is_visible_and_does_not_fake_a_session();
+    expired_restored_session_returns_to_login_and_clears_saved_credentials();
 }
 fn successful_bare_ip_login_stores_normalized_session_base_url() {
     let coordinator = AppCoordinator::with_deps(
@@ -297,7 +304,6 @@ fn successful_bare_ip_login_stores_normalized_session_base_url() {
     );
 }
 
-#[test]
 fn remember_false_removes_previous_saved_credentials() {
     let store = Arc::new(MemoryCredentialStore::new());
     store
@@ -326,7 +332,6 @@ fn remember_false_removes_previous_saved_credentials() {
     assert!(store.load().expect("store load should succeed").is_none());
 }
 
-#[test]
 fn credential_restore_failure_is_visible_and_does_not_fake_a_session() {
     let coordinator = AppCoordinator::with_deps(
         Arc::new(MockPlayer::new()),
@@ -347,7 +352,6 @@ fn credential_restore_failure_is_visible_and_does_not_fake_a_session() {
         .contains("凭据"));
 }
 
-#[test]
 fn expired_restored_session_returns_to_login_and_clears_saved_credentials() {
     let store = Arc::new(MemoryCredentialStore::new());
     store
@@ -377,8 +381,13 @@ fn expired_restored_session_returns_to_login_and_clears_saved_credentials() {
     assert!(!coordinator.window().get_is_logged_in());
     assert!(!coordinator.session().is_authenticated());
     assert!(store.load().expect("store load should succeed").is_none());
+    let login_error = coordinator.window().get_login_error_message().to_string();
+    assert!(
+        login_error.contains("失效") && login_error.contains("重新输入"),
+        "expired-session error should explain that credentials are invalid and login is required: {login_error}"
+    );
     assert!(coordinator
         .window()
-        .get_login_error_message()
-        .contains("会话已失效"));
+        .get_login_status_hint()
+        .contains("清除失效的保存凭据"));
 }

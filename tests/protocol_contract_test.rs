@@ -10,6 +10,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use z_video::nas::{Episode, HttpNasClient, NasClient, NasDeviceMetadata, NasError, NasSession};
+use z_video::playback::PlaybackProgressUpdate;
 
 const FIXTURE_PUBLIC_KEY: &str =
     "MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBALKZ8KjQHGuJZx7HK65jCfI+UW7q/ts6HscZzFC0iwFeQjlj5XCKn2/iDsJwjssh0wR7oQNtt0fsAcoEE8VF9C8CAwEAAQ==";
@@ -140,6 +141,15 @@ fn library_http_owner_accepts_number_and_string_field_variants() {
             "release_year": 2026,
             "type": "movie",
             "score": "8.8",
+            "history": {
+                "last_video_id": "fixture-video",
+                "play_duration": "42",
+                "audio_index": 1,
+                "subtitle_index": "2",
+                "subtitle_hash": "fixture-hash",
+                "subtitle_setting": "default",
+                "play_chapter": 0
+            },
             "list": [{
                 "season": "1",
                 "version_list": [{
@@ -167,6 +177,11 @@ fn library_http_owner_accepts_number_and_string_field_variants() {
         .expect("mixed detail fields should parse");
     assert_eq!(detail.release_year, "2026");
     assert_eq!(detail.display_score(), "8.8");
+    let history = detail.history.as_ref().expect("detail history should parse");
+    assert_eq!(history.last_video_id.as_deref(), Some("fixture-video"));
+    assert_eq!(history.play_duration, Some(42));
+    assert_eq!(history.audio_index, Some(1));
+    assert_eq!(history.subtitle_index, Some(2));
     assert_eq!(detail.seasons[0].season_number, 1);
     assert_eq!(detail.seasons[0].episodes[0].episode_number, 1);
 
@@ -260,4 +275,35 @@ fn http_200_t000001_is_a_playback_business_error() {
 
     let requests = server.join().expect("playback error server should finish");
     assert!(requests[0].starts_with("GET /transcode/play?"));
+}
+
+#[test]
+fn http_200_progress_business_error_is_not_a_save_receipt() {
+    let business_error = r#"{"code":"T000001","message":"参数错误","data":null}"#;
+    let (base_url, server) = spawn_response_server(vec![business_error.to_string()]);
+    let session = authenticated_session(&base_url);
+    let progress = PlaybackProgressUpdate {
+        collection_id: "fixture-collection".to_string(),
+        classification_id: "fixture-category".to_string(),
+        video_id: "fixture-video".to_string(),
+        sec: 42,
+        chapter: 0,
+        audio_index: 0,
+        subtitle_index: 0,
+        subtitle_hash: String::new(),
+        video_duration: 120,
+        subtitle_setting: String::new(),
+    };
+
+    let error = HttpNasClient::new(Duration::from_secs(2))
+        .update_playback_progress(&session, &progress)
+        .expect_err("HTTP 200 with a business error must not be treated as saved");
+    assert!(matches!(
+        error,
+        NasError::Business { code, message }
+            if code == "T000001" && message == "参数错误"
+    ));
+
+    let requests = server.join().expect("progress error server should finish");
+    assert!(requests[0].starts_with("POST /zvideo/video/updateplaytime?&drnd="));
 }

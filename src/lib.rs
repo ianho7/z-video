@@ -13,7 +13,7 @@ pub use media::{ImageCache, ImageRequestGate};
 pub use nas::{
     ApiResponse, AuthError, ClassificationItem, CloudPubKeyData, CollectionDetail, CollectionItem,
     CollectionPage, Episode, HttpNasClient, LoginResponseData, MfaProof, MockNasClient, NasClient,
-    NasError, NasPubKeyData, NasSession, Season,
+    NasError, NasPubKeyData, NasSession, PlaybackHistory, Season,
 };
 pub use player::{
     create_player_probe, MockPlayer, MpvPlayer, PlaybackControlState, PlaybackProgress, PlaybackState, Player,

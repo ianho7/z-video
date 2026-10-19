@@ -319,7 +319,6 @@ impl Player for MpvPlayer {
         drop(inner);
 
         Self::dispatch_event(&self.state, PlayerEvent::StateChanged(PlaybackState::Stopped));
-        Self::dispatch_event(&self.state, PlayerEvent::ProgressChanged(PlaybackProgress::default()));
         res
     }
 

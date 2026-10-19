@@ -3,7 +3,7 @@ use raw_window_handle::HasWindowHandle;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -18,7 +18,7 @@ use crate::nas::discovery::{
     discover_local_nas, DiscoveryCancellation, DiscoveryConfig, DiscoveryError,
     NasDiscoveryResult,
 };
-use crate::nas::models::{CollectionDetail, CollectionItem, Episode, NasError};
+use crate::nas::models::{CollectionDetail, CollectionItem, Episode, NasError, PlaybackHistory};
 use crate::nas::session::{NasDeviceMetadata, NasSession};
 #[cfg(windows)]
 use crate::platform::Win32VideoSurface;
@@ -45,6 +45,7 @@ pub struct AppCoordinator {
     detail_request_generation: Arc<AtomicU64>,
     playback_request_generation: Arc<AtomicU64>,
     playback_session: Arc<Mutex<Option<PlaybackSession>>>,
+    pending_progress_requests: Arc<AtomicUsize>,
     playback_controls: Arc<Mutex<PlaybackControlState>>,
     #[cfg(windows)]
     video_surface: Arc<Mutex<Option<Win32VideoSurface>>>,
@@ -102,6 +103,7 @@ impl AppCoordinator {
             detail_request_generation: Arc::new(AtomicU64::new(0)),
             playback_request_generation: Arc::new(AtomicU64::new(0)),
             playback_session: Arc::new(Mutex::new(None)),
+            pending_progress_requests: Arc::new(AtomicUsize::new(0)),
             playback_controls: Arc::new(Mutex::new(PlaybackControlState::default())),
             #[cfg(windows)]
             video_surface,
@@ -323,7 +325,10 @@ impl AppCoordinator {
     }
 
     pub fn run(self) -> Result<(), slint::PlatformError> {
-        self.ui.run()
+        let result = self.ui.run();
+        wait_for_progress_flush(&self.pending_progress_requests);
+        diagnostics::flush();
+        result
     }
 
     /// Automatically restores saved credentials from secure storage on launch if present.
@@ -451,6 +456,10 @@ impl AppCoordinator {
                     result
                 } else {
                     self.ui.set_library_loading(false);
+                    record_request_not_sent(
+                        "library.collections",
+                        "no_valid_classification_id",
+                    );
                     operation.finish("success", &[("category_count", cats.len().to_string())]);
                     Ok(())
                 }
@@ -664,6 +673,25 @@ impl AppCoordinator {
             .cloned()
     }
 
+    fn history_matches_episode(history: &PlaybackHistory, episode: &Episode) -> bool {
+        let Some(last_video_id) = history.last_video_id.as_deref() else {
+            return true;
+        };
+
+        last_video_id == episode.selection_id()
+            || last_video_id == episode.video_id
+            || (!episode.version_id.is_empty() && last_video_id == episode.version_id)
+    }
+
+    fn find_resume_history(
+        detail_state: &Arc<Mutex<Option<CollectionDetail>>>,
+        episode: &Episode,
+    ) -> Option<PlaybackHistory> {
+        let detail = detail_state.lock().ok()?;
+        let history = detail.as_ref()?.history.clone()?;
+        Self::history_matches_episode(&history, episode).then_some(history)
+    }
+
     fn start_playback_load(
         ui_weak: slint::Weak<AppWindow>,
         nas_client: Arc<dyn NasClient>,
@@ -684,12 +712,14 @@ impl AppCoordinator {
         let Some(episode) = Self::find_episode(&detail_state, &episode_id) else {
             ui.set_playback_loading(false);
             ui.set_playback_error("当前详情没有可播放的 Episode。".into());
+            record_request_not_sent("playback.stream", "episode_not_found");
             operation.finish(
                 "error",
                 &[("reason", "episode_not_found".to_string())],
             );
             return;
         };
+        let resume_history = Self::find_resume_history(&detail_state, &episode);
 
         let request_generation = playback_request_generation.fetch_add(1, Ordering::SeqCst) + 1;
         *playback_session.lock().unwrap() = None;
@@ -700,6 +730,7 @@ impl AppCoordinator {
 
         let ui_weak_bg = ui_weak.clone();
         let playback_request_generation_bg = Arc::clone(&playback_request_generation);
+        let player_for_resume = Arc::clone(&player);
         std::thread::spawn(move || {
             let playback_result = match nas_client.get_playback_stream(&session, &episode) {
                 Ok(stream) => {
@@ -715,7 +746,7 @@ impl AppCoordinator {
                             {
                                 return;
                             }
-                            Ok((stream, state))
+                            Ok((stream, state, resume_history))
                         }
                         Err(_) => Err("播放器加载媒体失败，请重试。".to_string()),
                     }
@@ -756,19 +787,62 @@ impl AppCoordinator {
 
                 ui.set_playback_loading(false);
                 match playback_result {
-                    Ok((stream, state)) => {
+                    Ok((stream, state, resume_history)) => {
                         let track_status = playback_track_status(&stream);
-                        *playback_session.lock().unwrap() = Some(PlaybackSession::new(
+                        let mut new_playback_session = PlaybackSession::new(
                             collection_id,
                             classification_id,
                             episode_id,
                             stream,
                             state,
-                        ));
+                        );
+                        let resume_position = resume_history
+                            .as_ref()
+                            .and_then(|history| history.play_duration)
+                            .filter(|seconds| *seconds > 0)
+                            .unwrap_or_default() as f64;
+                        if let Some(history) = &resume_history {
+                            new_playback_session.audio_index = history
+                                .audio_index
+                                .and_then(|index| i32::try_from(index).ok())
+                                .unwrap_or_default();
+                            new_playback_session.subtitle_index = history
+                                .subtitle_index
+                                .and_then(|index| i32::try_from(index).ok())
+                                .unwrap_or_default();
+                        }
+                        new_playback_session.position_secs = resume_position;
+                        *playback_session.lock().unwrap() = Some(new_playback_session);
                         ui.set_playback_error("".into());
                         ui.set_playback_track_status(track_status.into());
+                        if resume_position > 0.0 {
+                            ui.set_progress_value(resume_position as f32);
+                            diagnostics::record_event(
+                                "ui",
+                                "playback.resume",
+                                "complete",
+                                "success",
+                                Duration::ZERO,
+                                &[("sec", resume_position.round().to_string())],
+                            );
+                        }
                         ui.set_current_view("player".into());
-                        ui.set_status_message("媒体流已加载，已进入播放器。".into());
+                        ui.set_status_message(
+                            if resume_position > 0.0 {
+                                "媒体流已加载，已从 NAS 保存的位置继续播放。"
+                            } else {
+                                "媒体流已加载，已进入播放器。"
+                            }
+                            .into(),
+                        );
+                        if resume_position > 0.0 {
+                            let player = Arc::clone(&player_for_resume);
+                            std::thread::spawn(move || {
+                                if let Err(error) = player.seek(resume_position) {
+                                    warn!("Failed to seek to the saved playback position: {}", error);
+                                }
+                            });
+                        }
                     }
                     Err(error) => {
                         *playback_session.lock().unwrap() = None;
@@ -1050,12 +1124,24 @@ impl AppCoordinator {
                     .map(|cat| cat.id.clone())
                     .unwrap_or_default();
                 let col_res = match cat_res.as_ref() {
-                    Err(_) => Err(NasError::MalformedResponse(
-                        "分类列表请求失败，未请求影视列表".to_string(),
-                    )),
-                    Ok(_) if effective_sel_id.is_empty() => Err(NasError::MalformedResponse(
-                        "NAS 未返回可用分类，未请求影视列表".to_string(),
-                    )),
+                    Err(_) => {
+                        record_request_not_sent(
+                            "library.collections",
+                            "classifications_failed",
+                        );
+                        Err(NasError::MalformedResponse(
+                            "分类列表请求失败，未请求影视列表".to_string(),
+                        ))
+                    }
+                    Ok(_) if effective_sel_id.is_empty() => {
+                        record_request_not_sent(
+                            "library.collections",
+                            "no_valid_classification_id",
+                        );
+                        Err(NasError::MalformedResponse(
+                            "NAS 未返回可用分类，未请求影视列表".to_string(),
+                        ))
+                    }
                     Ok(_) => client_for_thread.get_collections(
                         &session_for_thread,
                         &effective_sel_id,
@@ -1724,6 +1810,7 @@ impl AppCoordinator {
         let playback_controls = Arc::clone(&self.playback_controls);
         let nas_client = Arc::clone(&self.nas_client);
         let nas_session = Arc::clone(&self.session);
+        let pending_progress_requests = Arc::clone(&self.pending_progress_requests);
 
         self.player.add_event_listener(Box::new(move |event| {
             let ui_weak = ui_weak.clone();
@@ -1731,6 +1818,7 @@ impl AppCoordinator {
             let playback_controls = Arc::clone(&playback_controls);
             let nas_client = Arc::clone(&nas_client);
             let nas_session = Arc::clone(&nas_session);
+            let pending_progress_requests = Arc::clone(&pending_progress_requests);
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = ui_weak.upgrade() {
                     match event {
@@ -1777,6 +1865,8 @@ impl AppCoordinator {
                             if let Some(progress_update) = progress_update {
                                 let nas_client = Arc::clone(&nas_client);
                                 let nas_session = Arc::clone(&nas_session);
+                                pending_progress_requests.fetch_add(1, Ordering::SeqCst);
+                                let pending_progress_requests = Arc::clone(&pending_progress_requests);
                                 std::thread::spawn(move || {
                                     let sec = progress_update.sec.to_string();
                                     let duration_sec = progress_update.video_duration.to_string();
@@ -1800,6 +1890,7 @@ impl AppCoordinator {
                                             sanitize_log_message(&error.to_string())
                                         );
                                     }
+                                    pending_progress_requests.fetch_sub(1, Ordering::SeqCst);
                                 });
                             }
                             if prog.duration_secs > 0.0 {
@@ -2144,11 +2235,29 @@ fn apply_collection_detail(
     }
 
     let first_episode_id = detail
-        .seasons
-        .iter()
-        .flat_map(|season| season.episodes.iter())
-        .map(|episode| episode.selection_id().to_string())
-        .find(|episode_id| !episode_id.is_empty())
+        .history
+        .as_ref()
+        .and_then(|history| history.last_video_id.as_deref())
+        .and_then(|last_video_id| {
+            detail
+                .seasons
+                .iter()
+                .flat_map(|season| season.episodes.iter())
+                .find(|episode| {
+                    last_video_id == episode.selection_id()
+                        || last_video_id == episode.video_id
+                        || (!episode.version_id.is_empty() && last_video_id == episode.version_id)
+                })
+                .map(|episode| episode.selection_id().to_string())
+        })
+        .or_else(|| {
+            detail
+                .seasons
+                .iter()
+                .flat_map(|season| season.episodes.iter())
+                .map(|episode| episode.selection_id().to_string())
+                .find(|episode_id| !episode_id.is_empty())
+        })
         .unwrap_or_default();
 
     let ui_seasons: Vec<SeasonUiItem> = detail
@@ -2323,6 +2432,36 @@ fn record_reauthentication_required(operation: &str, required: bool) {
             &[("reason", operation.to_string())],
         );
     }
+}
+
+fn record_request_not_sent(operation: &str, reason: &str) {
+    diagnostics::record_event(
+        "nas.request",
+        operation,
+        "complete",
+        "not_sent",
+        Duration::ZERO,
+        &[("reason", reason.to_string())],
+    );
+}
+
+fn wait_for_progress_flush(pending: &AtomicUsize) {
+    for _ in 0..200 {
+        if pending.load(Ordering::SeqCst) == 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let remaining = pending.load(Ordering::SeqCst);
+    diagnostics::record_event(
+        "app",
+        "shutdown.progress_flush",
+        "complete",
+        if remaining == 0 { "success" } else { "partial" },
+        Duration::from_millis(2000),
+        &[("pending", remaining.to_string())],
+    );
 }
 
 fn default_image_cache_dir() -> PathBuf {

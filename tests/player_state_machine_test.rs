@@ -94,6 +94,35 @@ fn test_mock_player_seek_and_progress() {
 }
 
 #[test]
+fn test_stop_does_not_emit_synthetic_zero_progress_event() {
+    let player = MockPlayer::new();
+    let events = Arc::new(Mutex::new(Vec::<PlayerEvent>::new()));
+    let events_clone = Arc::clone(&events);
+
+    player.add_event_listener(Box::new(move |event| {
+        events_clone.lock().unwrap().push(event);
+    }));
+
+    player.load_media("assets/test_video.mp4").unwrap();
+    player.seek(42.0).unwrap();
+    events.lock().unwrap().clear();
+
+    player.stop().unwrap();
+
+    let recorded_events = events.lock().unwrap().clone();
+    assert!(recorded_events
+        .iter()
+        .any(|event| matches!(event, PlayerEvent::StateChanged(PlaybackState::Stopped))));
+    assert!(!recorded_events.iter().any(|event| {
+        matches!(
+            event,
+            PlayerEvent::ProgressChanged(progress)
+                if progress.position_secs == 0.0 && progress.duration_secs == 0.0
+        )
+    }));
+}
+
+#[test]
 fn test_mock_player_error_on_unloaded_play() {
     let player = MockPlayer::new();
     let res = player.play();

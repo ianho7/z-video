@@ -110,6 +110,39 @@ impl Episode {
     }
 }
 
+/// Resume information returned by the detail endpoint's `data.history` object.
+///
+/// These fields are optional because the NAS omits `history` when there is no
+/// saved progress. The endpoint has been observed to return numeric values as
+/// either JSON numbers or strings, so the parser normalizes both forms.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlaybackHistory {
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub last_video_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_i64")]
+    pub play_duration: Option<i64>,
+    #[serde(default, deserialize_with = "deserialize_optional_i64")]
+    pub audio_index: Option<i64>,
+    #[serde(default, deserialize_with = "deserialize_optional_i64")]
+    pub subtitle_index: Option<i64>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub subtitle_hash: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub subtitle_setting: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_i64")]
+    pub play_chapter: Option<i64>,
+}
+
+impl PlaybackHistory {
+    /// Extracts the optional `history` object from a collection-detail data value.
+    ///
+    /// The production detail parser uses the same helper, while this method
+    /// keeps the response boundary directly testable without retaining raw JSON.
+    pub fn from_detail_data(value: &Value) -> Option<Self> {
+        value.get("history").and_then(parse_playback_history)
+    }
+}
+
 /// Episodes grouped by season for presentation in the collection detail view.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Season {
@@ -147,6 +180,8 @@ pub struct CollectionDetail {
     pub rating: Option<String>,
     #[serde(default)]
     pub storyline: Option<String>,
+    #[serde(default)]
+    pub history: Option<PlaybackHistory>,
     #[serde(default)]
     pub seasons: Vec<Season>,
 }
@@ -212,6 +247,7 @@ fn parse_collection_detail(value: &Value) -> Result<CollectionDetail, String> {
     let score = optional_string(object, &["score"]);
     let rating = optional_string(object, &["rating"]);
     let storyline = optional_string(object, &["storyline", "plot", "description", "intro"]);
+    let history = object.get("history").and_then(parse_playback_history);
 
     let mut raw_episodes = Vec::new();
     if let Some(list) = object.get("list").and_then(Value::as_array) {
@@ -319,6 +355,7 @@ fn parse_collection_detail(value: &Value) -> Result<CollectionDetail, String> {
         score,
         rating,
         storyline,
+        history,
         seasons,
     })
 }
@@ -377,6 +414,10 @@ fn optional_string(object: &serde_json::Map<String, Value>, keys: &[&str]) -> Op
     if value.is_empty() { None } else { Some(value) }
 }
 
+fn parse_playback_history(value: &Value) -> Option<PlaybackHistory> {
+    serde_json::from_value(value.clone()).ok()
+}
+
 fn first_non_empty<'a>(values: impl IntoIterator<Item = Option<&'a str>>) -> Option<&'a str> {
     values.into_iter().flatten().find(|value| !value.is_empty())
 }
@@ -406,6 +447,14 @@ where
     Ok(value.and_then(|value| value_as_string(&value)))
 }
 
+fn deserialize_optional_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|value| value_as_i64(&value)))
+}
+
 fn first_u32(object: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<u32> {
     keys.iter().find_map(|key| object.get(*key).and_then(value_as_u32))
 }
@@ -419,6 +468,29 @@ fn value_as_u32(value: &Value) -> Option<u32> {
         Value::String(value) => value.trim().parse().ok(),
         _ => None,
     }
+}
+
+fn value_as_i64(value: &Value) -> Option<i64> {
+    match value {
+        Value::Number(value) => value
+            .as_i64()
+            .or_else(|| value.as_u64().and_then(|value| i64::try_from(value).ok()))
+            .or_else(|| value.as_f64().and_then(float_as_i64)),
+        Value::String(value) => value
+            .trim()
+            .parse()
+            .ok()
+            .or_else(|| value.trim().parse::<f64>().ok().and_then(float_as_i64)),
+        _ => None,
+    }
+}
+
+fn float_as_i64(value: f64) -> Option<i64> {
+    (value.is_finite()
+        && value.fract() == 0.0
+        && value >= i64::MIN as f64
+        && value <= i64::MAX as f64)
+        .then_some(value as i64)
 }
 
 fn is_movie_type(video_type: &str) -> bool {
@@ -623,5 +695,50 @@ mod tests {
         assert_eq!(sparse.seasons.len(), 1);
         assert_eq!(sparse.seasons[0].episodes.len(), 1);
         assert_eq!(sparse.seasons[0].episodes[0].episode_number, 1);
+    }
+
+    #[test]
+    fn playback_history_parses_detail_history_with_numeric_and_string_values() {
+        let detail_data: Value = serde_json::from_str(
+            r#"{
+                "collection_id": "safe-collection",
+                "title": "测试详情",
+                "type": "tv",
+                "history": {
+                    "last_video_id": 12345,
+                    "play_duration": "42",
+                    "audio_index": "1",
+                    "subtitle_index": 2,
+                    "subtitle_hash": "fixture-hash",
+                    "subtitle_setting": "default",
+                    "play_chapter": "3"
+                }
+            }"#,
+        )
+        .expect("detail data fixture should parse");
+
+        let detail: CollectionDetail = serde_json::from_value(detail_data)
+            .expect("detail history should accept numeric and string values");
+        let history = detail.history.expect("history should be present");
+        assert_eq!(history.last_video_id.as_deref(), Some("12345"));
+        assert_eq!(history.play_duration, Some(42));
+        assert_eq!(history.audio_index, Some(1));
+        assert_eq!(history.subtitle_index, Some(2));
+        assert_eq!(history.subtitle_hash.as_deref(), Some("fixture-hash"));
+        assert_eq!(history.subtitle_setting.as_deref(), Some("default"));
+        assert_eq!(history.play_chapter, Some(3));
+    }
+
+    #[test]
+    fn playback_history_keeps_missing_detail_history_optional() {
+        let detail_data: Value = serde_json::from_str(
+            r#"{"collection_id":"without-history","title":"无历史记录","type":"movie"}"#,
+        )
+        .expect("detail data fixture should parse");
+
+        let detail: CollectionDetail = serde_json::from_value(detail_data)
+            .expect("missing history should not make detail parsing fail");
+
+        assert_eq!(detail.history, None);
     }
 }

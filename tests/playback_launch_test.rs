@@ -4,6 +4,7 @@ use std::time::Duration;
 use slint::Timer;
 use z_video::app::AppCoordinator;
 use z_video::nas::client::MockNasClient;
+use z_video::nas::models::PlaybackHistory;
 use z_video::player::{MockPlayer, PlaybackState, Player};
 use z_video::storage::credentials::MemoryCredentialStore;
 
@@ -182,9 +183,62 @@ fn playback_progress_updates_session_and_emits_mock_receipt() {
     assert_eq!(receipt.video_duration, 120);
 }
 
+fn playback_uses_detail_history_to_resume_episode_and_position() {
+    let mut nas_client = MockNasClient::new();
+    nas_client
+        .mock_collection_details
+        .get_mut("series-demo")
+        .expect("mock series detail should exist")
+        .history = Some(PlaybackHistory {
+            last_video_id: Some("series-s1e2".to_string()),
+            play_duration: Some(42),
+            audio_index: Some(1),
+            subtitle_index: Some(2),
+            subtitle_hash: Some("fixture-hash".to_string()),
+            subtitle_setting: Some("default".to_string()),
+            play_chapter: Some(0),
+        });
+
+    let player = Arc::new(MockPlayer::new());
+    let coordinator = AppCoordinator::with_deps(
+        player.clone(),
+        false,
+        Arc::new(nas_client),
+        Arc::new(MemoryCredentialStore::new()),
+    )
+    .expect("coordinator should initialize");
+    coordinator
+        .perform_login("192.168.1.50", "admin", "password123", None, false)
+        .expect("mock login should succeed");
+    coordinator
+        .window()
+        .invoke_collection_clicked("series-demo".into());
+    pump_event_loop();
+
+    assert_eq!(coordinator.window().get_selected_episode_id(), "series-s1e2");
+    coordinator
+        .window()
+        .invoke_play_episode_clicked("series-s1e2".into());
+    wait_for_media_load(&player);
+    pump_event_loop();
+
+    assert!(player
+        .call_history()
+        .iter()
+        .any(|call| call == "seek:42"));
+    let session = coordinator
+        .playback_session()
+        .expect("resumed playback should create a session");
+    assert_eq!(session.episode_id, "series-s1e2");
+    assert_eq!(session.position_secs, 42.0);
+    assert_eq!(session.audio_index, 1);
+    assert_eq!(session.subtitle_index, 2);
+}
+
 #[test]
 fn playback_launch_integration_suite() {
     coordinator_launches_playback_and_reports_stream_failure();
     playback_returns_to_preserved_detail_and_can_start_again();
     playback_progress_updates_session_and_emits_mock_receipt();
+    playback_uses_detail_history_to_resume_episode_and_position();
 }

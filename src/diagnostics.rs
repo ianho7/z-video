@@ -145,6 +145,11 @@ pub fn record_nas_request(
 /// Records one HTTP request and an opaque server error code when one is
 /// available. Error codes are safe to retain and are useful for matching a
 /// UI error such as `N001212` to the exact request that produced it.
+///
+/// `request_observed=true` means the request owner reached its transport
+/// boundary and recorded the outcome. It does not mean that the NAS accepted
+/// the request; `result`, `http_status`, `parse_result`, and
+/// `business_result` still decide that outcome.
 pub fn record_nas_request_with_code(
     operation: &str,
     method: &str,
@@ -160,6 +165,7 @@ pub fn record_nas_request_with_code(
     let mut fields = vec![
         ("method", method.to_string()),
         ("path", path.to_string()),
+        ("request_observed", "true".to_string()),
         ("parse_result", parse_result.to_string()),
         ("business_result", business_result.to_string()),
     ];
@@ -332,14 +338,15 @@ fn sanitize_field(key: &str, value: &str) -> Option<(String, Value)> {
         "method" => Value::String(sanitize_label(value)),
         "http_status" | "item_count" | "category_count" | "count" | "category_item_count"
         | "bytes" | "sec" | "duration_sec" | "video_duration" | "response_code"
-        | "system" | "start" | "limit" => {
+        | "system" | "start" | "limit" | "pending" => {
             Value::Number(value.parse::<u64>().unwrap_or(0).into())
         }
         "authenticated"
         | "remember"
         | "token_present"
         | "nas_id_present"
-        | "nas_sign_present" => Value::Bool(value.eq_ignore_ascii_case("true")),
+        | "nas_sign_present"
+        | "request_observed" => Value::Bool(value.eq_ignore_ascii_case("true")),
         "classification_id" | "selected_id" | "collection_id" | "episode_id" => {
             Value::String(mask_identifier(value))
         }
@@ -518,6 +525,7 @@ mod tests {
                     "/zvideo/video/v2/list?token=secret&rnd=123".to_string(),
                 ),
                 ("http_status", "200".to_string()),
+                ("request_observed", "true".to_string()),
                 ("item_count", "4".to_string()),
                 ("password", "secret-password".to_string()),
             ],
@@ -530,6 +538,7 @@ mod tests {
         assert_eq!(value["result"], "success");
         assert_eq!(value["duration_ms"], 12);
         assert_eq!(value["details"]["http_status"], 200);
+        assert_eq!(value["details"]["request_observed"], true);
         assert_eq!(value["details"]["item_count"], 4);
         let serialized = line.to_ascii_lowercase();
         assert!(!serialized.contains("secret-password"));

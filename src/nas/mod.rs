@@ -14,7 +14,8 @@ pub use discovery::{
     NativeSdkStatus,
 };
 pub use models::{
-    ClassificationItem, CollectionDetail, CollectionItem, CollectionPage, Episode, NasError, Season,
+    ClassificationItem, CollectionDetail, CollectionItem, CollectionPage, Episode, NasError,
+    PlaybackHistory, Season,
 };
 pub use session::{NasDeviceMetadata, NasRequestContext, NasSession};
 
