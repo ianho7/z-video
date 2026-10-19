@@ -53,6 +53,10 @@ component AppleWorkspace inherits Rectangle {
     in property <bool> library_loading: false;
     in property <string> library_error: "";
     in property <bool> requires_relogin: false;
+    in property <bool> search_active: false;
+    in property <bool> search_loading: false;
+    in property <string> search_error: "";
+    in property <string> search_scope: "当前已加载范围";
     in property <string> session_nas_name: "";
     in property <string> session_base_url: "";
     in property <string> session_user: "";
@@ -75,7 +79,9 @@ component AppleWorkspace inherits Rectangle {
     in-out property <string> search_input: "";
 
     callback sidebar_toggled();
+    callback search_changed(string);
     callback search_submitted(string);
+    callback retry_search();
     callback select_classification(string);
     callback refresh_library();
     callback relogin();
@@ -194,47 +200,59 @@ component AppleWorkspace inherits Rectangle {
             horizontal_stretch: 1;
             spacing: 0px;
 
-            Rectangle {
+            header_focus := FocusScope {
                 height: 64px;
-                background: #18191ccc;
-                border_color: #36383e;
-                border_width: 1px;
+                Rectangle {
+                    width: parent.width;
+                    height: parent.height;
+                    background: #18191ccc;
+                    border_color: #36383e;
+                    border_width: 1px;
 
-                HorizontalLayout {
-                    padding_left: 18px;
-                    padding_right: 18px;
-                    spacing: 14px;
+                    HorizontalLayout {
+                        padding_left: 18px;
+                        padding_right: 18px;
+                        spacing: 14px;
 
-                    Button {
-                        text: root.sidebar_visible ? "隐藏侧栏" : "显示侧栏";
-                        clicked => { root.sidebar_toggled(); }
-                    }
-
-                    VerticalLayout {
-                        spacing: 1px;
-                        Text {
-                            text: root.current_view == "detail" ? "详情" : "片库";
-                            color: #b6b7bd;
-                            font_size: 11px;
+                        Button {
+                            text: root.sidebar_visible ? "隐藏侧栏" : "显示侧栏";
+                            clicked => { root.sidebar_toggled(); }
                         }
-                        Text {
-                            text: root.current_view == "detail" ? root.detail_title : root.selected_classification_name;
-                            color: #f5f5f7;
-                            font_size: 16px;
-                            font_weight: 650;
-                            overflow: elide;
+
+                        VerticalLayout {
+                            spacing: 1px;
+                            Text {
+                                text: root.current_view == "detail" ? "详情" : "片库";
+                                color: #b6b7bd;
+                                font_size: 11px;
+                            }
+                            Text {
+                                text: root.current_view == "detail" ? root.detail_title : root.selected_classification_name;
+                                color: #f5f5f7;
+                                font_size: 16px;
+                                font_weight: 650;
+                                overflow: elide;
+                            }
+                        }
+
+                        Rectangle { horizontal_stretch: 1; }
+
+                        search_field := LineEdit {
+                            width: 260px;
+                            text: root.search_input;
+                            placeholder_text: "搜索片名、类型或简介（已加载范围）";
+                            edited(value) => {
+                                root.search_input = value;
+                                root.search_changed(value);
+                            }
+                            accepted => { root.search_submitted(root.search_input); }
                         }
                     }
+                }
 
-                    Rectangle { horizontal_stretch: 1; }
-
-                    LineEdit {
-                        width: 260px;
-                        text: root.search_input;
-                        placeholder_text: "搜索片名、演员或类型";
-                        edited(value) => { root.search_input = value; }
-                        accepted => { root.search_submitted(root.search_input); }
-                    }
+                KeyBinding {
+                    keys: @keys(Control + K);
+                    activated => { search_field.focus(); }
                 }
             }
 
@@ -257,7 +275,7 @@ component AppleWorkspace inherits Rectangle {
                             font_weight: 650;
                         }
                         Text {
-                            text: root.collection_count + " 个结果";
+                            text: root.collection_count + " 个结果 · " + root.search_scope;
                             color: #8f9098;
                             font_size: 12px;
                         }
@@ -265,6 +283,31 @@ component AppleWorkspace inherits Rectangle {
                         Button {
                             text: "刷新";
                             clicked => { root.refresh_library(); }
+                        }
+                    }
+
+                    if root.search_error != "": Rectangle {
+                        min_height: 48px;
+                        background: #3a2024;
+                        border_color: #9b4a55;
+                        border_width: 1px;
+                        border_radius: 10px;
+                        HorizontalLayout {
+                            padding_left: 14px;
+                            padding_right: 14px;
+                            spacing: 12px;
+                            Text {
+                                text: root.search_error;
+                                color: #ffc6cc;
+                                font_size: 12px;
+                                vertical_alignment: center;
+                                horizontal_stretch: 1;
+                                wrap: word-wrap;
+                            }
+                            Button {
+                                text: "重试搜索";
+                                clicked => { root.retry_search(); }
+                            }
                         }
                     }
 
@@ -328,7 +371,31 @@ component AppleWorkspace inherits Rectangle {
                         }
                     }
 
-                    if !root.library_loading && root.library_error == "" && root.collections.length == 0: Rectangle {
+                    if root.search_loading: Rectangle {
+                        height: 180px;
+                        background: #18191c;
+                        border_color: #36383e;
+                        border_width: 1px;
+                        border_radius: 12px;
+                        VerticalLayout {
+                            alignment: center;
+                            Text {
+                                text: "正在搜索已加载片库";
+                                color: #f5f5f7;
+                                font_size: 16px;
+                                font_weight: 650;
+                                horizontal_alignment: center;
+                            }
+                            Text {
+                                text: root.search_scope;
+                                color: #b6b7bd;
+                                font_size: 12px;
+                                horizontal_alignment: center;
+                            }
+                        }
+                    }
+
+                    if !root.library_loading && !root.search_loading && root.library_error == "" && root.search_error == "" && !root.search_active && root.collections.length == 0: Rectangle {
                         height: 180px;
                         background: #18191c;
                         border_color: #36383e;
@@ -352,7 +419,31 @@ component AppleWorkspace inherits Rectangle {
                         }
                     }
 
-                    if !root.library_loading && root.library_error == "" && root.collections.length > 0: GridLayout {
+                    if !root.library_loading && !root.search_loading && root.library_error == "" && root.search_error == "" && root.search_active && root.collections.length == 0: Rectangle {
+                        height: 180px;
+                        background: #18191c;
+                        border_color: #36383e;
+                        border_width: 1px;
+                        border_radius: 12px;
+                        VerticalLayout {
+                            alignment: center;
+                            Text {
+                                text: "已加载范围内没有匹配结果";
+                                color: #f5f5f7;
+                                font_size: 16px;
+                                font_weight: 650;
+                                horizontal_alignment: center;
+                            }
+                            Text {
+                                text: "清空搜索可恢复当前分类的浏览列表。";
+                                color: #b6b7bd;
+                                font_size: 12px;
+                                horizontal_alignment: center;
+                            }
+                        }
+                    }
+
+                    if !root.library_loading && !root.search_loading && root.library_error == "" && root.search_error == "" && root.collections.length > 0: GridLayout {
                         spacing: 14px;
                         for item[index] in root.collections: Rectangle {
                             row: index / 7;
@@ -655,6 +746,10 @@ export component AppWindow inherits Window {
     in-out property <string> library_error: "";
     in-out property <bool> requires_relogin: false;
     in-out property <int> collection_count: 0;
+    in-out property <bool> search_active: false;
+    in-out property <bool> search_loading: false;
+    in-out property <string> search_error: "";
+    in-out property <string> search_scope: "当前已加载范围";
 
     // Collection detail state
     in-out property <string> detail_collection_id: "";
@@ -706,6 +801,9 @@ export component AppWindow inherits Window {
 
     // Library Callbacks
     callback select_classification(string);
+    callback search_changed(string);
+    callback search_submitted(string);
+    callback retry_search();
     callback collection_clicked(string);
     callback refresh_library_clicked();
     callback switch_view(string);
@@ -2018,6 +2116,10 @@ export component AppWindow inherits Window {
         library_loading: root.library_loading;
         library_error: root.library_error;
         requires_relogin: root.requires_relogin;
+        search_active: root.search_active;
+        search_loading: root.search_loading;
+        search_error: root.search_error;
+        search_scope: root.search_scope;
         session_nas_name: root.session_nas_name;
         session_base_url: root.session_base_url;
         session_user: root.session_user;
@@ -2040,9 +2142,15 @@ export component AppWindow inherits Window {
         sidebar-toggled => {
             root.apple_sidebar_visible = !root.apple_sidebar_visible;
         }
-        search-submitted(query) => {
-            root.status_message = query == "" ? "请输入搜索内容。" : "搜索入口已准备，等待 Rust 查询接入：" + query;
+        search-changed(query) => {
+            root.apple_search_input = query;
+            root.search_changed(query);
         }
+        search-submitted(query) => {
+            root.apple_search_input = query;
+            root.search_submitted(query);
+        }
+        retry-search => { root.retry_search(); }
         select-classification(id) => { root.select_classification(id); }
         refresh-library => { root.refresh_library_clicked(); }
         relogin => { root.relogin_requested(); }
