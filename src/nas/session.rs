@@ -16,6 +16,22 @@ pub struct NasDeviceMetadata {
     pub uuid: Option<String>,
 }
 
+impl NasDeviceMetadata {
+    /// Returns the client identity already used by the LAN login protocol.
+    ///
+    /// These values are also part of the official Windows request envelope.
+    /// Unknown per-installation values (public IP and UUID) remain absent.
+    pub fn client_defaults() -> Self {
+        Self {
+            version: Some("2.3.0".to_string()),
+            device_id: Some("z-video-client-01".to_string()),
+            device: Some("z-video-desktop".to_string()),
+            locale: Some("zh_cn".to_string()),
+            ..Self::default()
+        }
+    }
+}
+
 /// Snapshot of the identity and metadata used to build a NAS request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NasRequestContext {

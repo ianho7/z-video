@@ -19,7 +19,7 @@ use crate::nas::discovery::{
     NasDiscoveryResult,
 };
 use crate::nas::models::{CollectionDetail, CollectionItem, Episode, NasError};
-use crate::nas::session::NasSession;
+use crate::nas::session::{NasDeviceMetadata, NasSession};
 #[cfg(windows)]
 use crate::platform::Win32VideoSurface;
 use crate::playback::{PlaybackSession, PlaybackStream};
@@ -358,6 +358,8 @@ impl AppCoordinator {
 
                 let normalized_base_url = normalized_session_base_url(&creds.server_url);
                 self.session.set_base_url(normalized_base_url.clone());
+                self.session
+                    .set_device_metadata(NasDeviceMetadata::client_defaults());
                 self.session.set_authenticated_with_identity(
                     token.to_string(),
                     creds.username.clone(),
@@ -2209,6 +2211,7 @@ fn apply_login_result_to_ui(
 
             let normalized_base_url = normalized_session_base_url(server_url);
             session.set_base_url(normalized_base_url.clone());
+            session.set_device_metadata(NasDeviceMetadata::client_defaults());
             session.set_authenticated_with_identity(
                 data.token.clone(),
                 username.to_string(),

@@ -20,6 +20,11 @@ use crate::nas::session::{
 use crate::playback::{PlaybackProgressUpdate, PlaybackStream};
 
 const MFA_CLOUD_BASE_URL: &str = "https://api.zenithspace.net";
+const PLAYBACK_VIDEO_CODECS: &str = "hevc,h264,mpeg4";
+const PLAYBACK_SUPPORT_FORMAT: &str = "3";
+// The Windows player's generic launch path initializes fromApp with e.from || "".
+// Preserve a server-provided value, but do not invent "zvideo" for LAN playback.
+const PLAYBACK_SOURCE: &str = "";
 
 /// Trait defining the core LAN authentication and media library protocol with a Z-Space NAS.
 pub trait NasClient: Send + Sync {
@@ -428,12 +433,7 @@ impl HttpNasClient {
             nas_sign: nas_sign.map(str::to_string),
             app: NAS_APP,
             platform: NAS_PLATFORM,
-            device: NasDeviceMetadata {
-                version: Some("2.3.0".to_string()),
-                device_id: Some("z-video-client-01".to_string()),
-                device: Some("z-video-desktop".to_string()),
-                ..NasDeviceMetadata::default()
-            },
+            device: NasDeviceMetadata::client_defaults(),
         };
         let url = format!(
             "{}/zhelper/state?&drnd={}",
@@ -669,27 +669,29 @@ impl HttpNasClient {
             "/transcode/playaddr"
         };
         let url = format!("{}{}", base_url.trim_end_matches('/'), route);
+        let drnd = Self::generate_drnd();
         let mut request = self
             .agent
             .get(&url)
-            .query("token", &context.token)
-            .query("app", context.app)
+            .query("drnd", &drnd)
             .query("plat", context.platform)
             .query("file_path", episode.file_path.trim())
-            .query("dest_fmt", "OP")
+            .query("play_env", "1")
+            .query("video_codec", PLAYBACK_VIDEO_CODECS)
+            .query("support_format", PLAYBACK_SUPPORT_FORMAT)
             .set("token", &context.token)
             .set("Cookie", &build_nas_cookie(context));
+        request = append_playback_context_query(request, context);
         if let Some(encrypted_path) = encrypted_path {
             request = request.query("encrypted_path", encrypted_path);
         }
-        if let Some(from) = episode
+        let from = episode
             .from
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
-        {
-            request = request.query("from", from);
-        }
+            .unwrap_or(PLAYBACK_SOURCE);
+        request = request.query("from", from);
 
         let response = request
             .call()
@@ -1449,44 +1451,57 @@ impl NasClient for HttpNasClient {
             "/transcode/play"
         };
         let url = format!("{}{}", base_url.trim_end_matches('/'), route);
-
-        let mut request = self
-            .agent
-            .get(&url)
-            .query("token", &context.token)
-            .query("app", context.app)
-            .query("plat", context.platform)
-            .query("file_path", file_path)
-            .query("play_env", "1")
-            .query("video_codec", "hevc,h264,mpeg4")
-            .query("support_format", "3")
-            .query("audio_index", "0")
-            .query("subtitle_index", "0")
-            .query("dest_fmt", "OP")
-            .set("token", &context.token)
-            .set("Cookie", &build_nas_cookie(&context));
-
-        if let Some(version) = context.device.version.as_deref() {
-            request = request.query("version", version);
-        }
-        if let Some(device_id) = context.device.device_id.as_deref() {
-            request = request.query("device_id", device_id);
-        }
-        if let Some(device) = context.device.device.as_deref() {
-            request = request.query("device", device);
-        }
-
-        if let Some(encrypted_path) = encrypted_path {
-            request = request.query("encrypted_path", encrypted_path);
-        }
-        if let Some(from) = episode
+        let drnd = Self::generate_drnd();
+        let from = episode
             .from
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
-        {
-            request = request.query("from", from);
+            .unwrap_or(PLAYBACK_SOURCE);
+
+        diagnostics::record_event(
+            "nas.request",
+            "playback.stream.context",
+            "complete",
+            "observed",
+            Duration::ZERO,
+            &[
+                ("route", route.to_string()),
+                ("file_path_present", (!file_path.is_empty()).to_string()),
+                (
+                    "encrypted_path_present",
+                    encrypted_path.is_some().to_string(),
+                ),
+                ("from_present", (!from.is_empty()).to_string()),
+                ("nas_id_present", context.nas_id.is_some().to_string()),
+                ("nas_sign_present", context.nas_sign.is_some().to_string()),
+                (
+                    "device_metadata_present",
+                    (context.device.version.is_some()
+                        || context.device.device_id.is_some()
+                        || context.device.device.is_some())
+                        .to_string(),
+                ),
+            ],
+        );
+
+        let mut request = self
+            .agent
+            .get(&url)
+            .query("drnd", &drnd)
+            .query("plat", context.platform)
+            .query("file_path", file_path)
+            .query("play_env", "1")
+            .query("video_codec", PLAYBACK_VIDEO_CODECS)
+            .query("support_format", PLAYBACK_SUPPORT_FORMAT)
+            .set("token", &context.token)
+            .set("Cookie", &build_nas_cookie(&context));
+        request = append_playback_context_query(request, &context);
+
+        if let Some(encrypted_path) = encrypted_path {
+            request = request.query("encrypted_path", encrypted_path);
         }
+        request = request.query("from", from);
         let started_at = Instant::now();
         let mut status = None;
         let mut parse_result = "not_attempted";
@@ -1735,6 +1750,25 @@ impl NasClient for HttpNasClient {
         );
         result
     }
+}
+
+fn append_playback_context_query(
+    mut request: ureq::Request,
+    context: &NasRequestContext,
+) -> ureq::Request {
+    if let Some(version) = context.device.version.as_deref() {
+        request = request.query("version", version);
+    }
+    if let Some(device_id) = context.device.device_id.as_deref() {
+        request = request.query("device_id", device_id);
+    }
+    if let Some(device) = context.device.device.as_deref() {
+        request = request.query("device", device);
+    }
+    if let Some(client_public_ip) = context.device.client_public_ip.as_deref() {
+        request = request.query("clientPublicIp", client_public_ip);
+    }
+    request
 }
 
 /// Configurable mock client for unit and integration testing without requiring real hardware.
