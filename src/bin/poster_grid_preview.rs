@@ -27,12 +27,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     window.set_session_nas_name("脱敏 NAS".into());
     window.set_selected_classification_id("fixture-classification".into());
     window.set_selected_classification_name("脱敏海报墙".into());
-    window.set_collection_count(8);
+    window.set_collection_count(9);
     window.set_classifications(ModelRc::from(Rc::new(VecModel::from(vec![
         ClassificationUiItem {
             id: "fixture-classification".into(),
             name: "脱敏海报墙".into(),
-            count: 8,
+            count: 9,
             is_selected: true,
         },
     ]))));
@@ -125,6 +125,7 @@ fn fixture_collections() -> Vec<CollectionUiItem> {
             score: "8.6".into(),
             cover_image: fixture_image(640, 360, [35, 95, 165, 255], [220, 170, 55, 255]),
             has_cover: true,
+            cover_status: "ready".into(),
         },
         CollectionUiItem {
             collection_id: "fixture-vertical".into(),
@@ -134,6 +135,7 @@ fn fixture_collections() -> Vec<CollectionUiItem> {
             score: "9.1".into(),
             cover_image: fixture_image(360, 640, [130, 48, 94, 255], [80, 200, 170, 255]),
             has_cover: true,
+            cover_status: "ready".into(),
         },
         CollectionUiItem {
             collection_id: "fixture-ultra-wide".into(),
@@ -143,6 +145,7 @@ fn fixture_collections() -> Vec<CollectionUiItem> {
             score: "7.8".into(),
             cover_image: fixture_image(1200, 180, [188, 70, 40, 255], [240, 210, 70, 255]),
             has_cover: true,
+            cover_status: "ready".into(),
         },
         CollectionUiItem {
             collection_id: "fixture-long-title".into(),
@@ -152,6 +155,7 @@ fn fixture_collections() -> Vec<CollectionUiItem> {
             score: "8.2".into(),
             cover_image: fixture_image(512, 512, [68, 120, 72, 255], [210, 80, 150, 255]),
             has_cover: true,
+            cover_status: "ready".into(),
         },
         CollectionUiItem {
             collection_id: "fixture-missing-cover".into(),
@@ -161,6 +165,7 @@ fn fixture_collections() -> Vec<CollectionUiItem> {
             score: "".into(),
             cover_image: slint::Image::default(),
             has_cover: false,
+            cover_status: "missing".into(),
         },
         CollectionUiItem {
             collection_id: "fixture-horizontal-2".into(),
@@ -170,6 +175,7 @@ fn fixture_collections() -> Vec<CollectionUiItem> {
             score: "8.0".into(),
             cover_image: fixture_image(900, 420, [68, 78, 150, 255], [180, 220, 80, 255]),
             has_cover: true,
+            cover_status: "ready".into(),
         },
         CollectionUiItem {
             collection_id: "fixture-vertical-2".into(),
@@ -179,6 +185,7 @@ fn fixture_collections() -> Vec<CollectionUiItem> {
             score: "7.9".into(),
             cover_image: fixture_image(300, 700, [170, 84, 40, 255], [50, 180, 230, 255]),
             has_cover: true,
+            cover_status: "ready".into(),
         },
         CollectionUiItem {
             collection_id: "fixture-failure-cover".into(),
@@ -188,6 +195,17 @@ fn fixture_collections() -> Vec<CollectionUiItem> {
             score: "".into(),
             cover_image: slint::Image::default(),
             has_cover: false,
+            cover_status: "failed".into(),
+        },
+        CollectionUiItem {
+            collection_id: "fixture-loading-cover".into(),
+            title: "加载中封面占位".into(),
+            release_year: "2018".into(),
+            video_type: "电影".into(),
+            score: "".into(),
+            cover_image: slint::Image::default(),
+            has_cover: false,
+            cover_status: "loading".into(),
         },
     ]
 }

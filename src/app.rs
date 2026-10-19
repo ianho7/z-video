@@ -1,6 +1,7 @@
 use log::{error, info, warn};
 use raw_window_handle::HasWindowHandle;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -41,6 +42,7 @@ pub struct AppCoordinator {
     discovery_cancellation: Arc<Mutex<Option<DiscoveryCancellation>>>,
     image_cache: ImageCache,
     image_request_gate: ImageRequestGate,
+    last_poster_range: Arc<Mutex<Option<PosterLoadRange>>>,
     loaded_collections: Arc<Mutex<Vec<CollectionItem>>>,
     search_generation: Arc<AtomicU64>,
     detail_state: Arc<Mutex<Option<CollectionDetail>>>,
@@ -72,6 +74,72 @@ struct PendingResume {
 
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(180);
 
+const POSTER_GRID_GAP: f32 = 14.0;
+const POSTER_METADATA_HEIGHT: f32 = 48.0;
+const POSTER_FRAME_RATIO: f32 = 1.5;
+const POSTER_PREFETCH_ROWS: usize = 1;
+const POSTER_INITIAL_WINDOW: usize = 24;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PosterLoadRange {
+    start: usize,
+    end: usize,
+}
+
+/// Returns the loaded model slice that can affect the current viewport.
+///
+/// The grid is still backed by the known loaded Collection model, but image
+/// work is bounded to the visible rows plus one row on either side. When the
+/// native window has not laid out yet, the first bounded window is used so a
+/// full loaded page is never treated as a visible range.
+fn visible_poster_range(
+    total: usize,
+    columns: usize,
+    scroll_offset: f32,
+    viewport_height: f32,
+    grid_top: f32,
+    card_width: f32,
+) -> PosterLoadRange {
+    if total == 0 {
+        return PosterLoadRange { start: 0, end: 0 };
+    }
+
+    if columns == 0 || viewport_height <= 0.0 || card_width <= 0.0 {
+        return PosterLoadRange {
+            start: 0,
+            end: total.min(POSTER_INITIAL_WINDOW),
+        };
+    }
+
+    let row_height = card_width * POSTER_FRAME_RATIO + POSTER_METADATA_HEIGHT + POSTER_GRID_GAP;
+    if !row_height.is_finite() || row_height <= 0.0 {
+        return PosterLoadRange {
+            start: 0,
+            end: total.min(POSTER_INITIAL_WINDOW),
+        };
+    }
+
+    let total_rows = (total + columns - 1) / columns;
+    let top = scroll_offset.max(0.0);
+    let content_top = grid_top.max(0.0);
+    let first_visible_row = ((top - content_top).max(0.0) / row_height).floor() as usize;
+    let bottom = top + viewport_height;
+    let last_visible_row_exclusive = (((bottom - content_top).max(0.0) / row_height).ceil()
+        as usize)
+        .max(first_visible_row + 1);
+
+    let first_row = first_visible_row
+        .saturating_sub(POSTER_PREFETCH_ROWS)
+        .min(total_rows);
+    let last_row = last_visible_row_exclusive
+        .saturating_add(POSTER_PREFETCH_ROWS)
+        .min(total_rows);
+    let start = (first_row * columns).min(total);
+    let end = (last_row * columns).min(total).max(start);
+
+    PosterLoadRange { start, end }
+}
+
 fn collection_ui_items(items: &[CollectionItem]) -> Vec<CollectionUiItem> {
     items
         .iter()
@@ -83,6 +151,11 @@ fn collection_ui_items(items: &[CollectionItem]) -> Vec<CollectionUiItem> {
             score: item.display_score().into(),
             cover_image: slint::Image::default(),
             has_cover: false,
+            cover_status: if item.cover.is_empty() {
+                "missing".into()
+            } else {
+                "loading".into()
+            },
         })
         .collect()
 }
@@ -104,6 +177,64 @@ fn collection_matches_query(item: &CollectionItem, query: &str) -> bool {
     ]
     .iter()
     .any(|value| value.to_lowercase().contains(&query))
+}
+
+fn initial_poster_range_for_ui(ui: &AppWindow) -> PosterLoadRange {
+    visible_poster_range(
+        ui.get_collections().row_count(),
+        0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+    )
+}
+
+fn poster_items_for_range(
+    ui: &AppWindow,
+    source_items: &[CollectionItem],
+    range: PosterLoadRange,
+) -> Vec<CollectionItem> {
+    let model = ui.get_collections();
+    let mut seen_covers = HashSet::new();
+    let mut items = Vec::new();
+
+    for index in range.start..range.end.min(model.row_count()) {
+        let Some(row) = model.row_data(index) else {
+            continue;
+        };
+        if row.cover_status == "ready" || row.cover_status == "missing" {
+            continue;
+        }
+
+        let Some(item) = source_items
+            .iter()
+            .find(|item| item.collection_id == row.collection_id.as_str())
+        else {
+            continue;
+        };
+        if item.cover.is_empty() || !seen_covers.insert(item.cover.clone()) {
+            continue;
+        }
+        items.push(item.clone());
+    }
+
+    items
+}
+
+fn set_cover_status(ui: &AppWindow, collection_id: &str, status: &str) {
+    let model = ui.get_collections();
+    for index in 0..model.row_count() {
+        let Some(mut row) = model.row_data(index) else {
+            continue;
+        };
+        if row.collection_id.as_str() == collection_id {
+            row.cover_status = status.into();
+            row.has_cover = status == "ready";
+            model.set_row_data(index, row);
+            break;
+        }
+    }
 }
 
 impl ProgressReportGate {
@@ -178,6 +309,7 @@ impl AppCoordinator {
             discovery_cancellation: Arc::new(Mutex::new(None)),
             image_cache,
             image_request_gate: ImageRequestGate::new(),
+            last_poster_range: Arc::new(Mutex::new(None)),
             loaded_collections,
             search_generation,
             detail_state,
@@ -628,15 +760,18 @@ impl AppCoordinator {
                 self.ui
                     .set_status_message(format!("片库已就绪，已加载 {} 部影片", count).into());
 
-                // Trigger background poster fetching for items without cover in cache
-                Self::spawn_poster_fetching(
-                    self.ui.as_weak(),
+                // Trigger background poster fetching only for the current
+                // viewport and a bounded row-sized prefetch window.
+                Self::spawn_visible_poster_fetching(
+                    &self.ui,
                     Arc::clone(&self.nas_client),
                     Arc::clone(&self.session),
                     self.image_cache.clone(),
                     self.image_request_gate.clone(),
                     request_id,
-                    page.list,
+                    initial_poster_range_for_ui(&self.ui),
+                    &page.list,
+                    &self.last_poster_range,
                 );
 
                 operation.finish("success", &[("item_count", count.to_string())]);
@@ -1067,6 +1202,7 @@ impl AppCoordinator {
         session: &Arc<NasSession>,
         image_cache: &ImageCache,
         image_request_gate: &ImageRequestGate,
+        last_poster_range: &Arc<Mutex<Option<PosterLoadRange>>>,
     ) {
         let count = items.len();
         let request_id = image_request_gate.begin();
@@ -1076,14 +1212,16 @@ impl AppCoordinator {
         ui.set_search_loading(false);
         ui.set_search_error("".into());
         ui.set_search_scope(format!("当前已加载范围：{} 部", count).into());
-        AppCoordinator::spawn_poster_fetching(
-            ui.as_weak(),
+        AppCoordinator::spawn_visible_poster_fetching(
+            ui,
             Arc::clone(nas_client),
             Arc::clone(session),
             image_cache.clone(),
             image_request_gate.clone(),
             request_id,
-            items,
+            initial_poster_range_for_ui(ui),
+            &items,
+            last_poster_range,
         );
     }
 
@@ -1098,6 +1236,7 @@ impl AppCoordinator {
         image_request_gate: ImageRequestGate,
         nas_client: Arc<dyn NasClient>,
         session: Arc<NasSession>,
+        last_poster_range: Arc<Mutex<Option<PosterLoadRange>>>,
         delayed: bool,
     ) {
         let execute = move || {
@@ -1111,6 +1250,7 @@ impl AppCoordinator {
             let image_request_gate = image_request_gate.clone();
             let nas_client = Arc::clone(&nas_client);
             let session = Arc::clone(&session);
+            let last_poster_range = Arc::clone(&last_poster_range);
             let query_for_thread = query.clone();
             let query_for_ui = query_for_thread.clone();
 
@@ -1143,14 +1283,16 @@ impl AppCoordinator {
                     ui.set_status_message(
                         format!("搜索完成：已加载范围内匹配 {} 部影视作品。", count).into(),
                     );
-                    AppCoordinator::spawn_poster_fetching(
-                        ui.as_weak(),
+                    AppCoordinator::spawn_visible_poster_fetching(
+                        &ui,
                         nas_client,
                         session,
                         image_cache,
                         image_request_gate,
                         request_id,
-                        matches,
+                        initial_poster_range_for_ui(&ui),
+                        &matches,
+                        &last_poster_range,
                     );
                 });
             });
@@ -1173,6 +1315,7 @@ impl AppCoordinator {
         image_request_gate: &ImageRequestGate,
         nas_client: &Arc<dyn NasClient>,
         session: &Arc<NasSession>,
+        last_poster_range: &Arc<Mutex<Option<PosterLoadRange>>>,
     ) {
         let generation = search_generation.fetch_add(1, Ordering::SeqCst) + 1;
         let query = query.trim().to_string();
@@ -1187,6 +1330,7 @@ impl AppCoordinator {
                 session,
                 image_cache,
                 image_request_gate,
+                last_poster_range,
             );
             ui.set_status_message("已清空搜索，恢复当前已加载片库。".into());
             return;
@@ -1208,11 +1352,50 @@ impl AppCoordinator {
             image_request_gate.clone(),
             Arc::clone(nas_client),
             Arc::clone(session),
+            Arc::clone(last_poster_range),
             delayed,
         );
     }
 
-    /// Spawns background threads to asynchronously fetch missing poster images.
+    fn spawn_visible_poster_fetching(
+        ui: &AppWindow,
+        nas_client: Arc<dyn NasClient>,
+        session: Arc<NasSession>,
+        image_cache: ImageCache,
+        image_request_gate: ImageRequestGate,
+        request_id: u64,
+        range: PosterLoadRange,
+        source_items: &[CollectionItem],
+        last_poster_range: &Arc<Mutex<Option<PosterLoadRange>>>,
+    ) {
+        *last_poster_range.lock().unwrap() = Some(range);
+        let items = poster_items_for_range(ui, source_items, range);
+        diagnostics::record_event(
+            "ui",
+            "library.poster_range",
+            "complete",
+            "success",
+            Duration::ZERO,
+            &[
+                ("start", range.start.to_string()),
+                ("end", range.end.to_string()),
+                ("loaded_count", ui.get_collections().row_count().to_string()),
+                ("request_count", items.len().to_string()),
+            ],
+        );
+        Self::spawn_poster_fetching(
+            ui.as_weak(),
+            nas_client,
+            session,
+            image_cache,
+            image_request_gate,
+            request_id,
+            items,
+        );
+    }
+
+    /// Spawns background threads to asynchronously fetch only the current
+    /// visible poster range. Network and CPU decoding stay off the UI thread.
     fn spawn_poster_fetching(
         ui_weak: slint::Weak<AppWindow>,
         nas_client: Arc<dyn NasClient>,
@@ -1249,6 +1432,17 @@ impl AppCoordinator {
                             Ok(decoded) => decoded,
                             Err(error) => {
                                 warn!("Failed to decode cover image: {}", error);
+                                let cid = item.collection_id.clone();
+                                let ui_weak = ui_weak.clone();
+                                let image_request_gate = image_request_gate.clone();
+                                let _ = slint::invoke_from_event_loop(move || {
+                                    if !image_request_gate.is_current(request_id) {
+                                        return;
+                                    }
+                                    if let Some(ui) = ui_weak.upgrade() {
+                                        set_cover_status(&ui, &cid, "failed");
+                                    }
+                                });
                                 continue;
                             }
                         };
@@ -1272,6 +1466,7 @@ impl AppCoordinator {
                                         if row.collection_id.as_str() == cid {
                                             row.cover_image = slint_img;
                                             row.has_cover = true;
+                                            row.cover_status = "ready".into();
                                             model.set_row_data(i, row);
                                             break;
                                         }
@@ -1285,6 +1480,17 @@ impl AppCoordinator {
                             "Failed to fetch cover image: {}",
                             sanitize_log_message(&e.to_string())
                         );
+                        let cid = item.collection_id.clone();
+                        let ui_weak_for_failure = ui_weak.clone();
+                        let image_request_gate_for_failure = image_request_gate.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if !image_request_gate_for_failure.is_current(request_id) {
+                                return;
+                            }
+                            if let Some(ui) = ui_weak_for_failure.upgrade() {
+                                set_cover_status(&ui, &cid, "failed");
+                            }
+                        });
                         if e.requires_reauthentication() {
                             let ui_weak = ui_weak.clone();
                             let image_request_gate = image_request_gate.clone();
@@ -1318,6 +1524,7 @@ impl AppCoordinator {
         let image_request_gate = self.image_request_gate.clone();
         let loaded_collections = Arc::clone(&self.loaded_collections);
         let search_generation = Arc::clone(&self.search_generation);
+        let last_poster_range = Arc::clone(&self.last_poster_range);
 
         let ui_weak_search = self.ui.as_weak();
         let loaded_collections_for_search = Arc::clone(&loaded_collections);
@@ -1326,6 +1533,7 @@ impl AppCoordinator {
         let image_request_gate_for_search = image_request_gate.clone();
         let nas_client_for_search = Arc::clone(&nas_client);
         let session_for_search = Arc::clone(&session);
+        let last_poster_range_for_search = Arc::clone(&last_poster_range);
         self.ui.on_search_changed(move |query| {
             let Some(ui) = ui_weak_search.upgrade() else {
                 return;
@@ -1340,6 +1548,7 @@ impl AppCoordinator {
                 &image_request_gate_for_search,
                 &nas_client_for_search,
                 &session_for_search,
+                &last_poster_range_for_search,
             );
         });
 
@@ -1350,6 +1559,7 @@ impl AppCoordinator {
         let image_request_gate_for_search = image_request_gate.clone();
         let nas_client_for_search = Arc::clone(&nas_client);
         let session_for_search = Arc::clone(&session);
+        let last_poster_range_for_search = Arc::clone(&last_poster_range);
         self.ui.on_search_submitted(move |query| {
             let Some(ui) = ui_weak_search.upgrade() else {
                 return;
@@ -1364,6 +1574,7 @@ impl AppCoordinator {
                 &image_request_gate_for_search,
                 &nas_client_for_search,
                 &session_for_search,
+                &last_poster_range_for_search,
             );
         });
 
@@ -1374,6 +1585,7 @@ impl AppCoordinator {
         let image_request_gate_for_search = image_request_gate.clone();
         let nas_client_for_search = Arc::clone(&nas_client);
         let session_for_search = Arc::clone(&session);
+        let last_poster_range_for_search = Arc::clone(&last_poster_range);
         self.ui.on_retry_search(move || {
             let Some(ui) = ui_weak_search.upgrade() else {
                 return;
@@ -1389,11 +1601,59 @@ impl AppCoordinator {
                 &image_request_gate_for_search,
                 &nas_client_for_search,
                 &session_for_search,
+                &last_poster_range_for_search,
+            );
+        });
+
+        let ui_weak_scroll = self.ui.as_weak();
+        let loaded_collections_for_scroll = Arc::clone(&loaded_collections);
+        let nas_client_for_scroll = Arc::clone(&nas_client);
+        let session_for_scroll = Arc::clone(&session);
+        let image_cache_for_scroll = image_cache.clone();
+        let image_request_gate_for_scroll = image_request_gate.clone();
+        let last_poster_range_for_scroll = Arc::clone(&last_poster_range);
+        self.ui
+            .on_library_scrolled(move |scroll_offset, viewport_height, grid_top, card_width, columns| {
+            let Some(ui) = ui_weak_scroll.upgrade() else {
+                return;
+            };
+            if ui.get_current_view() != "library"
+                || ui.get_library_loading()
+                || ui.get_collections().row_count() == 0
+            {
+                return;
+            }
+
+            let range = visible_poster_range(
+                ui.get_collections().row_count(),
+                columns.max(0) as usize,
+                scroll_offset,
+                viewport_height,
+                grid_top,
+                card_width,
+            );
+            if last_poster_range_for_scroll.lock().unwrap().as_ref() == Some(&range) {
+                return;
+            }
+
+            let request_id = image_request_gate_for_scroll.begin();
+            let source_items = loaded_collections_for_scroll.lock().unwrap().clone();
+            AppCoordinator::spawn_visible_poster_fetching(
+                &ui,
+                Arc::clone(&nas_client_for_scroll),
+                Arc::clone(&session_for_scroll),
+                image_cache_for_scroll.clone(),
+                image_request_gate_for_scroll.clone(),
+                request_id,
+                range,
+                &source_items,
+                &last_poster_range_for_scroll,
             );
         });
 
         let loaded_collections_for_classification = Arc::clone(&loaded_collections);
         let search_generation_for_classification = Arc::clone(&search_generation);
+        let last_poster_range_for_classification = Arc::clone(&last_poster_range);
         self.ui.on_select_classification(move |class_id_slint| {
             let Some(ui) = ui_weak.upgrade() else { return };
             let target_id = class_id_slint.to_string();
@@ -1433,6 +1693,7 @@ impl AppCoordinator {
             let session_for_thread = Arc::clone(&session);
             let image_cache_for_thread = image_cache.clone();
             let image_request_gate_for_thread = image_request_gate.clone();
+            let last_poster_range_for_thread = Arc::clone(&last_poster_range_for_classification);
             let nas_client_for_posters = Arc::clone(&nas_client);
             let session_for_posters = Arc::clone(&session);
             let loaded_collections_for_thread = Arc::clone(&loaded_collections_for_classification);
@@ -1478,14 +1739,16 @@ impl AppCoordinator {
                             ui.set_status_message(
                                 format!("分类切换完成，加载 {} 部影视作品", total).into(),
                             );
-                            AppCoordinator::spawn_poster_fetching(
-                                ui.as_weak(),
+                            AppCoordinator::spawn_visible_poster_fetching(
+                                &ui,
                                 nas_client_for_posters,
                                 session_for_posters,
                                 image_cache_for_thread.clone(),
                                 image_request_gate_for_thread.clone(),
                                 request_id,
-                                page.list,
+                                initial_poster_range_for_ui(&ui),
+                                &page.list,
+                                &last_poster_range_for_thread,
                             );
                         }
                         Err(err) => {
@@ -1512,6 +1775,7 @@ impl AppCoordinator {
         let image_request_gate = self.image_request_gate.clone();
         let loaded_collections = Arc::clone(&loaded_collections);
         let search_generation = Arc::clone(&search_generation);
+        let last_poster_range_for_refresh = Arc::clone(&last_poster_range);
 
         self.ui.on_refresh_library_clicked(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
@@ -1545,6 +1809,7 @@ impl AppCoordinator {
                 .unwrap_or(sel_id);
             let image_cache_for_thread = image_cache.clone();
             let image_request_gate_for_thread = image_request_gate.clone();
+            let last_poster_range_for_thread = Arc::clone(&last_poster_range_for_refresh);
             let loaded_collections_for_thread = Arc::clone(&loaded_collections);
             let ui_weak_bg = ui_weak.clone();
             let startup_restore_pending_for_thread = Arc::clone(&startup_restore_pending);
@@ -1690,14 +1955,16 @@ impl AppCoordinator {
                                 format!("当前已加载范围：{} 部", page.list.len()).into(),
                             );
                             ui.set_status_message("片库已刷新完成。".into());
-                            AppCoordinator::spawn_poster_fetching(
-                                ui.as_weak(),
+                            AppCoordinator::spawn_visible_poster_fetching(
+                                &ui,
                                 Arc::clone(&client_for_thread),
                                 Arc::clone(&session_for_thread),
                                 image_cache_for_thread.clone(),
                                 image_request_gate_for_thread.clone(),
                                 request_id,
-                                page.list,
+                                initial_poster_range_for_ui(&ui),
+                                &page.list,
+                                &last_poster_range_for_thread,
                             );
                             ui.set_requires_relogin(false);
 
@@ -1859,11 +2126,13 @@ impl AppCoordinator {
         let playback_request_generation = Arc::clone(&self.playback_request_generation);
         let playback_session = Arc::clone(&self.playback_session);
         let image_request_gate = self.image_request_gate.clone();
+        let last_poster_range = Arc::clone(&self.last_poster_range);
         self.ui.on_detail_back_clicked(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
             detail_request_generation.fetch_add(1, Ordering::SeqCst);
             playback_request_generation.fetch_add(1, Ordering::SeqCst);
             image_request_gate.cancel();
+            *last_poster_range.lock().unwrap() = None;
             *detail_state.lock().unwrap() = None;
             *playback_session.lock().unwrap() = None;
             ui.set_playback_loading(false);
@@ -3180,4 +3449,48 @@ pub fn find_sample_video_path() -> PathBuf {
     }
 
     PathBuf::from("assets/test_video.mp4")
+}
+
+#[cfg(test)]
+mod poster_loading_tests {
+    use super::{visible_poster_range, PosterLoadRange};
+
+    #[test]
+    fn visible_poster_range_stays_within_loaded_rows() {
+        let range = visible_poster_range(50, 4, 500.0, 300.0, 0.0, 140.0);
+
+        assert_eq!(
+            range,
+            PosterLoadRange {
+                start: 0,
+                end: 16,
+            }
+        );
+    }
+
+    #[test]
+    fn missing_viewport_uses_a_bounded_initial_window() {
+        let range = visible_poster_range(50, 7, 0.0, 0.0, 0.0, 0.0);
+
+        assert_eq!(
+            range,
+            PosterLoadRange {
+                start: 0,
+                end: 24,
+            }
+        );
+    }
+
+    #[test]
+    fn scrolling_moves_poster_range_without_touching_unloaded_rows() {
+        let range = visible_poster_range(100, 4, 1_000.0, 300.0, 0.0, 140.0);
+
+        assert_eq!(
+            range,
+            PosterLoadRange {
+                start: 8,
+                end: 24,
+            }
+        );
+    }
 }
