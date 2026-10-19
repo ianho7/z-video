@@ -781,6 +781,10 @@ component AppleWorkspace inherits Rectangle {
                     activated => { search_field.focus(); }
                 }
                 KeyBinding {
+                    keys: @keys(Meta + K);
+                    activated => { search_field.focus(); }
+                }
+                KeyBinding {
                     keys: @keys(Escape);
                     activated => {
                         if root.current_view == "detail" { root.detail_back(); }
@@ -1025,6 +1029,13 @@ component AppleWorkspace inherits Rectangle {
                                     border_width: 1px;
                                     border_radius: 8px;
 
+                                    accessible-role: button;
+                                    accessible-label: item.title + "，" + item.episode_title + "，" + item.progress_label;
+                                    accessible-action-default => {
+                                        root.continue_watching_clicked(item.collection_id, item.episode_id);
+                                    }
+                                    forward-focus: continue_focus_touch;
+
                                     HorizontalLayout {
                                         padding: 8px;
                                         spacing: 10px;
@@ -1077,7 +1088,7 @@ component AppleWorkspace inherits Rectangle {
                                                 background: #303947;
                                                 border_radius: 2px;
                                                 if item.progress_percent >= 0: Rectangle {
-                                                    width: item.progress_percent * 1px;
+                                                    width: parent.width * (item.progress_percent / 100.0);
                                                     height: 4px;
                                                     background: #42a5f5;
                                                     border_radius: 2px;
@@ -1086,7 +1097,20 @@ component AppleWorkspace inherits Rectangle {
                                         }
                                     }
 
-                                    TouchArea {
+                                    if continue_focus_touch.has_focus: Rectangle {
+                                        x: 1px;
+                                        y: 1px;
+                                        width: parent.width - 2px;
+                                        height: parent.height - 2px;
+                                        border_color: #5aa7ff;
+                                        border_width: 2px;
+                                        border_radius: 7px;
+                                        background: transparent;
+                                    }
+
+                                    continue_focus_touch := PosterCardFocusTouchArea {
+                                        width: 100%;
+                                        height: 100%;
                                         clicked => {
                                             root.continue_watching_clicked(item.collection_id, item.episode_id);
                                         }
