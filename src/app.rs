@@ -1,6 +1,7 @@
 use log::{error, info, warn};
 use raw_window_handle::HasWindowHandle;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
+use std::cmp::Ordering as SortOrdering;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -75,6 +76,14 @@ struct PendingResume {
 }
 
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(180);
+
+const MEDIA_TYPE_ALL: &str = "all";
+const MEDIA_TYPE_MOVIE: &str = "movie";
+const MEDIA_TYPE_TV: &str = "tv";
+const SORT_DEFAULT: &str = "default";
+const SORT_TITLE_ASC: &str = "title_asc";
+const SORT_SCORE_DESC: &str = "score_desc";
+const SORT_RELEASE_YEAR_DESC: &str = "release_year_desc";
 
 const POSTER_GRID_GAP: f32 = 14.0;
 const POSTER_METADATA_HEIGHT: f32 = 48.0;
@@ -179,6 +188,155 @@ fn collection_matches_query(item: &CollectionItem, query: &str) -> bool {
     ]
     .iter()
     .any(|value| value.to_lowercase().contains(&query))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CollectionQueryError {
+    UnsupportedMediaType,
+    UnsupportedSortOrder,
+}
+
+impl CollectionQueryError {
+    fn user_message(self) -> &'static str {
+        match self {
+            Self::UnsupportedMediaType => {
+                "该类型筛选没有已确认的数据契约；当前只支持全部、电影和剧集。"
+            }
+            Self::UnsupportedSortOrder => {
+                "该排序方式没有已确认的数据字段；当前只支持默认、片名、评分和上映年份。"
+            }
+        }
+    }
+}
+
+fn media_type_matches(item: &CollectionItem, media_type: &str) -> Result<bool, CollectionQueryError> {
+    let normalized = item.video_type.trim().to_ascii_lowercase();
+    match media_type {
+        MEDIA_TYPE_ALL => Ok(true),
+        MEDIA_TYPE_MOVIE => Ok(matches!(
+            normalized.as_str(),
+            "movie" | "film" | "100" | "电影"
+        )),
+        MEDIA_TYPE_TV => Ok(matches!(
+            normalized.as_str(),
+            "tv" | "series" | "电视剧" | "剧集"
+        )),
+        _ => Err(CollectionQueryError::UnsupportedMediaType),
+    }
+}
+
+fn score_value(item: &CollectionItem) -> Option<f32> {
+    item.display_score().trim().parse::<f32>().ok()
+}
+
+fn release_year_value(item: &CollectionItem) -> Option<i32> {
+    item.release_year.trim().parse::<i32>().ok()
+}
+
+fn compare_text(left: &CollectionItem, right: &CollectionItem) -> SortOrdering {
+    left.title
+        .to_lowercase()
+        .cmp(&right.title.to_lowercase())
+        .then_with(|| left.collection_id.cmp(&right.collection_id))
+}
+
+fn compare_optional_number<T: PartialOrd>(
+    left: Option<T>,
+    right: Option<T>,
+    descending: bool,
+) -> SortOrdering {
+    match (left, right) {
+        (Some(left), Some(right)) => {
+            let ordering = left.partial_cmp(&right).unwrap_or(SortOrdering::Equal);
+            if descending {
+                ordering.reverse()
+            } else {
+                ordering
+            }
+        }
+        (Some(_), None) => SortOrdering::Less,
+        (None, Some(_)) => SortOrdering::Greater,
+        (None, None) => SortOrdering::Equal,
+    }
+}
+
+fn apply_collection_query(
+    items: &[CollectionItem],
+    query: &str,
+    media_type: &str,
+    sort_order: &str,
+) -> Result<Vec<CollectionItem>, CollectionQueryError> {
+    if !matches!(media_type, MEDIA_TYPE_ALL | MEDIA_TYPE_MOVIE | MEDIA_TYPE_TV) {
+        return Err(CollectionQueryError::UnsupportedMediaType);
+    }
+    if !matches!(
+        sort_order,
+        SORT_DEFAULT | SORT_TITLE_ASC | SORT_SCORE_DESC | SORT_RELEASE_YEAR_DESC
+    ) {
+        return Err(CollectionQueryError::UnsupportedSortOrder);
+    }
+
+    let mut matches: Vec<CollectionItem> = items
+        .iter()
+        .filter(|item| collection_matches_query(item, query))
+        .filter(|item| media_type_matches(item, media_type).unwrap_or(false))
+        .cloned()
+        .collect();
+
+    match sort_order {
+        SORT_DEFAULT => {}
+        SORT_TITLE_ASC => matches.sort_by(compare_text),
+        SORT_SCORE_DESC => matches.sort_by(|left, right| {
+            compare_optional_number(score_value(left), score_value(right), true)
+                .then_with(|| compare_text(left, right))
+        }),
+        SORT_RELEASE_YEAR_DESC => matches.sort_by(|left, right| {
+            compare_optional_number(release_year_value(left), release_year_value(right), true)
+            .then_with(|| compare_text(left, right))
+        }),
+        _ => unreachable!("sort order validated above"),
+    }
+
+    Ok(matches)
+}
+
+fn media_type_label(media_type: &str) -> &'static str {
+    match media_type {
+        MEDIA_TYPE_ALL => "全部类型",
+        MEDIA_TYPE_MOVIE => "电影",
+        MEDIA_TYPE_TV => "剧集",
+        _ => "未知类型",
+    }
+}
+
+fn sort_order_label(sort_order: &str) -> &'static str {
+    match sort_order {
+        SORT_DEFAULT => "默认顺序",
+        SORT_TITLE_ASC => "片名 A-Z",
+        SORT_SCORE_DESC => "评分高到低",
+        SORT_RELEASE_YEAR_DESC => "上映年份新到旧",
+        _ => "未知排序",
+    }
+}
+
+fn query_scope(
+    source_count: usize,
+    result_count: usize,
+    query: &str,
+    media_type: &str,
+    sort_order: &str,
+) -> String {
+    if query.trim().is_empty() && media_type == MEDIA_TYPE_ALL && sort_order == SORT_DEFAULT {
+        return format!("当前已加载范围：{} 部", source_count);
+    }
+
+    format!(
+        "仅当前已加载 {} 部 · 类型：{} · 排序：{} · 匹配 {} 部",
+        source_count,
+        media_type_label(media_type),
+        sort_order_label(sort_order),
+        result_count
+    )
 }
 
 fn initial_poster_range_for_ui(ui: &AppWindow) -> PosterLoadRange {
@@ -512,6 +670,8 @@ impl AppCoordinator {
         Self::clear_continue_watching(&self.ui);
         self.ui.set_collection_count(0);
         self.ui.set_apple_search_input("".into());
+        self.ui.set_media_type_filter(MEDIA_TYPE_ALL.into());
+        self.ui.set_sort_order(SORT_DEFAULT.into());
         self.ui.set_search_active(false);
         self.ui.set_search_loading(false);
         self.ui.set_search_error("".into());
@@ -664,6 +824,8 @@ impl AppCoordinator {
         self.search_generation.fetch_add(1, Ordering::SeqCst);
         self.loaded_collections.lock().unwrap().clear();
         self.ui.set_apple_search_input("".into());
+        self.ui.set_media_type_filter(MEDIA_TYPE_ALL.into());
+        self.ui.set_sort_order(SORT_DEFAULT.into());
         self.ui.set_search_active(false);
         self.ui.set_search_loading(false);
         self.ui.set_search_error("".into());
@@ -737,6 +899,8 @@ impl AppCoordinator {
         self.search_generation.fetch_add(1, Ordering::SeqCst);
         self.loaded_collections.lock().unwrap().clear();
         self.ui.set_apple_search_input("".into());
+        self.ui.set_media_type_filter(MEDIA_TYPE_ALL.into());
+        self.ui.set_sort_order(SORT_DEFAULT.into());
         self.ui.set_search_active(false);
         self.ui.set_search_loading(false);
         self.ui.set_search_error("".into());
@@ -1353,6 +1517,8 @@ impl AppCoordinator {
         let request_id = image_request_gate.begin();
         ui.set_collections(ModelRc::from(Rc::new(VecModel::from(collection_ui_items(&items)))));
         ui.set_collection_count(count as i32);
+        ui.set_media_type_filter(MEDIA_TYPE_ALL.into());
+        ui.set_sort_order(SORT_DEFAULT.into());
         ui.set_search_active(false);
         ui.set_search_loading(false);
         ui.set_search_error("".into());
@@ -1370,10 +1536,12 @@ impl AppCoordinator {
         );
     }
 
-    fn start_local_collection_search(
+    fn start_local_collection_query(
         ui_weak: slint::Weak<AppWindow>,
         snapshot: Vec<CollectionItem>,
         query: String,
+        media_type: String,
+        sort_order: String,
         source_count: usize,
         generation: u64,
         generation_gate: Arc<AtomicU64>,
@@ -1398,47 +1566,85 @@ impl AppCoordinator {
             let last_poster_range = Arc::clone(&last_poster_range);
             let query_for_thread = query.clone();
             let query_for_ui = query_for_thread.clone();
+            let media_type_for_thread = media_type.clone();
+            let media_type_for_ui = media_type_for_thread.clone();
+            let sort_order_for_thread = sort_order.clone();
+            let sort_order_for_ui = sort_order_for_thread.clone();
 
             std::thread::spawn(move || {
-                let matches: Vec<CollectionItem> = snapshot
-                    .into_iter()
-                    .filter(|item| collection_matches_query(item, &query_for_thread))
-                    .collect();
+                let matches = apply_collection_query(
+                    &snapshot,
+                    &query_for_thread,
+                    &media_type_for_thread,
+                    &sort_order_for_thread,
+                );
 
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = ui_weak.upgrade() else { return };
                     if generation_gate.load(Ordering::SeqCst) != generation
-                        || ui.get_apple_search_input().as_str() != query_for_ui
+                        || ui.get_apple_search_input().trim() != query_for_ui
+                        || ui.get_media_type_filter().as_str() != media_type_for_ui
+                        || ui.get_sort_order().as_str() != sort_order_for_ui
                     {
                         return;
                     }
 
-                    let count = matches.len();
-                    let request_id = image_request_gate.begin();
-                    ui.set_collections(ModelRc::from(Rc::new(VecModel::from(
-                        collection_ui_items(&matches),
-                    ))));
-                    ui.set_collection_count(count as i32);
-                    ui.set_search_active(true);
-                    ui.set_search_loading(false);
-                    ui.set_search_error("".into());
-                    ui.set_search_scope(
-                        format!("仅搜索当前已加载 {} 部 · 匹配 {} 部", source_count, count).into(),
-                    );
-                    ui.set_status_message(
-                        format!("搜索完成：已加载范围内匹配 {} 部影视作品。", count).into(),
-                    );
-                    AppCoordinator::spawn_visible_poster_fetching(
-                        &ui,
-                        nas_client,
-                        session,
-                        image_cache,
-                        image_request_gate,
-                        request_id,
-                        initial_poster_range_for_ui(&ui),
-                        &matches,
-                        &last_poster_range,
-                    );
+                    match matches {
+                        Ok(matches) => {
+                            let count = matches.len();
+                            let request_id = image_request_gate.begin();
+                            ui.set_collections(ModelRc::from(Rc::new(VecModel::from(
+                                collection_ui_items(&matches),
+                            ))));
+                            ui.set_collection_count(count as i32);
+                            ui.set_search_active(
+                                !query_for_ui.is_empty()
+                                    || media_type_for_ui != MEDIA_TYPE_ALL
+                                    || sort_order_for_ui != SORT_DEFAULT,
+                            );
+                            ui.set_search_loading(false);
+                            ui.set_search_error("".into());
+                            ui.set_search_scope(
+                                query_scope(
+                                    source_count,
+                                    count,
+                                    &query_for_ui,
+                                    &media_type_for_ui,
+                                    &sort_order_for_ui,
+                                )
+                                .into(),
+                            );
+                            ui.set_status_message(
+                                format!(
+                                    "已应用{}、{}：当前范围匹配 {} 部影视作品。",
+                                    media_type_label(&media_type_for_ui),
+                                    sort_order_label(&sort_order_for_ui),
+                                    count
+                                )
+                                .into(),
+                            );
+                            AppCoordinator::spawn_visible_poster_fetching(
+                                &ui,
+                                nas_client,
+                                session,
+                                image_cache,
+                                image_request_gate,
+                                request_id,
+                                initial_poster_range_for_ui(&ui),
+                                &matches,
+                                &last_poster_range,
+                            );
+                        }
+                        Err(error) => {
+                            ui.set_search_loading(false);
+                            ui.set_search_active(true);
+                            ui.set_search_error(error.user_message().into());
+                            ui.set_search_scope(
+                                format!("仅当前已加载 {} 部 · 条件不可用", source_count).into(),
+                            );
+                            ui.set_status_message("当前组合条件不可用，请调整筛选或排序。".into());
+                        }
+                    }
                 });
             });
         };
@@ -1450,9 +1656,11 @@ impl AppCoordinator {
         }
     }
 
-    fn handle_local_search_input(
+    fn handle_local_query_input(
         ui: &AppWindow,
         query: String,
+        media_type: String,
+        sort_order: String,
         delayed: bool,
         loaded_collections: &Arc<Mutex<Vec<CollectionItem>>>,
         search_generation: &Arc<AtomicU64>,
@@ -1464,10 +1672,12 @@ impl AppCoordinator {
     ) {
         let generation = search_generation.fetch_add(1, Ordering::SeqCst) + 1;
         let query = query.trim().to_string();
+        let media_type = media_type.trim().to_string();
+        let sort_order = sort_order.trim().to_string();
         ui.set_search_error("".into());
 
         let snapshot = loaded_collections.lock().unwrap().clone();
-        if query.is_empty() {
+        if query.is_empty() && media_type == MEDIA_TYPE_ALL && sort_order == SORT_DEFAULT {
             AppCoordinator::restore_loaded_collections(
                 ui,
                 snapshot,
@@ -1481,15 +1691,33 @@ impl AppCoordinator {
             return;
         }
 
+        if let Err(error) = apply_collection_query(&[], &query, &media_type, &sort_order) {
+            ui.set_search_active(true);
+            ui.set_search_loading(false);
+            ui.set_search_error(error.user_message().into());
+            ui.set_search_scope(format!("仅当前已加载 {} 部 · 条件不可用", snapshot.len()).into());
+            ui.set_status_message("当前组合条件不可用，请调整筛选或排序。".into());
+            return;
+        }
+
         let source_count = snapshot.len();
         ui.set_search_active(true);
         ui.set_search_loading(true);
-        ui.set_search_scope(format!("仅搜索当前已加载 {} 部", source_count).into());
-        ui.set_status_message("正在等待搜索输入稳定...".into());
-        AppCoordinator::start_local_collection_search(
+        ui.set_search_scope(
+            format!("仅当前已加载 {} 部 · 正在应用筛选和排序", source_count).into(),
+        );
+        ui.set_status_message(if delayed {
+            "正在等待搜索输入稳定..."
+        } else {
+            "正在应用当前已加载范围的筛选和排序..."
+        }
+        .into());
+        AppCoordinator::start_local_collection_query(
             ui.as_weak(),
             snapshot,
             query,
+            media_type,
+            sort_order,
             source_count,
             generation,
             Arc::clone(search_generation),
@@ -1685,9 +1913,11 @@ impl AppCoordinator {
             let Some(ui) = ui_weak_search.upgrade() else {
                 return;
             };
-            AppCoordinator::handle_local_search_input(
+            AppCoordinator::handle_local_query_input(
                 &ui,
                 query.to_string(),
+                ui.get_media_type_filter().to_string(),
+                ui.get_sort_order().to_string(),
                 true,
                 &loaded_collections_for_search,
                 &search_generation_for_search,
@@ -1711,9 +1941,11 @@ impl AppCoordinator {
             let Some(ui) = ui_weak_search.upgrade() else {
                 return;
             };
-            AppCoordinator::handle_local_search_input(
+            AppCoordinator::handle_local_query_input(
                 &ui,
                 query.to_string(),
+                ui.get_media_type_filter().to_string(),
+                ui.get_sort_order().to_string(),
                 false,
                 &loaded_collections_for_search,
                 &search_generation_for_search,
@@ -1738,9 +1970,11 @@ impl AppCoordinator {
                 return;
             };
             let query = ui.get_apple_search_input().to_string();
-            AppCoordinator::handle_local_search_input(
+            AppCoordinator::handle_local_query_input(
                 &ui,
                 query,
+                ui.get_media_type_filter().to_string(),
+                ui.get_sort_order().to_string(),
                 false,
                 &loaded_collections_for_search,
                 &search_generation_for_search,
@@ -1749,6 +1983,95 @@ impl AppCoordinator {
                 &nas_client_for_search,
                 &session_for_search,
                 &last_poster_range_for_search,
+            );
+        });
+
+        let ui_weak_filter = self.ui.as_weak();
+        let loaded_collections_for_filter = Arc::clone(&loaded_collections);
+        let search_generation_for_filter = Arc::clone(&search_generation);
+        let image_cache_for_filter = image_cache.clone();
+        let image_request_gate_for_filter = image_request_gate.clone();
+        let nas_client_for_filter = Arc::clone(&nas_client);
+        let session_for_filter = Arc::clone(&session);
+        let last_poster_range_for_filter = Arc::clone(&last_poster_range);
+        self.ui.on_filter_changed(move |media_type| {
+            let Some(ui) = ui_weak_filter.upgrade() else {
+                return;
+            };
+            ui.set_media_type_filter(media_type.clone());
+            AppCoordinator::handle_local_query_input(
+                &ui,
+                ui.get_apple_search_input().to_string(),
+                media_type.to_string(),
+                ui.get_sort_order().to_string(),
+                false,
+                &loaded_collections_for_filter,
+                &search_generation_for_filter,
+                &image_cache_for_filter,
+                &image_request_gate_for_filter,
+                &nas_client_for_filter,
+                &session_for_filter,
+                &last_poster_range_for_filter,
+            );
+        });
+
+        let ui_weak_sort = self.ui.as_weak();
+        let loaded_collections_for_sort = Arc::clone(&loaded_collections);
+        let search_generation_for_sort = Arc::clone(&search_generation);
+        let image_cache_for_sort = image_cache.clone();
+        let image_request_gate_for_sort = image_request_gate.clone();
+        let nas_client_for_sort = Arc::clone(&nas_client);
+        let session_for_sort = Arc::clone(&session);
+        let last_poster_range_for_sort = Arc::clone(&last_poster_range);
+        self.ui.on_sort_changed(move |sort_order| {
+            let Some(ui) = ui_weak_sort.upgrade() else {
+                return;
+            };
+            ui.set_sort_order(sort_order.clone());
+            AppCoordinator::handle_local_query_input(
+                &ui,
+                ui.get_apple_search_input().to_string(),
+                ui.get_media_type_filter().to_string(),
+                sort_order.to_string(),
+                false,
+                &loaded_collections_for_sort,
+                &search_generation_for_sort,
+                &image_cache_for_sort,
+                &image_request_gate_for_sort,
+                &nas_client_for_sort,
+                &session_for_sort,
+                &last_poster_range_for_sort,
+            );
+        });
+
+        let ui_weak_clear = self.ui.as_weak();
+        let loaded_collections_for_clear = Arc::clone(&loaded_collections);
+        let search_generation_for_clear = Arc::clone(&search_generation);
+        let image_cache_for_clear = image_cache.clone();
+        let image_request_gate_for_clear = image_request_gate.clone();
+        let nas_client_for_clear = Arc::clone(&nas_client);
+        let session_for_clear = Arc::clone(&session);
+        let last_poster_range_for_clear = Arc::clone(&last_poster_range);
+        self.ui.on_clear_query(move || {
+            let Some(ui) = ui_weak_clear.upgrade() else {
+                return;
+            };
+            ui.set_apple_search_input("".into());
+            ui.set_media_type_filter(MEDIA_TYPE_ALL.into());
+            ui.set_sort_order(SORT_DEFAULT.into());
+            AppCoordinator::handle_local_query_input(
+                &ui,
+                "".to_string(),
+                MEDIA_TYPE_ALL.to_string(),
+                SORT_DEFAULT.to_string(),
+                false,
+                &loaded_collections_for_clear,
+                &search_generation_for_clear,
+                &image_cache_for_clear,
+                &image_request_gate_for_clear,
+                &nas_client_for_clear,
+                &session_for_clear,
+                &last_poster_range_for_clear,
             );
         });
 
@@ -1808,6 +2131,8 @@ impl AppCoordinator {
             search_generation_for_classification.fetch_add(1, Ordering::SeqCst);
             loaded_collections_for_classification.lock().unwrap().clear();
             ui.set_apple_search_input("".into());
+            ui.set_media_type_filter(MEDIA_TYPE_ALL.into());
+            ui.set_sort_order(SORT_DEFAULT.into());
             ui.set_search_active(false);
             ui.set_search_loading(false);
             ui.set_search_error("".into());
@@ -1949,6 +2274,8 @@ impl AppCoordinator {
             search_generation.fetch_add(1, Ordering::SeqCst);
             loaded_collections.lock().unwrap().clear();
             ui.set_apple_search_input("".into());
+            ui.set_media_type_filter(MEDIA_TYPE_ALL.into());
+            ui.set_sort_order(SORT_DEFAULT.into());
             ui.set_search_active(false);
             ui.set_search_loading(false);
             ui.set_search_error("".into());

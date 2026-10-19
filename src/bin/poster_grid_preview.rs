@@ -11,7 +11,7 @@ use z_video::player::MockPlayer;
 use z_video::storage::credentials::MemoryCredentialStore;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (width, height, output, hold_ms) = parse_args()?;
+    let (width, height, output, hold_ms, media_type, sort_order) = parse_args()?;
     let coordinator = AppCoordinator::with_deps(
         Arc::new(MockPlayer::new()),
         false,
@@ -27,7 +27,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     window.set_session_nas_name("脱敏 NAS".into());
     window.set_selected_classification_id("fixture-classification".into());
     window.set_selected_classification_name("脱敏海报墙".into());
-    window.set_collection_count(9);
+    let collections = preview_collections(&media_type, &sort_order);
+    let result_count = collections.len();
+    window.set_collection_count(result_count as i32);
+    window.set_media_type_filter(media_type.clone().into());
+    window.set_sort_order(sort_order.clone().into());
+    window.set_search_active(media_type != "all" || sort_order != "default");
+    window.set_search_scope(
+        if media_type == "all" && sort_order == "default" {
+            "当前已加载范围：9 部".to_string()
+        } else {
+            format!(
+                "仅当前已加载 9 部 · 类型：{} · 排序：{} · 匹配 {} 部",
+                media_type_label(&media_type),
+                sort_order_label(&sort_order),
+                result_count
+            )
+        }
+        .into(),
+    );
     window.set_classifications(ModelRc::from(Rc::new(VecModel::from(vec![
         ClassificationUiItem {
             id: "fixture-classification".into(),
@@ -37,7 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     ]))));
     window.set_collections(ModelRc::from(Rc::new(
-        VecModel::from(fixture_collections()),
+        VecModel::from(collections),
     )));
 
     window
@@ -74,12 +92,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn parse_args() -> Result<(u32, u32, PathBuf, u64), Box<dyn std::error::Error>> {
+fn parse_args() -> Result<(u32, u32, PathBuf, u64, String, String), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     let mut width = 1440;
     let mut height = 900;
     let mut output = PathBuf::from("poster-grid-preview.png");
     let mut hold_ms = 600;
+    let mut media_type = "all".to_string();
+    let mut sort_order = "default".to_string();
     let mut index = 1;
     while index < args.len() {
         match args[index].as_str() {
@@ -105,6 +125,20 @@ fn parse_args() -> Result<(u32, u32, PathBuf, u64), Box<dyn std::error::Error>> 
                     .ok_or("--hold-ms requires a value")?
                     .parse()?;
             }
+            "--media-type" => {
+                index += 1;
+                media_type = args
+                    .get(index)
+                    .ok_or("--media-type requires a value")?
+                    .to_string();
+            }
+            "--sort-order" => {
+                index += 1;
+                sort_order = args
+                    .get(index)
+                    .ok_or("--sort-order requires a value")?
+                    .to_string();
+            }
             value => return Err(format!("unknown argument: {value}").into()),
         }
         index += 1;
@@ -112,7 +146,59 @@ fn parse_args() -> Result<(u32, u32, PathBuf, u64), Box<dyn std::error::Error>> 
     if width == 0 || height == 0 {
         return Err("preview dimensions must be positive".into());
     }
-    Ok((width, height, output, hold_ms))
+    Ok((width, height, output, hold_ms, media_type, sort_order))
+}
+
+fn media_type_label(media_type: &str) -> &'static str {
+    match media_type {
+        "all" => "全部类型",
+        "movie" => "电影",
+        "tv" => "剧集",
+        _ => "未知类型",
+    }
+}
+
+fn sort_order_label(sort_order: &str) -> &'static str {
+    match sort_order {
+        "default" => "默认顺序",
+        "title_asc" => "片名 A-Z",
+        "score_desc" => "评分高到低",
+        "release_year_desc" => "上映年份新到旧",
+        _ => "未知排序",
+    }
+}
+
+fn preview_collections(media_type: &str, sort_order: &str) -> Vec<CollectionUiItem> {
+    let mut collections: Vec<CollectionUiItem> = fixture_collections()
+        .into_iter()
+        .filter(|item| match media_type {
+            "movie" => item.video_type == "电影",
+            "tv" => item.video_type == "电视剧",
+            _ => true,
+        })
+        .collect();
+
+    match sort_order {
+        "title_asc" => collections.sort_by(|left, right| {
+            left.title
+                .to_lowercase()
+                .cmp(&right.title.to_lowercase())
+        }),
+        "score_desc" => collections.sort_by(|left, right| {
+            right
+                .score
+                .parse::<f32>()
+                .ok()
+                .partial_cmp(&left.score.parse::<f32>().ok())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+        "release_year_desc" => collections.sort_by(|left, right| {
+            right.release_year.cmp(&left.release_year)
+        }),
+        _ => {}
+    }
+
+    collections
 }
 
 fn fixture_collections() -> Vec<CollectionUiItem> {
