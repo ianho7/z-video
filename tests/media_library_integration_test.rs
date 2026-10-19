@@ -45,7 +45,11 @@ fn test_media_library_integration_comprehensive_suite() {
     // Scenario 2: Login -> Media Library Auto-Loading & Classification Flow
     // -------------------------------------------------------------
     let player = Arc::new(MockPlayer::new());
-    let nas_client = Arc::new(MockNasClient::new());
+    let mut mock_client = MockNasClient::new();
+    let shared_cover = "/zvideo/cover/review-shared.jpg".to_string();
+    mock_client.mock_collections[0].cover = shared_cover.clone();
+    mock_client.mock_collections[1].cover = shared_cover;
+    let nas_client = Arc::new(mock_client);
     let cred_store = Arc::new(MemoryCredentialStore::new());
 
     let coordinator = AppCoordinator::with_deps(player, false, nas_client.clone(), cred_store)
@@ -84,6 +88,11 @@ fn test_media_library_integration_comprehensive_suite() {
     assert_eq!(first_col.release_year.as_str(), "2014");
     assert_eq!(first_col.video_type.as_str(), "电影");
     assert_eq!(first_col.score.as_str(), "9.4");
+
+    pump_library_event_loop();
+    let collections = coordinator.window().get_collections();
+    assert_eq!(collections.row_data(0).unwrap().cover_status, "ready");
+    assert_eq!(collections.row_data(1).unwrap().cover_status, "ready");
 
     // Reproduce the async post-login refresh state: the category result has
     // arrived, but the selected category ID has not yet been copied to UI.

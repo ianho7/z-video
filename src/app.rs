@@ -2,7 +2,7 @@ use log::{error, info, warn};
 use raw_window_handle::HasWindowHandle;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::cmp::Ordering as SortOrdering;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -97,6 +97,12 @@ const POSTER_INITIAL_WINDOW: usize = 24;
 struct PosterLoadRange {
     start: usize,
     end: usize,
+}
+
+#[derive(Debug, Clone)]
+struct PosterFetchItem {
+    item: CollectionItem,
+    collection_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -402,9 +408,8 @@ fn poster_items_for_range(
     ui: &AppWindow,
     source_items: &[CollectionItem],
     range: PosterLoadRange,
-) -> Vec<CollectionItem> {
+) -> Vec<PosterFetchItem> {
     let model = ui.get_collections();
-    let mut seen_covers = HashSet::new();
     let mut items = Vec::new();
 
     for index in range.start..range.end.min(model.row_count()) {
@@ -421,13 +426,33 @@ fn poster_items_for_range(
         else {
             continue;
         };
-        if item.cover.is_empty() || !seen_covers.insert(item.cover.clone()) {
+        if item.cover.is_empty() {
             continue;
         }
         items.push(item.clone());
     }
 
-    items
+    group_poster_items(items)
+}
+
+fn group_poster_items(items: Vec<CollectionItem>) -> Vec<PosterFetchItem> {
+    let mut groups: Vec<PosterFetchItem> = Vec::new();
+    let mut cover_to_group = HashMap::<String, usize>::new();
+
+    for item in items {
+        let cover_path = item.cover.clone();
+        if let Some(group_index) = cover_to_group.get(&cover_path).copied() {
+            groups[group_index].collection_ids.push(item.collection_id);
+        } else {
+            cover_to_group.insert(cover_path, groups.len());
+            groups.push(PosterFetchItem {
+                collection_ids: vec![item.collection_id.clone()],
+                item,
+            });
+        }
+    }
+
+    groups
 }
 
 fn set_cover_status(ui: &AppWindow, collection_id: &str, status: &str) {
@@ -1949,10 +1974,14 @@ impl AppCoordinator {
         image_cache: ImageCache,
         image_request_gate: ImageRequestGate,
         request_id: u64,
-        items: Vec<CollectionItem>,
+        items: Vec<PosterFetchItem>,
     ) {
         std::thread::spawn(move || {
-            for item in items {
+            for PosterFetchItem {
+                item,
+                collection_ids,
+            } in items
+            {
                 if !image_request_gate.is_current(request_id) {
                     return;
                 }
@@ -1978,7 +2007,6 @@ impl AppCoordinator {
                             Ok(decoded) => decoded,
                             Err(error) => {
                                 warn!("Failed to decode cover image: {}", error);
-                                let cid = item.collection_id.clone();
                                 let ui_weak = ui_weak.clone();
                                 let image_request_gate = image_request_gate.clone();
                                 let _ = slint::invoke_from_event_loop(move || {
@@ -1986,14 +2014,15 @@ impl AppCoordinator {
                                         return;
                                     }
                                     if let Some(ui) = ui_weak.upgrade() {
-                                        set_cover_status(&ui, &cid, "failed");
+                                        for collection_id in collection_ids {
+                                            set_cover_status(&ui, &collection_id, "failed");
+                                        }
                                     }
                                 });
                                 continue;
                             }
                         };
 
-                        let cid = item.collection_id.clone();
                         let ui_weak = ui_weak.clone();
                         let image_request_gate = image_request_gate.clone();
 
@@ -2007,14 +2036,16 @@ impl AppCoordinator {
                                     return;
                                 }
                                 let model = ui.get_collections();
-                                for i in 0..model.row_count() {
-                                    if let Some(mut row) = model.row_data(i) {
-                                        if row.collection_id.as_str() == cid {
-                                            row.cover_image = slint_img;
-                                            row.has_cover = true;
-                                            row.cover_status = "ready".into();
-                                            model.set_row_data(i, row);
-                                            break;
+                                for collection_id in collection_ids {
+                                    for i in 0..model.row_count() {
+                                        if let Some(mut row) = model.row_data(i) {
+                                            if row.collection_id.as_str() == collection_id {
+                                                row.cover_image = slint_img.clone();
+                                                row.has_cover = true;
+                                                row.cover_status = "ready".into();
+                                                model.set_row_data(i, row);
+                                                break;
+                                            }
                                         }
                                     }
                                 }
@@ -2026,7 +2057,6 @@ impl AppCoordinator {
                             "Failed to fetch cover image: {}",
                             sanitize_log_message(&e.to_string())
                         );
-                        let cid = item.collection_id.clone();
                         let ui_weak_for_failure = ui_weak.clone();
                         let image_request_gate_for_failure = image_request_gate.clone();
                         let _ = slint::invoke_from_event_loop(move || {
@@ -2034,7 +2064,9 @@ impl AppCoordinator {
                                 return;
                             }
                             if let Some(ui) = ui_weak_for_failure.upgrade() {
-                                set_cover_status(&ui, &cid, "failed");
+                                for collection_id in collection_ids {
+                                    set_cover_status(&ui, &collection_id, "failed");
+                                }
                             }
                         });
                         if e.requires_reauthentication() {
