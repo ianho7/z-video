@@ -18,7 +18,6 @@ fn context(episode_id: &str) -> LastPlaybackContext {
         episode_id: episode_id.to_string(),
     }
 }
-
 fn detail(history: Option<PlaybackHistory>, duration: Option<&str>) -> CollectionDetail {
     CollectionDetail {
         collection_id: "collection-fixture".to_string(),
