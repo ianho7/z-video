@@ -36,20 +36,24 @@ $stdoutPath = "$logStem.stdout.log"
 $oldBackend = $env:SLINT_BACKEND
 $oldScale = $env:SLINT_SCALE_FACTOR
 $oldReduced = $env:Z_VIDEO_REDUCED_TRANSPARENCY
+$oldHighContrast = $env:Z_VIDEO_HIGH_CONTRAST
 try {
     $env:SLINT_BACKEND = 'winit-skia'
     $env:SLINT_SCALE_FACTOR = ($ScalePercent / 100).ToString([System.Globalization.CultureInfo]::InvariantCulture)
     if ($ReducedTransparency) {
         $env:Z_VIDEO_REDUCED_TRANSPARENCY = '1'
+        Remove-Item Env:Z_VIDEO_HIGH_CONTRAST -ErrorAction SilentlyContinue
     } else {
         Remove-Item Env:Z_VIDEO_REDUCED_TRANSPARENCY -ErrorAction SilentlyContinue
+        Remove-Item Env:Z_VIDEO_HIGH_CONTRAST -ErrorAction SilentlyContinue
     }
 
     $arguments = @(
         '--width', "$LogicalWidth",
         '--height', "$LogicalHeight",
         '--output', $outputPath,
-        '--hold-ms', "$HoldMs"
+        '--hold-ms', "$HoldMs",
+        '--material-evidence'
     )
     $process = Start-Process -FilePath $executablePath `
         -ArgumentList $arguments `
@@ -80,8 +84,25 @@ try {
     $process.WaitForExit()
     $process.Refresh()
     $hasExited = $process.HasExited
-    $exitDescription = if ($null -eq $exitCode) { 'unknown' } else { "$exitCode" }
-    Write-Output "exit=$exitDescription has_exited=$hasExited output=$outputPath"
+    $exitCode = $null
+    $exitCodeReadFailed = $false
+    if ($hasExited) {
+        try {
+            $exitCode = $process.ExitCode
+        } catch {
+            $exitCodeReadFailed = $true
+        }
+    } else {
+        $exitCodeReadFailed = $true
+    }
+    if ($null -eq $exitCode) {
+        $exitCodeReadFailed = $true
+    }
+    $exitDescription = if ($null -eq $exitCode) { 'unavailable' } else { "$exitCode" }
+    Write-Output "exit_code=$exitDescription source=Process.ExitCode has_exited=$hasExited output=$outputPath"
+    if ($exitCodeReadFailed) {
+        Write-Output 'exit_code_read=unavailable'
+    }
     if (Test-Path -LiteralPath $stderrPath) {
         Get-Content -LiteralPath $stderrPath
     }
@@ -96,4 +117,5 @@ finally {
     if ($null -eq $oldBackend) { Remove-Item Env:SLINT_BACKEND -ErrorAction SilentlyContinue } else { $env:SLINT_BACKEND = $oldBackend }
     if ($null -eq $oldScale) { Remove-Item Env:SLINT_SCALE_FACTOR -ErrorAction SilentlyContinue } else { $env:SLINT_SCALE_FACTOR = $oldScale }
     if ($null -eq $oldReduced) { Remove-Item Env:Z_VIDEO_REDUCED_TRANSPARENCY -ErrorAction SilentlyContinue } else { $env:Z_VIDEO_REDUCED_TRANSPARENCY = $oldReduced }
+    if ($null -eq $oldHighContrast) { Remove-Item Env:Z_VIDEO_HIGH_CONTRAST -ErrorAction SilentlyContinue } else { $env:Z_VIDEO_HIGH_CONTRAST = $oldHighContrast }
 }

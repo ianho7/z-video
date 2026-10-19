@@ -52,4 +52,4 @@ JSON catalog 是从选定版本脚本提取的调用目录，不是固件完整 
 
 已完成 Windows 原生 fixture：同一 `poster_grid_preview.exe` 生成 Skia 默认图和 `Z_VIDEO_REDUCED_TRANSPARENCY=1` 不透明回退图，logical `1440x900`、PNG `1800x1125`、`GetDpiForWindow=120`、scale override `125%`。证据和命令见 `docs/design/evidence/ticket-09/README.md`。blur 只在侧栏/工具栏，海报网格、卡片、详情和视频区域未加入 blur。
 
-非 Windows renderer、macOS/Linux 运行、`renderer-skia-software`、真实视频帧和性能比例仍未验证。高对比/低透明度目前通过环境变量分支验证，不等于已接入系统设置探测。回滚必须同时撤销 git-only Slint 配置和 `.slint` 中的 `backdrop-blur`，再回到 1.18.1 等稳定依赖。
+非 Windows renderer、macOS/Linux 运行、`renderer-skia-software`、真实视频帧和性能比例仍未验证。高对比/低透明度目前通过环境变量分支验证，不等于已接入系统设置探测。回滚必须同时撤销 git-only Slint 配置和 `.slint` 中的 `backdrop-blur`，再回到稳定依赖。

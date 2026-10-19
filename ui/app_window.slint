@@ -6,7 +6,6 @@ export struct ClassificationUiItem {
     count: int,
     is_selected: bool,
 }
-
 export struct CollectionUiItem {
     collection_id: string,
     title: string,
@@ -333,6 +332,22 @@ component ShellSearchField inherits Rectangle {
 
 }
 
+// Evidence-only underlay used by poster_grid_preview --material-evidence.
+// It is disabled by default and is not a product decoration. The fixed hard
+// edges make a real backdrop blur observable through the shell surfaces.
+component MaterialEvidenceBackdrop inherits Rectangle {
+    HorizontalLayout {
+        Rectangle { background: #ef4f4f; horizontal-stretch: 1; }
+        Rectangle { background: #32b8e8; horizontal-stretch: 1; }
+        Rectangle { background: #f2d34f; horizontal-stretch: 1; }
+        Rectangle { background: #8257d6; horizontal-stretch: 1; }
+        Rectangle { background: #36c884; horizontal-stretch: 1; }
+        Rectangle { background: #ee5ca9; horizontal-stretch: 1; }
+        Rectangle { background: #f28c42; horizontal-stretch: 1; }
+    }
+    Rectangle { y: parent.height * 0.28; width: parent.width; height: 4px; background: #ffffff; }
+    Rectangle { y: parent.height * 0.64; width: parent.width; height: 3px; background: #101113; }
+}
 // A local copy of the standard focus/click bridge. Keeping it beside the
 // card makes the card a real focus target while retaining the existing Rust
 // collection-click callback.
@@ -530,6 +545,8 @@ component DetailEpisodeRow inherits Rectangle {
 component AppleWorkspace inherits Rectangle {
     in property <bool> sidebar_visible: true;
     in property <bool> reduced_transparency: false;
+    // Evidence-only switch; production defaults to false.
+    in property <bool> material_evidence: false;
     in property <string> current_view: "library";
     in property <[ClassificationUiItem]> classifications: [];
     in property <[CollectionUiItem]> collections: [];
@@ -615,6 +632,14 @@ component AppleWorkspace inherits Rectangle {
     }
 
     background: ShellTheme.canvas;
+
+    if root.material_evidence: MaterialEvidenceBackdrop {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+    }
+
 
     workspace_focus := FocusScope {
         width: 100%;
@@ -1558,6 +1583,8 @@ export component AppWindow inherits Window {
     in-out property <bool> apple_sidebar_visible: true;
     // Rust sets this for reduced-transparency/high-contrast policy.
     in-out property <bool> reduced_transparency: false;
+    // Evidence-only switch, set by poster_grid_preview.
+    in-out property <bool> material_evidence: false;
     in-out property <string> apple_search_input: "";
 
     // Login Form State
@@ -2971,6 +2998,7 @@ export component AppWindow inherits Window {
         visible: root.is_logged_in && root.current_view != "player";
         sidebar_visible: root.apple_sidebar_visible;
         reduced_transparency: root.reduced_transparency;
+        material_evidence: root.material_evidence;
         current_view: root.current_view;
         classifications: root.classifications;
         collections: root.collections;

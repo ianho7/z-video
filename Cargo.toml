@@ -19,8 +19,9 @@ keyring = { version = "3.6", features = ["windows-native", "apple-native"] }
 rand = "0.8"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
-# The new Slint compiler is required on both targets because 1.18.1 does not
-# parse backdrop-blur. Resolver 2 keeps target-specific renderer features
+# The git Slint compiler is required on both targets because the stable
+# dependency line does not parse backdrop-blur. Resolver 2 keeps target-specific
+# renderer features
 # scoped: Windows selects Skia; non-Windows keeps the default renderer set.
 [target.'cfg(windows)'.dependencies]
 slint = { git = "https://github.com/slint-ui/slint.git", rev = "0ade85bfd0a88b6de2f87f767420975f98c141d0", default-features = false, features = ["compat-1-2", "accessibility", "backend-winit", "renderer-skia", "raw-window-handle-06"] }

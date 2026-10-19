@@ -25,6 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         detail_roundtrip,
         detail_output,
         back_output,
+        material_evidence,
     ) = parse_args()?;
     let coordinator = AppCoordinator::with_deps(
         Arc::new(MockPlayer::new()),
@@ -47,6 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     window.set_is_logged_in(true);
     window.set_current_view("library".into());
     window.set_apple_sidebar_visible(true);
+    window.set_material_evidence(material_evidence);
     window.set_session_user("fixture-user".into());
     window.set_session_nas_name("脱敏 NAS".into());
     window.set_selected_classification_id("fixture-classification".into());
@@ -187,7 +189,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn parse_args() -> Result<
-    (u32, u32, PathBuf, u64, String, String, String, String, bool, PathBuf, PathBuf),
+    (u32, u32, PathBuf, u64, String, String, String, String, bool, PathBuf, PathBuf, bool),
     Box<dyn std::error::Error>,
 > {
     let args: Vec<String> = env::args().collect();
@@ -202,6 +204,7 @@ fn parse_args() -> Result<
     let mut detail_roundtrip = false;
     let mut detail_output = PathBuf::from("poster-grid-detail.png");
     let mut back_output = PathBuf::from("poster-grid-back.png");
+    let mut material_evidence = false;
     let mut index = 1;
     while index < args.len() {
         match args[index].as_str() {
@@ -253,6 +256,7 @@ fn parse_args() -> Result<
                     .to_string();
             }
             "--detail-roundtrip" => detail_roundtrip = true,
+            "--material-evidence" => material_evidence = true,
             "--detail-output" => {
                 index += 1;
                 detail_output =
@@ -291,6 +295,7 @@ fn parse_args() -> Result<
         detail_roundtrip,
         detail_output,
         back_output,
+        material_evidence,
     ))
 }
 

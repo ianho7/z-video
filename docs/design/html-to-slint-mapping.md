@@ -156,13 +156,13 @@ HTML 的 token 进入一个 Slint `Theme` 全局，组件只引用 `Theme`，不
 
 ## 当前未知项
 
-- 仓库已有 Cargo/Slint 项目配置；`Cargo.toml` 声明 Slint `1.9.2`，`Cargo.lock` 当前解析到 Slint `1.18.1`。列表模型、图片接口和 `poster_grid_preview` 原生快照入口已经存在，但播放器表面与真实 NAS 能力仍按 `docs/handoff.md` 的证据边界单独验收。
+- 仓库已有 Cargo/Slint 项目配置；Ticket #9 候选将 `slint` 与 `slint-build` 固定到同一 git rev `0ade85bfd0a88b6de2f87f767420975f98c141d0`。列表模型、图片接口和 `poster_grid_preview` 原生快照入口已经存在，但播放器表面与真实 NAS 能力仍按 `docs/handoff.md` 的证据边界单独验收。
 - 候选播放引擎、Windows 视频表面集成、硬解覆盖和音视频字幕能力尚未验证。
 - 极影视独立 LAN 登录、流获取、流地址有效期和进度持久化仍按 `docs/handoff.md` 的证据边界处理。
 - 磨砂背景模糊是否值得在 Slint 中实现，需要目标平台实测；默认方案是清晰的半透明功能层和不透明回退。
 
 ## 验证记录
 
-- `cargo check`：通过；当前锁定的 Slint 1.18.1 UI 编译和 Rust 回调接口匹配。
+- `cargo check`：通过；当前锁定的 Slint git compiler candidate 可编译 UI 并与 Rust 回调接口匹配。
 - `git diff --check`：待本次 Ticket 完成后复核。
 - 原生窗口截图：由 `src/bin/poster_grid_preview.rs` 通过 `Window::take_snapshot()` 生成；本次 Ticket 的尺寸、缩放因子和截图路径记录在 `docs/design/evidence/ticket-07/README.md`。
