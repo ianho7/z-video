@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::continue_watching::build_continue_watching_item;
 use crate::media::image_cache::{
     decode_image_pixels, slint_image_from_decoded, DecodedImage, ImageCache, ImageRequestGate,
 };
@@ -51,6 +52,7 @@ pub struct AppCoordinator {
     progress_report_gate: Arc<Mutex<ProgressReportGate>>,
     pending_resume: Arc<Mutex<Option<PendingResume>>>,
     startup_last_playback: Arc<Mutex<Option<LastPlaybackContext>>>,
+    continue_watching_generation: Arc<AtomicU64>,
     playback_controls: Arc<Mutex<PlaybackControlState>>,
     #[cfg(windows)]
     video_surface: Arc<Mutex<Option<Win32VideoSurface>>>,
@@ -188,6 +190,7 @@ impl AppCoordinator {
             progress_report_gate: Arc::new(Mutex::new(ProgressReportGate::default())),
             pending_resume: Arc::new(Mutex::new(None)),
             startup_last_playback: Arc::new(Mutex::new(None)),
+            continue_watching_generation: Arc::new(AtomicU64::new(0)),
             playback_controls: Arc::new(Mutex::new(PlaybackControlState::default())),
             #[cfg(windows)]
             video_surface,
@@ -360,6 +363,9 @@ impl AppCoordinator {
         self.playback_request_generation
             .fetch_add(1, Ordering::SeqCst);
         self.image_request_gate.cancel();
+        self.continue_watching_generation
+            .fetch_add(1, Ordering::SeqCst);
+        *self.startup_last_playback.lock().unwrap() = None;
         self.search_generation.fetch_add(1, Ordering::SeqCst);
         self.loaded_collections.lock().unwrap().clear();
         *self.detail_state.lock().unwrap() = None;
@@ -371,6 +377,7 @@ impl AppCoordinator {
         self.ui
             .set_classifications(ModelRc::new(VecModel::default()));
         self.ui.set_collections(ModelRc::new(VecModel::default()));
+        Self::clear_continue_watching(&self.ui);
         self.ui.set_collection_count(0);
         self.ui.set_apple_search_input("".into());
         self.ui.set_search_active(false);
@@ -592,6 +599,9 @@ impl AppCoordinator {
     pub fn load_collections_sync(&self, classification_id: &str) -> Result<(), NasError> {
         let operation = diagnostics::start_event("ui", "library.collections");
         let request_id = self.image_request_gate.begin();
+        self.continue_watching_generation
+            .fetch_add(1, Ordering::SeqCst);
+        Self::clear_continue_watching(&self.ui);
         self.search_generation.fetch_add(1, Ordering::SeqCst);
         self.loaded_collections.lock().unwrap().clear();
         self.ui.set_apple_search_input("".into());
@@ -628,6 +638,18 @@ impl AppCoordinator {
                 self.ui
                     .set_status_message(format!("片库已就绪，已加载 {} 部影片", count).into());
 
+                Self::start_continue_watching_load(
+                    self.ui.as_weak(),
+                    Arc::clone(&self.nas_client),
+                    Arc::clone(&self.session),
+                    self.image_cache.clone(),
+                    self.image_request_gate.clone(),
+                    Arc::clone(&self.continue_watching_generation),
+                    request_id,
+                    self.startup_last_playback.lock().unwrap().clone(),
+                    classification_id.to_string(),
+                );
+
                 // Trigger background poster fetching for items without cover in cache
                 Self::spawn_poster_fetching(
                     self.ui.as_weak(),
@@ -652,6 +674,122 @@ impl AppCoordinator {
                 Err(err)
             }
         }
+    }
+
+    fn clear_continue_watching(ui: &AppWindow) {
+        ui.set_continue_watching_items(ModelRc::from(Rc::new(VecModel::default())));
+        ui.set_continue_watching_loading(false);
+        ui.set_continue_watching_error("".into());
+    }
+
+    fn start_continue_watching_load(
+        ui_weak: slint::Weak<AppWindow>,
+        nas_client: Arc<dyn NasClient>,
+        session: Arc<NasSession>,
+        image_cache: ImageCache,
+        image_request_gate: ImageRequestGate,
+        continue_watching_generation: Arc<AtomicU64>,
+        image_request_id: u64,
+        context: Option<LastPlaybackContext>,
+        classification_id: String,
+    ) {
+        let request_generation = continue_watching_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let Some(context) = context.filter(|context| {
+            context.collection_id.trim() != ""
+                && context.classification_id.trim() == classification_id.trim()
+                && context.episode_id.trim() != ""
+        }) else {
+            if let Some(ui) = ui_weak.upgrade() {
+                Self::clear_continue_watching(&ui);
+            }
+            return;
+        };
+
+        if let Some(ui) = ui_weak.upgrade() {
+            ui.set_continue_watching_items(ModelRc::from(Rc::new(VecModel::default())));
+            ui.set_continue_watching_loading(true);
+            ui.set_continue_watching_error("".into());
+        }
+
+        let ui_weak_bg = ui_weak.clone();
+        let generation_bg = Arc::clone(&continue_watching_generation);
+        let collection_id = context.collection_id.clone();
+        let classification_id_bg = classification_id.clone();
+        std::thread::spawn(move || {
+            let detail_result =
+                nas_client.get_collection_detail(&session, &collection_id, &classification_id_bg);
+            let (item, cover_image) = match &detail_result {
+                Ok(detail) => {
+                    let item = build_continue_watching_item(&context, detail);
+                    let cover_image = item.as_ref().and_then(|item| {
+                        fetch_detail_image(
+                            &nas_client,
+                            &session,
+                            &image_cache,
+                            &image_request_gate,
+                            image_request_id,
+                            &item.cover,
+                        )
+                    });
+                    (item, cover_image)
+                }
+                Err(_) => (None, None),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = ui_weak_bg.upgrade() else {
+                    return;
+                };
+                if generation_bg.load(Ordering::SeqCst) != request_generation
+                    || !image_request_gate.is_current(image_request_id)
+                    || (!ui.get_selected_classification_id().is_empty()
+                        && ui.get_selected_classification_id().as_str() != classification_id_bg)
+                {
+                    return;
+                }
+
+                ui.set_continue_watching_loading(false);
+                match detail_result {
+                    Ok(_) => {
+                        if let Some(item) = item {
+                            let has_cover = cover_image.is_some();
+                            let ui_item = ContinueWatchingUiItem {
+                                collection_id: item.collection_id.into(),
+                                episode_id: item.episode_id.into(),
+                                title: item.title.into(),
+                                episode_title: item.episode_title.into(),
+                                progress_label: item.progress_label.into(),
+                                duration_label: item.duration_label.into(),
+                                progress_percent: item
+                                    .progress_percent
+                                    .map(|percent| percent as i32)
+                                    .unwrap_or(-1),
+                                cover_image: cover_image
+                                    .map(slint_image_from_decoded)
+                                    .unwrap_or_default(),
+                                has_cover,
+                            };
+                            ui.set_continue_watching_items(ModelRc::from(Rc::new(VecModel::from(
+                                vec![ui_item],
+                            ))));
+                        } else {
+                            ui.set_continue_watching_items(ModelRc::from(Rc::new(
+                                VecModel::default(),
+                            )));
+                        }
+                        ui.set_continue_watching_error("".into());
+                    }
+                    Err(err) => {
+                        ui.set_continue_watching_items(ModelRc::from(Rc::new(VecModel::default())));
+                        ui.set_continue_watching_error("继续观看加载失败，请点击重试。".into());
+                        ui.set_requires_relogin(err.requires_reauthentication());
+                        record_reauthentication_required(
+                            "library.continue_watching",
+                            err.requires_reauthentication(),
+                        );
+                    }
+                }
+            });
+        });
     }
 
     fn start_collection_detail_load(
@@ -845,6 +983,7 @@ impl AppCoordinator {
         nas_client: Arc<dyn NasClient>,
         session: Arc<NasSession>,
         credential_store: Arc<dyn CredentialStore>,
+        startup_last_playback: Arc<Mutex<Option<LastPlaybackContext>>>,
         player: Arc<dyn Player>,
         detail_state: Arc<Mutex<Option<CollectionDetail>>>,
         playback_session: Arc<Mutex<Option<PlaybackSession>>>,
@@ -916,6 +1055,7 @@ impl AppCoordinator {
         let ui_weak_bg = ui_weak.clone();
         let playback_request_generation_bg = Arc::clone(&playback_request_generation);
         let pending_resume_bg = Arc::clone(&pending_resume);
+        let startup_last_playback_bg = Arc::clone(&startup_last_playback);
         std::thread::spawn(move || {
             let playback_result = match nas_client.get_playback_stream(&session, &episode) {
                 Ok(stream) => {
@@ -925,6 +1065,11 @@ impl AppCoordinator {
 
                     match player.load_media(&stream.uri) {
                         Ok(()) => {
+                            *startup_last_playback_bg.lock().unwrap() = Some(LastPlaybackContext {
+                                collection_id: collection_id.clone(),
+                                classification_id: classification_id.clone(),
+                                episode_id: episode_id.clone(),
+                            });
                             persist_last_playback_context(
                                 credential_store.as_ref(),
                                 &collection_id,
@@ -1318,6 +1463,8 @@ impl AppCoordinator {
         let image_request_gate = self.image_request_gate.clone();
         let loaded_collections = Arc::clone(&self.loaded_collections);
         let search_generation = Arc::clone(&self.search_generation);
+        let startup_last_playback = Arc::clone(&self.startup_last_playback);
+        let continue_watching_generation = Arc::clone(&self.continue_watching_generation);
 
         let ui_weak_search = self.ui.as_weak();
         let loaded_collections_for_search = Arc::clone(&loaded_collections);
@@ -1424,6 +1571,8 @@ impl AppCoordinator {
 
             ui.set_selected_classification_id(target_id.clone().into());
             ui.set_selected_classification_name(target_name.into());
+            continue_watching_generation.fetch_add(1, Ordering::SeqCst);
+            AppCoordinator::clear_continue_watching(&ui);
             ui.set_library_loading(true);
             ui.set_library_error("".into());
             ui.set_requires_relogin(false);
@@ -1437,6 +1586,9 @@ impl AppCoordinator {
             let session_for_posters = Arc::clone(&session);
             let loaded_collections_for_thread = Arc::clone(&loaded_collections_for_classification);
             let ui_weak_bg = ui_weak.clone();
+            let startup_last_playback_for_thread = Arc::clone(&startup_last_playback);
+            let continue_watching_generation_for_thread =
+                Arc::clone(&continue_watching_generation);
             let operation = diagnostics::start_event("ui", "library.select_classification");
             let selected_id_for_log = target_id.clone();
 
@@ -1478,6 +1630,17 @@ impl AppCoordinator {
                             ui.set_status_message(
                                 format!("分类切换完成，加载 {} 部影视作品", total).into(),
                             );
+                            AppCoordinator::start_continue_watching_load(
+                                ui.as_weak(),
+                                Arc::clone(&nas_client_for_posters),
+                                Arc::clone(&session_for_posters),
+                                image_cache_for_thread.clone(),
+                                image_request_gate_for_thread.clone(),
+                                Arc::clone(&continue_watching_generation_for_thread),
+                                request_id,
+                                startup_last_playback_for_thread.lock().unwrap().clone(),
+                                target_id.clone(),
+                            );
                             AppCoordinator::spawn_poster_fetching(
                                 ui.as_weak(),
                                 nas_client_for_posters,
@@ -1510,12 +1673,15 @@ impl AppCoordinator {
         let startup_last_playback = Arc::clone(&self.startup_last_playback);
         let image_cache = self.image_cache.clone();
         let image_request_gate = self.image_request_gate.clone();
+        let continue_watching_generation = Arc::clone(&self.continue_watching_generation);
         let loaded_collections = Arc::clone(&loaded_collections);
         let search_generation = Arc::clone(&search_generation);
 
         self.ui.on_refresh_library_clicked(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
             let sel_id = ui.get_selected_classification_id().to_string();
+            continue_watching_generation.fetch_add(1, Ordering::SeqCst);
+            AppCoordinator::clear_continue_watching(&ui);
             search_generation.fetch_add(1, Ordering::SeqCst);
             loaded_collections.lock().unwrap().clear();
             ui.set_apple_search_input("".into());
@@ -1547,6 +1713,9 @@ impl AppCoordinator {
             let image_request_gate_for_thread = image_request_gate.clone();
             let loaded_collections_for_thread = Arc::clone(&loaded_collections);
             let ui_weak_bg = ui_weak.clone();
+            let startup_last_playback_for_thread = Arc::clone(&startup_last_playback);
+            let continue_watching_generation_for_thread =
+                Arc::clone(&continue_watching_generation);
             let startup_restore_pending_for_thread = Arc::clone(&startup_restore_pending);
             let operation = diagnostics::start_event("ui", "library.refresh");
 
@@ -1690,6 +1859,17 @@ impl AppCoordinator {
                                 format!("当前已加载范围：{} 部", page.list.len()).into(),
                             );
                             ui.set_status_message("片库已刷新完成。".into());
+                            AppCoordinator::start_continue_watching_load(
+                                ui.as_weak(),
+                                Arc::clone(&client_for_thread),
+                                Arc::clone(&session_for_thread),
+                                image_cache_for_thread.clone(),
+                                image_request_gate_for_thread.clone(),
+                                Arc::clone(&continue_watching_generation_for_thread),
+                                request_id,
+                                startup_last_playback_for_thread.lock().unwrap().clone(),
+                                selected_id_for_ui.clone(),
+                            );
                             AppCoordinator::spawn_poster_fetching(
                                 ui.as_weak(),
                                 Arc::clone(&client_for_thread),
@@ -1809,6 +1989,51 @@ impl AppCoordinator {
         });
 
         let ui_weak = self.ui.as_weak();
+        let nas_client = Arc::clone(&self.nas_client);
+        let session = Arc::clone(&self.session);
+        let image_cache = self.image_cache.clone();
+        let detail_state = Arc::clone(&self.detail_state);
+        let detail_request_generation = Arc::clone(&self.detail_request_generation);
+        let playback_request_generation = Arc::clone(&self.playback_request_generation);
+        let playback_session = Arc::clone(&self.playback_session);
+        let image_request_gate = self.image_request_gate.clone();
+        self.ui
+            .on_continue_watching_clicked(move |collection_id_slint, episode_id_slint| {
+                let Some(ui) = ui_weak.upgrade() else { return };
+                let collection_id = collection_id_slint.to_string();
+                let episode_id = episode_id_slint.to_string();
+                let classification_id = ui.get_selected_classification_id().to_string();
+                if collection_id.trim().is_empty()
+                    || episode_id.trim().is_empty()
+                    || classification_id.trim().is_empty()
+                {
+                    return;
+                }
+                info!("User clicked local continue-watching item; opening its collection detail");
+                AppCoordinator::start_collection_detail_load(
+                    ui_weak.clone(),
+                    Arc::clone(&nas_client),
+                    Arc::clone(&session),
+                    image_cache.clone(),
+                    image_request_gate.clone(),
+                    Arc::clone(&detail_state),
+                    Arc::clone(&detail_request_generation),
+                    Arc::clone(&playback_request_generation),
+                    Arc::clone(&playback_session),
+                    collection_id,
+                    classification_id,
+                    Some(episode_id),
+                );
+            });
+
+        let ui_weak = self.ui.as_weak();
+        self.ui.on_continue_watching_retry(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.invoke_refresh_library_clicked();
+            }
+        });
+
+        let ui_weak = self.ui.as_weak();
         let detail_state = Arc::clone(&self.detail_state);
         let detail_request_generation = Arc::clone(&self.detail_request_generation);
         let playback_request_generation = Arc::clone(&self.playback_request_generation);
@@ -1888,6 +2113,7 @@ impl AppCoordinator {
         let session = Arc::clone(&self.session);
         let player = Arc::clone(&self.player);
         let credential_store = Arc::clone(&self.credential_store);
+        let startup_last_playback = Arc::clone(&self.startup_last_playback);
         let detail_state = Arc::clone(&self.detail_state);
         let playback_session = Arc::clone(&self.playback_session);
         let playback_request_generation = Arc::clone(&self.playback_request_generation);
@@ -1902,6 +2128,7 @@ impl AppCoordinator {
                 Arc::clone(&nas_client),
                 Arc::clone(&session),
                 Arc::clone(&credential_store),
+                Arc::clone(&startup_last_playback),
                 Arc::clone(&player),
                 Arc::clone(&detail_state),
                 Arc::clone(&playback_session),
@@ -2102,6 +2329,8 @@ impl AppCoordinator {
         let playback_request_generation = Arc::clone(&self.playback_request_generation);
         let playback_session = Arc::clone(&self.playback_session);
         let image_request_gate = self.image_request_gate.clone();
+        let continue_watching_generation = Arc::clone(&self.continue_watching_generation);
+        let startup_last_playback = Arc::clone(&self.startup_last_playback);
 
         #[cfg(windows)]
         let surface_mutex = Arc::clone(&self.video_surface);
@@ -2116,6 +2345,8 @@ impl AppCoordinator {
             detail_request_generation.fetch_add(1, Ordering::SeqCst);
             playback_request_generation.fetch_add(1, Ordering::SeqCst);
             image_request_gate.cancel();
+            continue_watching_generation.fetch_add(1, Ordering::SeqCst);
+            *startup_last_playback.lock().unwrap() = None;
             *detail_state.lock().unwrap() = None;
             *playback_session.lock().unwrap() = None;
 
@@ -2123,6 +2354,7 @@ impl AppCoordinator {
             ui.set_login_status_hint("已安全退出会话。可重新输入凭据登录。".into());
             ui.set_classifications(ModelRc::new(VecModel::default()));
             ui.set_collections(ModelRc::new(VecModel::default()));
+            AppCoordinator::clear_continue_watching(&ui);
             ui.set_playback_loading(false);
             ui.set_playback_error("".into());
             ui.set_requires_relogin(false);
@@ -2151,6 +2383,8 @@ impl AppCoordinator {
         let playback_request_generation = Arc::clone(&self.playback_request_generation);
         let playback_session = Arc::clone(&self.playback_session);
         let image_request_gate = self.image_request_gate.clone();
+        let continue_watching_generation = Arc::clone(&self.continue_watching_generation);
+        let startup_last_playback = Arc::clone(&self.startup_last_playback);
         self.ui.on_relogin_requested(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
             diagnostics::record_event(
@@ -2167,6 +2401,8 @@ impl AppCoordinator {
             detail_request_generation.fetch_add(1, Ordering::SeqCst);
             playback_request_generation.fetch_add(1, Ordering::SeqCst);
             image_request_gate.cancel();
+            continue_watching_generation.fetch_add(1, Ordering::SeqCst);
+            *startup_last_playback.lock().unwrap() = None;
             *detail_state.lock().unwrap() = None;
             *playback_session.lock().unwrap() = None;
             ui.set_is_logged_in(false);
@@ -2175,6 +2411,7 @@ impl AppCoordinator {
             ui.set_login_status_hint("会话已失效，请重新输入凭据登录。".into());
             ui.set_classifications(ModelRc::new(VecModel::default()));
             ui.set_collections(ModelRc::new(VecModel::default()));
+            AppCoordinator::clear_continue_watching(&ui);
             ui.set_playback_loading(false);
             ui.set_playback_error("".into());
             ui.set_show_sms_field(false);

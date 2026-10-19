@@ -1974,6 +1974,7 @@ pub struct MockNasClient {
     mfa_proof: String,
     mfa_code_sent: Arc<Mutex<bool>>,
     pub network_error: bool,
+    pub collection_detail_error: bool,
     pub mock_token: String,
     pub mock_nas_name: String,
     pub mock_classifications: Vec<ClassificationItem>,
@@ -2159,6 +2160,7 @@ impl Default for MockNasClient {
             mfa_proof: "mock_sms_proof_opaque".to_string(),
             mfa_code_sent: Arc::new(Mutex::new(false)),
             network_error: false,
+            collection_detail_error: false,
             mock_token: "mock_session_token_xyz_888".to_string(),
             mock_nas_name: "极空间-私有存储".to_string(),
             mock_classifications: classifications,
@@ -2191,6 +2193,14 @@ impl MockNasClient {
 
     pub fn with_network_error(mut self, fail: bool) -> Self {
         self.network_error = fail;
+        self
+    }
+
+    /// Makes only the collection-detail/history read fail in a fixture.
+    /// Library listing and authentication remain usable so callers can verify
+    /// the retryable continue-watching error state independently.
+    pub fn with_collection_detail_error(mut self, fail: bool) -> Self {
+        self.collection_detail_error = fail;
         self
     }
 
@@ -2417,6 +2427,9 @@ impl NasClient for MockNasClient {
         _classification_id: &str,
     ) -> Result<CollectionDetail, NasError> {
         if self.network_error {
+            return Err(NasError::Network("无法获取影视详情，网络断开".to_string()));
+        }
+        if self.collection_detail_error {
             return Err(NasError::Network("无法获取影视详情，网络断开".to_string()));
         }
         if session.token().is_none() {
