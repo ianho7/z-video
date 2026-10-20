@@ -60,13 +60,17 @@ export global ShellTheme {
     // functional layers; cards, grids, detail content and video stay opaque.
     // Keep the glass readable against the shell atmosphere while leaving
     // reduced-transparency users on the opaque surfaces below.
-    out property <color> sidebar_surface: #18191c99;
-    out property <color> toolbar_surface: #18191c99;
+    // Keep the functional glass layers visibly lighter than the canvas even
+    // when the backend does not sample backdrop blur. The alpha remains in
+    // the dark-Apple range while the neutral charcoal keeps the shell calm.
+    out property <color> sidebar_surface: #3b3e44ad;
+    out property <color> toolbar_surface: #3b3e44ad;
     out property <color> sidebar_opaque_surface: #18191c;
     out property <color> toolbar_opaque_surface: #18191c;
     out property <length> shell_blur_radius: 24px;
-    out property <color> nav_selected_surface: #26313d;
-    out property <color> nav_selected_border: #3a4858;
+    out property <color> nav_selected_surface: #d8dce044;
+    out property <color> nav_selected_border: #f0f2f580;
+    out property <color> nav_selected_ink: #f5f5f7;
     out property <color> surface_subtle: #202125;
     out property <color> surface_elevated: #282a2f;
     out property <color> separator: #36383e;
@@ -241,7 +245,7 @@ component ShellNavItem inherits Rectangle {
         spacing: 8px;
         Text {
             text: "•";
-            color: root.selected ? ShellTheme.accent : ShellTheme.text_tertiary;
+            color: root.selected ? ShellTheme.nav_selected_ink : ShellTheme.text_tertiary;
             font_size: 15px;
             horizontal_alignment: center;
             vertical_alignment: center;
@@ -357,40 +361,51 @@ component MaterialEvidenceBackdrop inherits Rectangle {
 // A low-contrast, state-independent shell atmosphere gives the functional
 // glass layers real content to sample in the normal product window. It stays
 // behind the sidebar and toolbar, uses logical dimensions, and is deliberately
-// quieter than the evidence-only colour bands above.
+// quieter than the evidence-only colour bands above. The neutral slate shapes
+// are broad enough to reach the sidebar and toolbar without affecting layout.
 component ShellAtmosphere inherits Rectangle {
     background: ShellTheme.canvas;
 
     Rectangle {
         x: 0px;
         y: 0px;
-        width: parent.width * 0.40;
-        height: parent.height * 0.30;
-        background: #1b2a38;
-        border_radius: 120px;
-        opacity: 0.62;
+        width: parent.width * 0.46;
+        height: parent.height * 0.38;
+        background: #68717d;
+        border_radius: 160px;
+        opacity: 0.42;
     }
 
     Rectangle {
-        x: parent.width * 0.42;
+        x: parent.width * 0.34;
         // Keep a real, low-frequency underlay beneath the top toolbar at all
         // supported logical heights; no media content is moved into the shell.
         y: 0px;
-        width: parent.width * 0.34;
-        height: parent.height * 0.36;
-        background: #28233a;
-        border_radius: 140px;
-        opacity: 0.52;
+        width: parent.width * 0.42;
+        height: parent.height * 0.40;
+        background: #766f79;
+        border_radius: 180px;
+        opacity: 0.32;
     }
 
     Rectangle {
-        x: parent.width * 0.30;
-        y: parent.height * 0.62;
-        width: parent.width * 0.48;
-        height: parent.height * 0.24;
-        background: #1c3030;
-        border_radius: 120px;
-        opacity: 0.56;
+        x: parent.width * 0.74;
+        y: parent.height * 0.03;
+        width: parent.width * 0.28;
+        height: parent.height * 0.35;
+        background: #59636c;
+        border_radius: 170px;
+        opacity: 0.30;
+    }
+
+    Rectangle {
+        x: parent.width * 0.24;
+        y: parent.height * 0.58;
+        width: parent.width * 0.56;
+        height: parent.height * 0.30;
+        background: #536466;
+        border_radius: 160px;
+        opacity: 0.30;
     }
 
     Rectangle {
@@ -398,8 +413,8 @@ component ShellAtmosphere inherits Rectangle {
         y: parent.height * 0.50;
         width: parent.width * 0.18;
         height: 1px;
-        background: #3b4a58;
-        opacity: 0.42;
+        background: #7d8790;
+        opacity: 0.28;
     }
 }
 // A local copy of the standard focus/click bridge. Keeping it beside the
