@@ -685,6 +685,34 @@ component AppleWorkspace inherits Rectangle {
     callback episode_selected(string);
     callback play_episode(string);
 
+    // Re-request the current visible range after model or layout changes.
+    // Model replacement can happen after the ScrollView has already received
+    // its geometry, while the grid can also be created after the model is set.
+    // Keep the zero-geometry path in Rust as the bounded 24-item fallback;
+    // this helper only emits a layout-ready request.
+    function request_current_library_layout() {
+        if root.current_view == "library"
+                && root.collections.length > 0
+                && root.library_viewport_height > 0px
+                && root.library_card_width > 0px
+                && root.library_columns > 0 {
+            root.library_scrolled(
+                root.library_layout_scroll_offset,
+                root.library_viewport_height,
+                root.library_grid_top,
+                root.library_card_width,
+                root.library_columns
+            );
+        }
+    }
+
+    changed collections => {
+        root.request_current_library_layout();
+    }
+    changed current_view => {
+        root.request_current_library_layout();
+    }
+
     // Keep a stable keyboard ancestor for the detail view. The library cards
     // are separate focus scopes, so the workspace itself must own Escape when
     // a detail page is opened from one of them.
@@ -932,17 +960,7 @@ component AppleWorkspace inherits Rectangle {
                 changed visible-height => {
                     root.library_viewport_height = self.visible-height;
                     root.library_layout_scroll_offset = max(0px, -self.content-y);
-                    if self.visible-height > 0px
-                        && root.library_card_width > 0px
-                        && root.library_columns > 0 {
-                        root.library_scrolled(
-                            max(0px, -self.content-y),
-                            self.visible-height,
-                            root.library_grid_top,
-                            root.library_card_width,
-                            root.library_columns
-                        );
-                    }
+                    root.request_current_library_layout();
                 }
 
                 changed content-y => {
@@ -1401,9 +1419,18 @@ component AppleWorkspace inherits Rectangle {
                         property <length> card_width: self.columns > 0
                             ? (self.available_width - (self.columns - 1) * self.spacing) / self.columns
                             : self.min_card_width;
-                        changed y => { root.library_grid_top = self.y; }
-                        changed card_width => { root.library_card_width = self.card_width; }
-                        changed columns => { root.library_columns = self.columns; }
+                        changed y => {
+                            root.library_grid_top = self.y;
+                            root.request_current_library_layout();
+                        }
+                        changed card_width => {
+                            root.library_card_width = self.card_width;
+                            root.request_current_library_layout();
+                        }
+                        changed columns => {
+                            root.library_columns = self.columns;
+                            root.request_current_library_layout();
+                        }
                         width: 100%;
                         min_width: 0px;
                         preferred_width: 0px;

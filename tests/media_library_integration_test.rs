@@ -8,11 +8,15 @@ use z_video::nas::models::NasError;
 use z_video::player::MockPlayer;
 use z_video::storage::credentials::MemoryCredentialStore;
 
-fn pump_library_event_loop() {
-    Timer::single_shot(Duration::from_millis(250), || {
+fn pump_library_event_loop_for(duration: Duration) {
+    Timer::single_shot(duration, || {
         let _ = slint::quit_event_loop();
     });
     slint::run_event_loop_until_quit().expect("library event loop should exit cleanly");
+}
+
+fn pump_library_event_loop() {
+    pump_library_event_loop_for(Duration::from_millis(250));
 }
 
 #[test]
@@ -129,4 +133,62 @@ fn test_media_library_integration_comprehensive_suite() {
         err,
         Err(NasError::Business { code, .. }) if code == "T000001"
     ));
+
+    poster_range_promotes_model_replacement_after_geometry_arrives();
+}
+
+fn poster_range_promotes_model_replacement_after_geometry_arrives() {
+    let mut mock_client = MockNasClient::new();
+    let seed = mock_client.mock_collections.clone();
+    for index in seed.len()..50 {
+        let mut item = seed[index % seed.len()].clone();
+        item.collection_id = format!("fixture-{index:02}");
+        item.title = format!("中性测试条目 {index:02}");
+        item.cover = format!("/zvideo/cover/fixture-{index:02}.jpg");
+        mock_client.mock_collections.push(item);
+    }
+
+    let coordinator = AppCoordinator::with_deps(
+        Arc::new(MockPlayer::new()),
+        false,
+        Arc::new(mock_client),
+        Arc::new(MemoryCredentialStore::new()),
+    )
+    .expect("coordinator should initialize");
+
+    coordinator
+        .perform_login(
+            "http://192.168.1.50:5055",
+            "admin",
+            "password123",
+            None,
+            false,
+        )
+        .expect("mock login should succeed");
+    assert_eq!(coordinator.window().get_collections().row_count(), 50);
+
+    // Login/model replacement happens before native layout metrics are
+    // available, so the coordinator first uses its bounded 0..24 fallback.
+    // This callback is the later Slint geometry event; the model is unchanged.
+    coordinator
+        .window()
+        .invoke_library_scrolled(0.0, 800.0, 0.0, 176.83, 12);
+    pump_library_event_loop_for(Duration::from_millis(600));
+
+    let beyond_fallback = coordinator
+        .window()
+        .get_collections()
+        .row_data(24)
+        .expect("the model should retain rows beyond the fallback window");
+    assert_eq!(beyond_fallback.cover_status, "ready");
+    assert_eq!(
+        coordinator
+            .window()
+            .get_collections()
+            .row_data(49)
+            .expect("the fixture should retain a bounded tail")
+            .cover_status,
+        "loading",
+        "a valid 12-column range should extend past 24 without loading all 50"
+    );
 }
