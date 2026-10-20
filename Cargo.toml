@@ -24,7 +24,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 # renderer features
 # scoped: Windows selects Skia; non-Windows keeps the default renderer set.
 [target.'cfg(windows)'.dependencies]
-slint = { git = "https://github.com/slint-ui/slint.git", rev = "0ade85bfd0a88b6de2f87f767420975f98c141d0", default-features = false, features = ["compat-1-2", "accessibility", "backend-winit", "renderer-skia", "raw-window-handle-06"] }
+slint = { git = "https://github.com/slint-ui/slint.git", rev = "0ade85bfd0a88b6de2f87f767420975f98c141d0", default-features = false, features = ["compat-1-2", "accessibility", "backend-winit", "renderer-skia", "renderer-skia-opengl", "unstable-winit-030", "raw-window-handle-06"] }
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
