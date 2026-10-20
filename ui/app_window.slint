@@ -58,10 +58,15 @@ export global ShellTheme {
     out property <color> surface: #18191c;
     // The Skia candidate applies backdrop blur only to these low-frequency
     // functional layers; cards, grids, detail content and video stay opaque.
-    out property <color> sidebar_surface: #18191ccc;
-    out property <color> toolbar_surface: #18191ccc;
+    // Keep the glass readable against the shell atmosphere while leaving
+    // reduced-transparency users on the opaque surfaces below.
+    out property <color> sidebar_surface: #18191c99;
+    out property <color> toolbar_surface: #18191c99;
     out property <color> sidebar_opaque_surface: #18191c;
     out property <color> toolbar_opaque_surface: #18191c;
+    out property <length> shell_blur_radius: 24px;
+    out property <color> nav_selected_surface: #26313d;
+    out property <color> nav_selected_border: #3a4858;
     out property <color> surface_subtle: #202125;
     out property <color> surface_elevated: #282a2f;
     out property <color> separator: #36383e;
@@ -213,9 +218,9 @@ component ShellNavItem inherits Rectangle {
     callback activated;
 
     height: 36px;
-    background: root.selected ? ShellTheme.accent_soft
+    background: root.selected ? ShellTheme.nav_selected_surface
         : nav_touch.has-hover ? ShellTheme.surface_elevated : transparent;
-    border_color: root.selected ? ShellTheme.accent_soft_strong
+    border_color: root.selected ? ShellTheme.nav_selected_border
         : nav_focus.has-focus ? ShellTheme.accent : transparent;
     border_width: 1px;
     border_radius: 8px;
@@ -357,9 +362,9 @@ component ShellAtmosphere inherits Rectangle {
     background: ShellTheme.canvas;
 
     Rectangle {
-        x: parent.width * 0.10;
-        y: parent.height * 0.08;
-        width: parent.width * 0.34;
+        x: 0px;
+        y: 0px;
+        width: parent.width * 0.40;
         height: parent.height * 0.30;
         background: #1b2a38;
         border_radius: 120px;
@@ -367,9 +372,11 @@ component ShellAtmosphere inherits Rectangle {
     }
 
     Rectangle {
-        x: parent.width * 0.56;
-        y: parent.height * 0.04;
-        width: parent.width * 0.30;
+        x: parent.width * 0.42;
+        // Keep a real, low-frequency underlay beneath the top toolbar at all
+        // supported logical heights; no media content is moved into the shell.
+        y: 0px;
+        width: parent.width * 0.34;
         height: parent.height * 0.36;
         background: #28233a;
         border_radius: 140px;
@@ -723,7 +730,7 @@ component AppleWorkspace inherits Rectangle {
                 ? ShellTheme.sidebar_opaque_surface
                 : ShellTheme.sidebar_surface;
             // Reduced-transparency/high-contrast mode disables alpha and blur.
-            backdrop-blur: root.reduced_transparency ? 0px : 18px;
+            backdrop-blur: root.reduced_transparency ? 0px : ShellTheme.shell_blur_radius;
             border_color: ShellTheme.separator;
             border_width: 1px;
 
@@ -820,7 +827,7 @@ component AppleWorkspace inherits Rectangle {
                         ? ShellTheme.toolbar_opaque_surface
                         : ShellTheme.toolbar_surface;
                     // Keep the glass effect on the toolbar only.
-                    backdrop-blur: root.reduced_transparency ? 0px : 18px;
+                    backdrop-blur: root.reduced_transparency ? 0px : ShellTheme.shell_blur_radius;
                     border_color: ShellTheme.separator;
                     border_width: 1px;
 
