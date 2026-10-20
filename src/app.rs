@@ -4398,6 +4398,14 @@ impl AppCoordinator {
                                     "reduced-transparency",
                                 );
                             }
+                            NativeBackdropMode::Requested if !workspace_active => {
+                                record_native_backdrop_event(
+                                    "disabled",
+                                    false,
+                                    try_get_window_hwnd(ui.window()).is_some(),
+                                    "workspace-inactive",
+                                );
+                            }
                             NativeBackdropMode::Requested => {}
                         }
                     }
