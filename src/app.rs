@@ -44,7 +44,7 @@ pub struct AppCoordinator {
     discovery_cancellation: Arc<Mutex<Option<DiscoveryCancellation>>>,
     image_cache: ImageCache,
     image_request_gate: ImageRequestGate,
-    last_poster_range: Arc<Mutex<Option<PosterLoadRange>>>,
+    last_poster_range: Arc<Mutex<PosterRangeRequestState>>,
     loaded_collections: Arc<Mutex<Vec<CollectionItem>>>,
     browse_context: Arc<Mutex<BrowseContext>>,
     browse_restore_notice: Arc<Mutex<Option<String>>>,
@@ -109,6 +109,46 @@ const POSTER_INITIAL_WINDOW: usize = 24;
 struct PosterLoadRange {
     start: usize,
     end: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PosterRangeSource {
+    Fallback,
+    Layout,
+}
+
+#[derive(Debug, Default)]
+struct PosterRangeRequestState {
+    last: Option<(PosterLoadRange, PosterRangeSource)>,
+}
+
+impl PosterRangeRequestState {
+    fn reset(&mut self) {
+        self.last = None;
+    }
+
+    fn should_request(&mut self, range: PosterLoadRange, layout_ready: bool) -> bool {
+        let source = if layout_ready {
+            PosterRangeSource::Layout
+        } else {
+            PosterRangeSource::Fallback
+        };
+        if self.last == Some((range, source)) {
+            return false;
+        }
+        self.last = Some((range, source));
+        true
+    }
+
+    fn begin_if_needed(
+        &mut self,
+        image_request_gate: &ImageRequestGate,
+        range: PosterLoadRange,
+        layout_ready: bool,
+    ) -> Option<u64> {
+        self.should_request(range, layout_ready)
+            .then(|| image_request_gate.begin())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -416,6 +456,27 @@ fn initial_poster_range_for_ui(ui: &AppWindow) -> PosterLoadRange {
     )
 }
 
+fn current_library_layout_for_ui(ui: &AppWindow) -> Option<(f32, f32, f32, f32, usize)> {
+    if ui.get_current_view() != "library" {
+        return None;
+    }
+    let viewport_height = ui.get_library_viewport_height();
+    let grid_top = ui.get_library_grid_top();
+    let card_width = ui.get_library_card_width();
+    let columns = ui.get_library_columns();
+    if viewport_height <= 0.0 || card_width <= 0.0 || columns <= 0 {
+        return None;
+    }
+
+    Some((
+        ui.get_library_layout_scroll_offset().max(0.0),
+        viewport_height,
+        grid_top,
+        card_width,
+        columns as usize,
+    ))
+}
+
 fn poster_items_for_range(
     ui: &AppWindow,
     source_items: &[CollectionItem],
@@ -557,7 +618,7 @@ impl AppCoordinator {
             discovery_cancellation: Arc::new(Mutex::new(None)),
             image_cache,
             image_request_gate: ImageRequestGate::new(),
-            last_poster_range: Arc::new(Mutex::new(None)),
+            last_poster_range: Arc::new(Mutex::new(PosterRangeRequestState::default())),
             loaded_collections,
             browse_context,
             browse_restore_notice,
@@ -983,6 +1044,7 @@ impl AppCoordinator {
     pub fn load_collections_sync(&self, classification_id: &str) -> Result<(), NasError> {
         let operation = diagnostics::start_event("ui", "library.collections");
         let request_id = self.image_request_gate.begin();
+        self.last_poster_range.lock().unwrap().reset();
         self.continue_watching_generation
             .fetch_add(1, Ordering::SeqCst);
         Self::clear_continue_watching(&self.ui);
@@ -1038,14 +1100,13 @@ impl AppCoordinator {
 
                 // Trigger background poster fetching only for the current
                 // viewport and a bounded row-sized prefetch window.
-                Self::spawn_visible_poster_fetching(
+                Self::request_poster_range_for_current_layout(
                     &self.ui,
                     Arc::clone(&self.nas_client),
                     Arc::clone(&self.session),
                     self.image_cache.clone(),
                     self.image_request_gate.clone(),
                     request_id,
-                    initial_poster_range_for_ui(&self.ui),
                     &page.list,
                     &self.last_poster_range,
                 );
@@ -1601,10 +1662,11 @@ impl AppCoordinator {
         session: &Arc<NasSession>,
         image_cache: &ImageCache,
         image_request_gate: &ImageRequestGate,
-        last_poster_range: &Arc<Mutex<Option<PosterLoadRange>>>,
+        last_poster_range: &Arc<Mutex<PosterRangeRequestState>>,
     ) {
         let count = items.len();
         let request_id = image_request_gate.begin();
+        last_poster_range.lock().unwrap().reset();
         ui.set_collections(ModelRc::from(Rc::new(VecModel::from(collection_ui_items(&items)))));
         ui.set_collection_count(count as i32);
         ui.set_media_type_filter(MEDIA_TYPE_ALL.into());
@@ -1613,14 +1675,13 @@ impl AppCoordinator {
         ui.set_search_loading(false);
         ui.set_search_error("".into());
         ui.set_search_scope(format!("当前已加载范围：{} 部", count).into());
-        AppCoordinator::spawn_visible_poster_fetching(
+        AppCoordinator::request_poster_range_for_current_layout(
             ui,
             Arc::clone(nas_client),
             Arc::clone(session),
             image_cache.clone(),
             image_request_gate.clone(),
             request_id,
-            initial_poster_range_for_ui(ui),
             &items,
             last_poster_range,
         );
@@ -1634,7 +1695,7 @@ impl AppCoordinator {
         session: &Arc<NasSession>,
         image_cache: &ImageCache,
         image_request_gate: &ImageRequestGate,
-        last_poster_range: &Arc<Mutex<Option<PosterLoadRange>>>,
+        last_poster_range: &Arc<Mutex<PosterRangeRequestState>>,
     ) {
         let classifications = ui.get_classifications();
         let mut classification_name = None;
@@ -1694,17 +1755,17 @@ impl AppCoordinator {
 
         if model_changed {
             let request_id = image_request_gate.begin();
+            last_poster_range.lock().unwrap().reset();
             ui.set_collections(ModelRc::from(Rc::new(VecModel::from(
                 collection_ui_items(&matches),
             ))));
-            AppCoordinator::spawn_visible_poster_fetching(
+            AppCoordinator::request_poster_range_for_current_layout(
                 ui,
                 Arc::clone(nas_client),
                 Arc::clone(session),
                 image_cache.clone(),
                 image_request_gate.clone(),
                 request_id,
-                initial_poster_range_for_ui(ui),
                 &matches,
                 last_poster_range,
             );
@@ -1760,7 +1821,7 @@ impl AppCoordinator {
         image_request_gate: ImageRequestGate,
         nas_client: Arc<dyn NasClient>,
         session: Arc<NasSession>,
-        last_poster_range: Arc<Mutex<Option<PosterLoadRange>>>,
+        last_poster_range: Arc<Mutex<PosterRangeRequestState>>,
         delayed: bool,
     ) {
         let execute = move || {
@@ -1804,6 +1865,7 @@ impl AppCoordinator {
                         Ok(matches) => {
                             let count = matches.len();
                             let request_id = image_request_gate.begin();
+                            last_poster_range.lock().unwrap().reset();
                             ui.set_collections(ModelRc::from(Rc::new(VecModel::from(
                                 collection_ui_items(&matches),
                             ))));
@@ -1834,14 +1896,13 @@ impl AppCoordinator {
                                 )
                                 .into(),
                             );
-                            AppCoordinator::spawn_visible_poster_fetching(
+                            AppCoordinator::request_poster_range_for_current_layout(
                                 &ui,
                                 nas_client,
                                 session,
                                 image_cache,
                                 image_request_gate,
                                 request_id,
-                                initial_poster_range_for_ui(&ui),
                                 &matches,
                                 &last_poster_range,
                             );
@@ -1879,7 +1940,7 @@ impl AppCoordinator {
         image_request_gate: &ImageRequestGate,
         nas_client: &Arc<dyn NasClient>,
         session: &Arc<NasSession>,
-        last_poster_range: &Arc<Mutex<Option<PosterLoadRange>>>,
+        last_poster_range: &Arc<Mutex<PosterRangeRequestState>>,
     ) {
         let generation = search_generation.fetch_add(1, Ordering::SeqCst) + 1;
         let query = query.trim().to_string();
@@ -1941,6 +2002,58 @@ impl AppCoordinator {
         );
     }
 
+    fn request_poster_range_for_current_layout(
+        ui: &AppWindow,
+        nas_client: Arc<dyn NasClient>,
+        session: Arc<NasSession>,
+        image_cache: ImageCache,
+        image_request_gate: ImageRequestGate,
+        request_id: u64,
+        source_items: &[CollectionItem],
+        last_poster_range: &Arc<Mutex<PosterRangeRequestState>>,
+    ) {
+        if ui.get_collections().row_count() == 0 {
+            return;
+        }
+
+        let (range, layout_ready) = if let Some((scroll_offset, viewport_height, grid_top, card_width, columns)) =
+            current_library_layout_for_ui(ui)
+        {
+            (
+                visible_poster_range(
+                    ui.get_collections().row_count(),
+                    columns,
+                    scroll_offset,
+                    viewport_height,
+                    grid_top,
+                    card_width,
+                ),
+                true,
+            )
+        } else {
+            (initial_poster_range_for_ui(ui), false)
+        };
+
+        if !last_poster_range
+            .lock()
+            .unwrap()
+            .should_request(range, layout_ready)
+        {
+            return;
+        }
+
+        Self::spawn_visible_poster_fetching(
+            ui,
+            nas_client,
+            session,
+            image_cache,
+            image_request_gate,
+            request_id,
+            range,
+            source_items,
+        );
+    }
+
     fn spawn_visible_poster_fetching(
         ui: &AppWindow,
         nas_client: Arc<dyn NasClient>,
@@ -1950,9 +2063,7 @@ impl AppCoordinator {
         request_id: u64,
         range: PosterLoadRange,
         source_items: &[CollectionItem],
-        last_poster_range: &Arc<Mutex<Option<PosterLoadRange>>>,
     ) {
-        *last_poster_range.lock().unwrap() = Some(range);
         let items = poster_items_for_range(ui, source_items, range);
         diagnostics::record_event(
             "ui",
@@ -2328,6 +2439,7 @@ impl AppCoordinator {
             }
 
             let scroll_offset = scroll_offset.max(0.0);
+            let layout_ready = columns > 0 && viewport_height > 0.0 && card_width > 0.0;
             remember_browse_context(
                 &browse_context_for_scroll,
                 &ui,
@@ -2345,11 +2457,13 @@ impl AppCoordinator {
                 grid_top,
                 card_width,
             );
-            if last_poster_range_for_scroll.lock().unwrap().as_ref() == Some(&range) {
+            let Some(request_id) = last_poster_range_for_scroll
+                .lock()
+                .unwrap()
+                .begin_if_needed(&image_request_gate_for_scroll, range, layout_ready)
+            else {
                 return;
-            }
-
-            let request_id = image_request_gate_for_scroll.begin();
+            };
             let source_items = loaded_collections_for_scroll.lock().unwrap().clone();
             AppCoordinator::spawn_visible_poster_fetching(
                 &ui,
@@ -2360,7 +2474,6 @@ impl AppCoordinator {
                 request_id,
                 range,
                 &source_items,
-                &last_poster_range_for_scroll,
             );
         });
 
@@ -2410,6 +2523,7 @@ impl AppCoordinator {
             ui.set_library_error("".into());
             ui.set_requires_relogin(false);
             let request_id = image_request_gate.begin();
+            last_poster_range_for_classification.lock().unwrap().reset();
 
             let client_for_thread = Arc::clone(&nas_client);
             let session_for_thread = Arc::clone(&session);
@@ -2476,14 +2590,13 @@ impl AppCoordinator {
                                 startup_last_playback_for_thread.lock().unwrap().clone(),
                                 target_id.clone(),
                             );
-                            AppCoordinator::spawn_visible_poster_fetching(
+                            AppCoordinator::request_poster_range_for_current_layout(
                                 &ui,
                                 nas_client_for_posters,
                                 session_for_posters,
                                 image_cache_for_thread.clone(),
                                 image_request_gate_for_thread.clone(),
                                 request_id,
-                                initial_poster_range_for_ui(&ui),
                                 &page.list,
                                 &last_poster_range_for_thread,
                             );
@@ -2546,6 +2659,7 @@ impl AppCoordinator {
             ui.set_library_error("".into());
             ui.set_requires_relogin(false);
             let request_id = image_request_gate.begin();
+            last_poster_range_for_refresh.lock().unwrap().reset();
 
             let client_for_thread = Arc::clone(&nas_client);
             let session_for_thread = Arc::clone(&session);
@@ -2723,14 +2837,13 @@ impl AppCoordinator {
                                 startup_last_playback_for_thread.lock().unwrap().clone(),
                                 selected_id_for_ui.clone(),
                             );
-                            AppCoordinator::spawn_visible_poster_fetching(
+                            AppCoordinator::request_poster_range_for_current_layout(
                                 &ui,
                                 Arc::clone(&client_for_thread),
                                 Arc::clone(&session_for_thread),
                                 image_cache_for_thread.clone(),
                                 image_request_gate_for_thread.clone(),
                                 request_id,
-                                initial_poster_range_for_ui(&ui),
                                 &page.list,
                                 &last_poster_range_for_thread,
                             );
@@ -2958,7 +3071,7 @@ impl AppCoordinator {
             detail_request_generation.fetch_add(1, Ordering::SeqCst);
             playback_request_generation.fetch_add(1, Ordering::SeqCst);
             image_request_gate.cancel();
-            *last_poster_range.lock().unwrap() = None;
+            last_poster_range.lock().unwrap().reset();
             *detail_state.lock().unwrap() = None;
             *playback_session.lock().unwrap() = None;
             ui.set_playback_loading(false);
@@ -4327,7 +4440,8 @@ pub fn find_sample_video_path() -> PathBuf {
 
 #[cfg(test)]
 mod poster_loading_tests {
-    use super::{visible_poster_range, PosterLoadRange};
+    use super::{visible_poster_range, PosterLoadRange, PosterRangeRequestState};
+    use crate::media::image_cache::ImageRequestGate;
 
     #[test]
     fn visible_poster_range_stays_within_loaded_rows() {
@@ -4353,6 +4467,55 @@ mod poster_loading_tests {
                 end: 24,
             }
         );
+    }
+
+    #[test]
+    fn wide_logical_viewport_requests_more_than_initial_window() {
+        // Ticket #9's 2560x1351 logical client leaves 12 columns at about
+        // 176.83px per card and enough height for four visible rows.
+        let range = visible_poster_range(50, 12, 0.0, 1_287.0, 0.0, 176.83);
+
+        assert!(range.end > 24, "wide viewport must load beyond the fallback window");
+        assert!(range.end <= 50);
+    }
+
+    #[test]
+    fn model_replacement_promotes_fallback_and_deduplicates_layout_requests() {
+        // The model still contains the same 50 items when valid geometry
+        // arrives. The fallback request must be superseded by the real range.
+        let gate = ImageRequestGate::new();
+        let mut state = PosterRangeRequestState::default();
+        let fallback = visible_poster_range(50, 0, 0.0, 0.0, 0.0, 0.0);
+        let fallback_id = state
+            .begin_if_needed(&gate, fallback, false)
+            .expect("model replacement should issue one bounded fallback request");
+
+        let wide = visible_poster_range(50, 12, 0.0, 1_287.0, 0.0, 176.83);
+        let wide_id = state
+            .begin_if_needed(&gate, wide, true)
+            .expect("valid geometry should replace the fallback request");
+        assert!(wide.end > 24);
+        assert!(!gate.is_current(fallback_id));
+        assert!(gate.is_current(wide_id));
+        assert!(
+            state
+                .begin_if_needed(&gate, wide, true)
+                .is_none(),
+            "repeated layout events must not cancel and restart the same request"
+        );
+        assert!(gate.is_current(wide_id));
+
+        let small = visible_poster_range(8, 4, 0.0, 220.0, 0.0, 100.0);
+        let small_id = state
+            .begin_if_needed(&gate, small, true)
+            .expect("a changed small-window range should issue one request");
+        assert!(
+            state
+                .begin_if_needed(&gate, small, true)
+                .is_none(),
+            "repeated small-window events must remain deduplicated"
+        );
+        assert!(gate.is_current(small_id));
     }
 
     #[test]

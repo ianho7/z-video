@@ -617,9 +617,11 @@ component AppleWorkspace inherits Rectangle {
     in property <string> session_nas_name: "";
     in property <string> session_base_url: "";
     in property <string> session_user: "";
-    property <length> library_grid_top: 0px;
-    property <length> library_card_width: 0px;
-    property <int> library_columns: 0;
+    out property <length> library_grid_top: 0px;
+    out property <length> library_card_width: 0px;
+    out property <int> library_columns: 0;
+    out property <length> library_viewport_height: 0px;
+    out property <length> library_layout_scroll_offset: 0px;
     // All shell geometry is logical. Keep the post-sidebar content width
     // derived from the window and the one fixed sidebar token so the grid
     // does not depend on a layout-produced width and form a binding loop.
@@ -894,6 +896,8 @@ component AppleWorkspace inherits Rectangle {
                 content-y: -root.restore_scroll_offset;
 
                 scrolled => {
+                    root.library_viewport_height = self.visible-height;
+                    root.library_layout_scroll_offset = max(0px, -self.content-y);
                     root.library_scrolled(
                         max(0px, -self.content-y),
                         self.visible-height,
@@ -901,6 +905,26 @@ component AppleWorkspace inherits Rectangle {
                         root.library_card_width,
                         root.library_columns
                     );
+                }
+
+                changed visible-height => {
+                    root.library_viewport_height = self.visible-height;
+                    root.library_layout_scroll_offset = max(0px, -self.content-y);
+                    if self.visible-height > 0px
+                        && root.library_card_width > 0px
+                        && root.library_columns > 0 {
+                        root.library_scrolled(
+                            max(0px, -self.content-y),
+                            self.visible-height,
+                            root.library_grid_top,
+                            root.library_card_width,
+                            root.library_columns
+                        );
+                    }
+                }
+
+                changed content-y => {
+                    root.library_layout_scroll_offset = max(0px, -self.content-y);
                 }
 
                 // Scroll content must pack to its preferred logical height;
@@ -1723,6 +1747,11 @@ export component AppWindow inherits Window {
     in-out property <length> library_scroll_offset: 0px;
     in-out property <length> library_restore_scroll_offset: 0px;
     in-out property <string> library_focus_collection_id: "";
+    out property <length> library_grid_top: apple_workspace.library_grid_top;
+    out property <length> library_card_width: apple_workspace.library_card_width;
+    out property <int> library_columns: apple_workspace.library_columns;
+    out property <length> library_viewport_height: apple_workspace.library_viewport_height;
+    out property <length> library_layout_scroll_offset: apple_workspace.library_layout_scroll_offset;
 
     // Collection detail state
     in-out property <string> detail_collection_id: "";
