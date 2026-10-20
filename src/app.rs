@@ -26,7 +26,7 @@ use crate::nas::models::{
 };
 use crate::nas::session::{NasDeviceMetadata, NasSession};
 #[cfg(windows)]
-use crate::platform::Win32VideoSurface;
+use crate::platform::{apply_native_backdrop, NativeBackdropOutcome, Win32VideoSurface};
 use crate::playback::{PlaybackProgressUpdate, PlaybackSession, PlaybackStream};
 use crate::player::state::{PlaybackControlState, PlaybackProgress, PlaybackState, PlayerEvent};
 use crate::player::traits::Player;
@@ -83,15 +83,66 @@ struct PendingResume {
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(180);
 
 fn environment_flag_enabled(name: &str) -> bool {
-    matches!(
-        std::env::var(name).ok().as_deref(),
-        Some("1" | "true" | "yes" | "on")
-    )
+    environment_flag_value_enabled(std::env::var(name).ok().as_deref())
+}
+
+fn environment_flag_value_enabled(value: Option<&str>) -> bool {
+    matches!(value, Some("1" | "true" | "yes" | "on"))
 }
 
 fn shell_transparency_disabled() -> bool {
     environment_flag_enabled("Z_VIDEO_REDUCED_TRANSPARENCY")
         || environment_flag_enabled("Z_VIDEO_HIGH_CONTRAST")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NativeBackdropMode {
+    Disabled,
+    Requested,
+    BlockedByTransparency,
+}
+
+fn native_backdrop_mode(native_requested: bool, transparency_disabled: bool) -> NativeBackdropMode {
+    if !native_requested {
+        NativeBackdropMode::Disabled
+    } else if transparency_disabled {
+        NativeBackdropMode::BlockedByTransparency
+    } else {
+        NativeBackdropMode::Requested
+    }
+}
+
+fn native_backdrop_requested() -> bool {
+    environment_flag_enabled("Z_VIDEO_NATIVE_BACKDROP")
+}
+
+#[cfg(windows)]
+fn try_get_window_hwnd(window: &slint::Window) -> Option<isize> {
+    let window_handle = window.window_handle();
+    let handle = window_handle.window_handle().ok()?;
+    match handle.as_raw() {
+        raw_window_handle::RawWindowHandle::Win32(win32_handle) => {
+            Some(win32_handle.hwnd.get() as isize)
+        }
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+fn record_native_backdrop_event(result: &str, fallback: bool, handle_present: bool, reason: &str) {
+    diagnostics::record_event(
+        "ui",
+        "native_backdrop",
+        "complete",
+        result,
+        Duration::ZERO,
+        &[
+            ("backend", "dwm".to_string()),
+            ("fallback", fallback.to_string()),
+            ("handle_present", handle_present.to_string()),
+            ("reason", reason.to_string()),
+        ],
+    );
 }
 
 const MEDIA_TYPE_ALL: &str = "all";
@@ -4283,6 +4334,8 @@ impl AppCoordinator {
 
         let mut heartbeat = 0;
         let mut surface_initialized = false;
+        #[cfg(windows)]
+        let mut native_backdrop_checked = false;
 
         self.timer.start(
             slint::TimerMode::Repeated,
@@ -4294,6 +4347,58 @@ impl AppCoordinator {
 
                 #[cfg(windows)]
                 {
+                    if !native_backdrop_checked {
+                        match native_backdrop_mode(
+                            native_backdrop_requested(),
+                            shell_transparency_disabled(),
+                        ) {
+                            NativeBackdropMode::Disabled => {
+                                native_backdrop_checked = true;
+                                record_native_backdrop_event(
+                                    "disabled",
+                                    false,
+                                    false,
+                                    "feature-disabled",
+                                );
+                            }
+                            NativeBackdropMode::BlockedByTransparency => {
+                                native_backdrop_checked = true;
+                                ui.set_native_backdrop_enabled(false);
+                                record_native_backdrop_event(
+                                    "fallback",
+                                    true,
+                                    false,
+                                    "reduced-transparency",
+                                );
+                            }
+                            NativeBackdropMode::Requested => {
+                                if let Some(hwnd) = try_get_window_hwnd(ui.window()) {
+                                    native_backdrop_checked = true;
+                                    match apply_native_backdrop(hwnd) {
+                                        NativeBackdropOutcome::Applied => {
+                                            ui.set_native_backdrop_enabled(true);
+                                            record_native_backdrop_event(
+                                                "applied",
+                                                false,
+                                                true,
+                                                "system-backdrop-applied",
+                                            );
+                                        }
+                                        NativeBackdropOutcome::Fallback { reason } => {
+                                            ui.set_native_backdrop_enabled(false);
+                                            record_native_backdrop_event(
+                                                "fallback",
+                                                true,
+                                                true,
+                                                reason,
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     let is_logged_in = ui.get_is_logged_in();
                     let current_view = ui.get_current_view();
                     let scale = ui.window().scale_factor();
@@ -4304,28 +4409,35 @@ impl AppCoordinator {
 
                     if is_logged_in && current_view == "player" {
                         if !surface_initialized && area_w > 10 && area_h > 10 {
-                            let window_handle_holder = ui.window().window_handle();
-                            let rwh_res = window_handle_holder.window_handle();
-                            if let Ok(handle) = rwh_res {
-                                if let raw_window_handle::RawWindowHandle::Win32(win32_handle) = handle.as_raw() {
-                                    let parent_hwnd = win32_handle.hwnd.get();
-                                    info!("Attaching native Win32 child surface to parent HWND: {:#x}", parent_hwnd);
+                            if let Some(parent_hwnd) = try_get_window_hwnd(ui.window()) {
+                                info!(
+                                    "Attaching native Win32 child surface to parent HWND: {:#x}",
+                                    parent_hwnd
+                                );
 
-                                    match Win32VideoSurface::create(parent_hwnd, area_x, area_y, area_w, area_h) {
-                                        Ok(surface) => {
-                                            let child_hwnd = surface.hwnd();
-                                            info!("Win32 child surface created with HWND: {:#x}", child_hwnd);
+                                match Win32VideoSurface::create(
+                                    parent_hwnd,
+                                    area_x,
+                                    area_y,
+                                    area_w,
+                                    area_h,
+                                ) {
+                                    Ok(surface) => {
+                                        let child_hwnd = surface.hwnd();
+                                        info!(
+                                            "Win32 child surface created with HWND: {:#x}",
+                                            child_hwnd
+                                        );
 
-                                            if let Err(e) = player.set_video_surface(child_hwnd) {
-                                                warn!("Failed to set video surface on player: {}", e);
-                                            }
-
-                                            *surface_mutex.lock().unwrap() = Some(surface);
-                                            surface_initialized = true;
+                                        if let Err(e) = player.set_video_surface(child_hwnd) {
+                                            warn!("Failed to set video surface on player: {}", e);
                                         }
-                                        Err(err) => {
-                                            error!("Failed to create Win32VideoSurface: {}", err);
-                                        }
+
+                                        *surface_mutex.lock().unwrap() = Some(surface);
+                                        surface_initialized = true;
+                                    }
+                                    Err(err) => {
+                                        error!("Failed to create Win32VideoSurface: {}", err);
                                     }
                                 }
                             }
@@ -4831,8 +4943,9 @@ pub fn find_sample_video_path() -> PathBuf {
 #[cfg(test)]
 mod poster_loading_tests {
     use super::{
-        collection_page_count, collection_page_start, visible_poster_range, PosterLoadRange,
-        PosterRangeRequestState,
+        collection_page_count, collection_page_start, environment_flag_value_enabled,
+        native_backdrop_mode, visible_poster_range, PosterLoadRange,
+        NativeBackdropMode, PosterLoadRange, PosterRangeRequestState,
     };
     use crate::media::image_cache::ImageRequestGate;
 
@@ -4953,5 +5066,25 @@ mod poster_loading_tests {
 
         assert!(!gate.is_current(first_id));
         assert!(gate.is_current(second_id));
+    }
+
+    #[test]
+    fn native_backdrop_is_explicit_and_transparency_safe() {
+        assert!(!environment_flag_value_enabled(None));
+        assert!(!environment_flag_value_enabled(Some("0")));
+        assert!(environment_flag_value_enabled(Some("1")));
+
+        assert_eq!(
+            native_backdrop_mode(false, false),
+            NativeBackdropMode::Disabled
+        );
+        assert_eq!(
+            native_backdrop_mode(true, false),
+            NativeBackdropMode::Requested
+        );
+        assert_eq!(
+            native_backdrop_mode(true, true),
+            NativeBackdropMode::BlockedByTransparency
+        );
     }
 }

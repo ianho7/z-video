@@ -353,7 +353,9 @@ fn sanitize_field(key: &str, value: &str) -> Option<(String, Value)> {
         | "last_playback_present"
         | "history_matched"
         | "subtitle_hash_present"
-        | "subtitle_setting_present" => Value::Bool(value.eq_ignore_ascii_case("true")),
+        | "subtitle_setting_present"
+        | "fallback"
+        | "handle_present" => Value::Bool(value.eq_ignore_ascii_case("true")),
         "classification_id" | "selected_id" | "collection_id" | "episode_id" => {
             Value::String(mask_identifier(value))
         }
@@ -533,6 +535,8 @@ mod tests {
                 ),
                 ("http_status", "200".to_string()),
                 ("request_observed", "true".to_string()),
+                ("fallback", "false".to_string()),
+                ("handle_present", "true".to_string()),
                 ("item_count", "4".to_string()),
                 ("password", "secret-password".to_string()),
             ],
@@ -546,6 +550,8 @@ mod tests {
         assert_eq!(value["duration_ms"], 12);
         assert_eq!(value["details"]["http_status"], 200);
         assert_eq!(value["details"]["request_observed"], true);
+        assert_eq!(value["details"]["fallback"], false);
+        assert_eq!(value["details"]["handle_present"], true);
         assert_eq!(value["details"]["item_count"], 4);
         let serialized = line.to_ascii_lowercase();
         assert!(!serialized.contains("secret-password"));

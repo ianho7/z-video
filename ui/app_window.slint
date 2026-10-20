@@ -614,6 +614,10 @@ component DetailEpisodeRow inherits Rectangle {
 component AppleWorkspace inherits Rectangle {
     in property <bool> sidebar_visible: true;
     in property <bool> reduced_transparency: false;
+    // Enabled only after the Windows native backdrop API succeeds. The main
+    // content surface below remains opaque while the Sidebar can expose the
+    // window-level backdrop through its alpha.
+    in property <bool> native_backdrop_enabled: false;
     // Evidence-only switch; production defaults to false.
     in property <bool> material_evidence: false;
     in property <string> current_view: "library";
@@ -740,16 +744,24 @@ component AppleWorkspace inherits Rectangle {
         }
     }
 
-    background: ShellTheme.canvas;
+    background: root.native_backdrop_enabled ? #00000000 : ShellTheme.canvas;
 
-    ShellAtmosphere {
+    if !root.native_backdrop_enabled: ShellAtmosphere {
         x: 0px;
         y: 0px;
         width: parent.width;
         height: parent.height;
     }
 
-    if root.material_evidence: MaterialEvidenceBackdrop {
+    if root.native_backdrop_enabled: Rectangle {
+        x: root.sidebar_visible ? ShellTheme.sidebar_width : 0px;
+        y: 0px;
+        width: root.shell_content_width;
+        height: parent.height;
+        background: ShellTheme.canvas;
+    }
+
+    if root.material_evidence && !root.native_backdrop_enabled: MaterialEvidenceBackdrop {
         x: 0px;
         y: 0px;
         width: parent.width;
@@ -777,8 +789,11 @@ component AppleWorkspace inherits Rectangle {
             background: root.reduced_transparency
                 ? ShellTheme.sidebar_opaque_surface
                 : ShellTheme.sidebar_surface;
-            // Reduced-transparency/high-contrast mode disables alpha and blur.
-            backdrop-blur: root.reduced_transparency ? 0px : ShellTheme.shell_blur_radius;
+            // Native mode lets DWM own the external backdrop; the Slint blur
+            // remains the fallback for the normal in-window path.
+            backdrop-blur: root.reduced_transparency || root.native_backdrop_enabled
+                ? 0px
+                : ShellTheme.shell_blur_radius;
             border_color: ShellTheme.separator;
             border_width: 1px;
 
@@ -875,7 +890,9 @@ component AppleWorkspace inherits Rectangle {
                         ? ShellTheme.toolbar_opaque_surface
                         : ShellTheme.toolbar_surface;
                     // Keep the glass effect on the toolbar only.
-                    backdrop-blur: root.reduced_transparency ? 0px : ShellTheme.shell_blur_radius;
+                    backdrop-blur: root.reduced_transparency || root.native_backdrop_enabled
+                        ? 0px
+                        : ShellTheme.shell_blur_radius;
                     border_color: ShellTheme.separator;
                     border_width: 1px;
 
@@ -1799,7 +1816,8 @@ export component AppWindow inherits Window {
     min_height: 640px;
     preferred_width: 1040px;
     preferred_height: 720px;
-    background: #121418;
+    // Native mode exposes only the child shell layers after DWM succeeds.
+    background: root.native_backdrop_enabled ? #00000000 : #121418;
 
     // View state
     in-out property <bool> is_logged_in: false;
@@ -1807,6 +1825,8 @@ export component AppWindow inherits Window {
     in-out property <bool> apple_sidebar_visible: true;
     // Rust sets this for reduced-transparency/high-contrast policy.
     in-out property <bool> reduced_transparency: false;
+    // Experimental Windows-only system backdrop; default remains disabled.
+    in-out property <bool> native_backdrop_enabled: false;
     // Evidence-only switch, set by poster_grid_preview.
     in-out property <bool> material_evidence: false;
     in-out property <string> apple_search_input: "";
@@ -3232,6 +3252,7 @@ export component AppWindow inherits Window {
         visible: root.is_logged_in && root.current_view != "player";
         sidebar_visible: root.apple_sidebar_visible;
         reduced_transparency: root.reduced_transparency;
+        native_backdrop_enabled: root.native_backdrop_enabled;
         material_evidence: root.material_evidence;
         current_view: root.current_view;
         classifications: root.classifications;
