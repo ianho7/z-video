@@ -625,6 +625,10 @@ component AppleWorkspace inherits Rectangle {
     in property <string> selected_classification_id: "";
     in property <string> selected_classification_name: "全部影片";
     in property <int> collection_count: 0;
+    in property <int> library_total_count: 0;
+    in property <int> library_page: 1;
+    in property <int> library_total_pages: 0;
+    in property <int> library_page_size: 50;
     in property <bool> library_loading: false;
     in property <string> library_error: "";
     in property <bool> requires_relogin: false;
@@ -676,6 +680,7 @@ component AppleWorkspace inherits Rectangle {
     callback clear_query();
     callback select_classification(string);
     callback refresh_library();
+    callback library_page_changed(int);
     callback relogin();
     callback collection_clicked(string);
     callback library_scrolled(length, length, length, length, int);
@@ -875,9 +880,11 @@ component AppleWorkspace inherits Rectangle {
                     border_width: 1px;
 
                     HorizontalLayout {
-                        padding_left: 18px;
-                        padding_right: 18px;
-                        spacing: 14px;
+                        padding_top: 11px;
+                        padding_bottom: 11px;
+                        padding_left: 30px;
+                        padding_right: 30px;
+                        spacing: 20px;
 
                         ShellIconButton {
                             icon: @image-url("../assets/icons/sidebar.svg");
@@ -904,7 +911,7 @@ component AppleWorkspace inherits Rectangle {
                         Rectangle { horizontal_stretch: 1; }
 
                         search_field := ShellSearchField {
-                            width: 260px;
+                            width: 310px;
                             text: root.search_input;
                             placeholder_text: "搜索片名、类型或简介（已加载范围）";
                             edited(value) => {
@@ -973,24 +980,34 @@ component AppleWorkspace inherits Rectangle {
                 // alignment.
                 VerticalLayout {
                     alignment: start;
-                    padding-top: 30px;
+                    padding-top: 24px;
                     padding-right: 32px;
-                    padding-bottom: 36px;
+                    padding-bottom: 48px;
                     padding-left: 32px;
                     spacing: 18px;
 
                     HorizontalLayout {
                         spacing: 12px;
-                        Text {
-                            text: "片库";
-                            color: ShellTheme.accent;
-                            font_size: 12px;
-                            font_weight: 650;
+                        VerticalLayout {
+                            spacing: 4px;
+                            Text {
+                                text: "片库";
+                                color: ShellTheme.accent;
+                                font_size: 12px;
+                                font_weight: 650;
+                            }
+                            Text {
+                                text: root.selected_classification_name;
+                                color: ShellTheme.text;
+                                font_size: 30px;
+                                font_weight: 700;
+                            }
                         }
                         Text {
                             text: root.collection_count + " 个结果 · " + root.search_scope;
                             color: ShellTheme.text_tertiary;
                             font_size: 12px;
+                            vertical_alignment: center;
                         }
                         Rectangle { horizontal_stretch: 1; }
                         ShellIconButton {
@@ -1007,7 +1024,7 @@ component AppleWorkspace inherits Rectangle {
                     HorizontalLayout {
                         height: ShellTheme.control_height;
                         vertical-stretch: 0;
-                        spacing: 6px;
+                        spacing: 8px;
 
                         Text {
                             text: "类型";
@@ -1104,13 +1121,6 @@ component AppleWorkspace inherits Rectangle {
                                 clicked => { root.retry_search(); }
                             }
                         }
-                    }
-
-                    Text {
-                        text: root.selected_classification_name;
-                        color: ShellTheme.text;
-                        font_size: 30px;
-                        font_weight: 700;
                     }
 
                     if root.library_error != "": Rectangle {
@@ -1445,6 +1455,58 @@ component AppleWorkspace inherits Rectangle {
                             restore_focus_collection_id: root.restore_focus_collection_id;
                             item: item;
                             activated(id) => { root.collection_clicked(id); }
+                        }
+                    }
+
+                    if !root.library_loading && !root.search_loading
+                        && root.library_error == "" && root.search_error == "": HorizontalLayout {
+                        height: 40px;
+                        vertical-stretch: 0;
+                        spacing: 8px;
+
+                        Text {
+                            text: root.library_total_pages == 0
+                                ? "暂无条目 · 第 " + root.library_page + " 页 / 共 0 页"
+                                : "第 " + root.library_page + " 页 / 共 "
+                                    + root.library_total_pages + " 页 · 本页 "
+                                    + root.collection_count + " 部 / 共 "
+                                    + root.library_total_count + " 部";
+                            color: ShellTheme.text_tertiary;
+                            font_size: 11px;
+                            vertical_alignment: center;
+                        }
+
+                        Rectangle { horizontal_stretch: 1; }
+
+                        ShellButton {
+                            compact: true;
+                            text: "首页";
+                            action_enabled: !root.library_loading && !root.search_loading
+                                && root.library_page > 1;
+                            clicked => { root.library_page_changed(1); }
+                        }
+                        ShellButton {
+                            compact: true;
+                            text: "上一页";
+                            action_enabled: !root.library_loading && !root.search_loading
+                                && root.library_page > 1;
+                            clicked => { root.library_page_changed(root.library_page - 1); }
+                        }
+                        ShellButton {
+                            compact: true;
+                            text: "下一页";
+                            action_enabled: !root.library_loading && !root.search_loading
+                                && root.library_total_pages > 0
+                                && root.library_page < root.library_total_pages;
+                            clicked => { root.library_page_changed(root.library_page + 1); }
+                        }
+                        ShellButton {
+                            compact: true;
+                            text: "末页";
+                            action_enabled: !root.library_loading && !root.search_loading
+                                && root.library_total_pages > 0
+                                && root.library_page < root.library_total_pages;
+                            clicked => { root.library_page_changed(root.library_total_pages); }
                         }
                     }
                 }
@@ -1785,6 +1847,10 @@ export component AppWindow inherits Window {
     in-out property <string> selected_classification_name: "全部影片";
     in-out property <bool> library_loading: false;
     in-out property <string> library_error: "";
+    in-out property <int> library_total_count: 0;
+    in-out property <int> library_page: 1;
+    in-out property <int> library_total_pages: 0;
+    in-out property <int> library_page_size: 50;
     in-out property <bool> requires_relogin: false;
     in-out property <int> collection_count: 0;
     in-out property <bool> search_active: false;
@@ -1863,6 +1929,7 @@ export component AppWindow inherits Window {
     callback continue_watching_clicked(string, string);
     callback continue_watching_retry();
     callback refresh_library_clicked();
+    callback library_page_changed(int);
     callback switch_view(string);
     callback detail_back_clicked();
     callback episode_selected(string);
@@ -3175,6 +3242,10 @@ export component AppWindow inherits Window {
         selected_classification_id: root.selected_classification_id;
         selected_classification_name: root.selected_classification_name;
         collection_count: root.collection_count;
+        library_total_count: root.library_total_count;
+        library_page: root.library_page;
+        library_total_pages: root.library_total_pages;
+        library_page_size: root.library_page_size;
         library_loading: root.library_loading;
         library_error: root.library_error;
         requires_relogin: root.requires_relogin;
@@ -3233,6 +3304,7 @@ export component AppWindow inherits Window {
         }
         select-classification(id) => { root.select_classification(id); }
         refresh-library => { root.refresh_library_clicked(); }
+        library-page-changed(page) => { root.library_page_changed(page); }
         relogin => { root.relogin_requested(); }
         collection-clicked(id) => { root.collection_clicked(id); }
         library-scrolled(scroll_offset, viewport_height, grid_top, card_width, columns) => {

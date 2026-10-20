@@ -56,6 +56,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let collections = preview_collections(&media_type, &sort_order);
     let result_count = collections.len();
     window.set_collection_count(result_count as i32);
+    window.set_library_total_count(result_count as i32);
+    window.set_library_page(1);
+    window.set_library_total_pages(1);
+    window.set_library_page_size(50);
     window.set_media_type_filter(media_type.clone().into());
     window.set_sort_order(sort_order.clone().into());
     window.set_search_active(media_type != "all" || sort_order != "default");

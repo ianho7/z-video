@@ -21,7 +21,9 @@ use crate::nas::discovery::{
     discover_local_nas, DiscoveryCancellation, DiscoveryConfig, DiscoveryError,
     NasDiscoveryResult,
 };
-use crate::nas::models::{CollectionDetail, CollectionItem, Episode, NasError, PlaybackHistory};
+use crate::nas::models::{
+    CollectionDetail, CollectionItem, CollectionPage, Episode, NasError, PlaybackHistory,
+};
 use crate::nas::session::{NasDeviceMetadata, NasSession};
 #[cfg(windows)]
 use crate::platform::Win32VideoSurface;
@@ -98,6 +100,7 @@ const SORT_DEFAULT: &str = "default";
 const SORT_TITLE_ASC: &str = "title_asc";
 const SORT_SCORE_DESC: &str = "score_desc";
 const SORT_RELEASE_YEAR_DESC: &str = "release_year_desc";
+const COLLECTION_PAGE_SIZE: usize = 50;
 
 const POSTER_GRID_GAP: f32 = 14.0;
 const POSTER_METADATA_HEIGHT: f32 = 48.0;
@@ -163,6 +166,7 @@ struct BrowseContext {
     query: String,
     media_type: String,
     sort_order: String,
+    page: usize,
     scroll_offset: f32,
     focused_collection_id: String,
     focused_collection_index: Option<usize>,
@@ -390,23 +394,46 @@ fn sort_order_label(sort_order: &str) -> &'static str {
     }
 }
 
-fn query_scope(
-    source_count: usize,
+fn collection_page_count(total_count: usize, page_size: usize) -> usize {
+    if total_count == 0 || page_size == 0 {
+        0
+    } else {
+        (total_count + page_size - 1) / page_size
+    }
+}
+
+fn collection_page_start(page: usize, page_size: usize) -> usize {
+    page.max(1)
+        .saturating_sub(1)
+        .saturating_mul(page_size)
+        .saturating_add(1)
+}
+
+fn collection_page_scope(
+    page: usize,
+    total_pages: usize,
+    loaded_count: usize,
     result_count: usize,
+    total_count: usize,
     query: &str,
     media_type: &str,
     sort_order: &str,
 ) -> String {
+    let page_label = format!("第 {} 页 / 共 {} 页", page.max(1), total_pages);
     if query.trim().is_empty() && media_type == MEDIA_TYPE_ALL && sort_order == SORT_DEFAULT {
-        return format!("当前已加载范围：{} 部", source_count);
+        return format!(
+            "{} · 当前已加载范围：本页 {} 部 / 共 {} 部",
+            page_label, loaded_count, total_count
+        );
     }
 
     format!(
-        "仅当前已加载 {} 部 · 类型：{} · 排序：{} · 匹配 {} 部",
-        source_count,
+        "{} · 仅当前页 {} 部 · 类型：{} · 排序：{} · 匹配 {} 部",
+        page_label,
+        loaded_count,
         media_type_label(media_type),
         sort_order_label(sort_order),
-        result_count
+        result_count,
     )
 }
 
@@ -421,6 +448,7 @@ fn remember_browse_context(
     context.query = ui.get_apple_search_input().to_string();
     context.media_type = ui.get_media_type_filter().to_string();
     context.sort_order = ui.get_sort_order().to_string();
+    context.page = ui.get_library_page().max(1) as usize;
     if let Some(scroll_offset) = scroll_offset {
         context.scroll_offset = scroll_offset.max(0.0);
     }
@@ -440,6 +468,7 @@ fn reset_browse_context(browse_context: &Arc<Mutex<BrowseContext>>, ui: &AppWind
     context.query.clear();
     context.media_type = MEDIA_TYPE_ALL.to_string();
     context.sort_order = SORT_DEFAULT.to_string();
+    context.page = 1;
     context.scroll_offset = 0.0;
     context.focused_collection_id.clear();
     context.focused_collection_index = None;
@@ -820,6 +849,10 @@ impl AppCoordinator {
         self.ui.set_collections(ModelRc::new(VecModel::default()));
         Self::clear_continue_watching(&self.ui);
         self.ui.set_collection_count(0);
+        self.ui.set_library_total_count(0);
+        self.ui.set_library_total_pages(0);
+        self.ui.set_library_page(1);
+        self.ui.set_library_page_size(COLLECTION_PAGE_SIZE as i32);
         self.ui.set_apple_search_input("".into());
         self.ui.set_media_type_filter(MEDIA_TYPE_ALL.into());
         self.ui.set_sort_order(SORT_DEFAULT.into());
@@ -981,6 +1014,11 @@ impl AppCoordinator {
         self.ui.set_search_loading(false);
         self.ui.set_search_error("".into());
         self.ui.set_search_scope("当前已加载范围：0 部".into());
+        self.ui.set_collection_count(0);
+        self.ui.set_library_total_count(0);
+        self.ui.set_library_total_pages(0);
+        self.ui.set_library_page(1);
+        self.ui.set_library_page_size(COLLECTION_PAGE_SIZE as i32);
         self.ui.set_library_loading(true);
         self.ui.set_library_error("".into());
         self.ui.set_requires_relogin(false);
@@ -1058,6 +1096,10 @@ impl AppCoordinator {
         self.ui.set_search_error("".into());
         self.ui.set_search_scope("当前已加载范围：0 部".into());
         self.ui.set_collection_count(0);
+        self.ui.set_library_total_count(0);
+        self.ui.set_library_total_pages(0);
+        self.ui.set_library_page(1);
+        self.ui.set_library_page_size(COLLECTION_PAGE_SIZE as i32);
         self.ui.set_collections(ModelRc::new(VecModel::default()));
         self.ui.set_library_loading(true);
         self.ui.set_library_error("".into());
@@ -1065,7 +1107,12 @@ impl AppCoordinator {
 
         let res = self
             .nas_client
-            .get_collections(&self.session, classification_id, 1, 50);
+            .get_collections(
+                &self.session,
+                classification_id,
+                collection_page_start(1, COLLECTION_PAGE_SIZE),
+                COLLECTION_PAGE_SIZE,
+            );
         self.ui.set_library_loading(false);
 
         match res {
@@ -1074,10 +1121,24 @@ impl AppCoordinator {
                     return Ok(());
                 }
                 let count = page.list.len();
+                let total_count = page.count.max(count);
                 *self.loaded_collections.lock().unwrap() = page.list.clone();
                 self.ui.set_collection_count(count as i32);
+                Self::set_library_page_state(&self.ui, 1, total_count);
                 self.ui
-                    .set_search_scope(format!("当前已加载范围：{} 部", count).into());
+                    .set_search_scope(
+                        collection_page_scope(
+                            1,
+                            self.ui.get_library_total_pages().max(0) as usize,
+                            count,
+                            count,
+                            total_count,
+                            "",
+                            MEDIA_TYPE_ALL,
+                            SORT_DEFAULT,
+                        )
+                        .into(),
+                    );
 
                 let ui_items = collection_ui_items(&page.list);
 
@@ -1124,6 +1185,216 @@ impl AppCoordinator {
                 Err(err)
             }
         }
+    }
+
+    fn set_library_page_state(
+        ui: &AppWindow,
+        requested_page: usize,
+        total_count: usize,
+    ) -> usize {
+        let total_pages = collection_page_count(total_count, COLLECTION_PAGE_SIZE);
+        let page = if total_pages == 0 {
+            1
+        } else {
+            requested_page.max(1).min(total_pages)
+        };
+        ui.set_library_page(page as i32);
+        ui.set_library_total_pages(total_pages as i32);
+        ui.set_library_total_count(total_count as i32);
+        ui.set_library_page_size(COLLECTION_PAGE_SIZE as i32);
+        page
+    }
+
+    fn apply_collection_page_to_ui(
+        ui: &AppWindow,
+        page: CollectionPage,
+        requested_page: usize,
+        loaded_collections: &Arc<Mutex<Vec<CollectionItem>>>,
+        nas_client: Arc<dyn NasClient>,
+        session: Arc<NasSession>,
+        image_cache: ImageCache,
+        image_request_gate: ImageRequestGate,
+        request_id: u64,
+        last_poster_range: &Arc<Mutex<PosterRangeRequestState>>,
+    ) {
+        let page_items = page.list;
+        let total_count = page.count.max(page_items.len());
+        let effective_page = Self::set_library_page_state(ui, requested_page, total_count);
+        *loaded_collections.lock().unwrap() = page_items.clone();
+
+        let query = ui.get_apple_search_input().to_string();
+        let media_type = ui.get_media_type_filter().to_string();
+        let sort_order = ui.get_sort_order().to_string();
+        match apply_collection_query(&page_items, &query, &media_type, &sort_order) {
+            Ok(matches) => {
+                let result_count = matches.len();
+                ui.set_collections(ModelRc::from(Rc::new(VecModel::from(
+                    collection_ui_items(&matches),
+                ))));
+                ui.set_collection_count(result_count as i32);
+                ui.set_search_active(
+                    !query.trim().is_empty()
+                        || media_type != MEDIA_TYPE_ALL
+                        || sort_order != SORT_DEFAULT,
+                );
+                ui.set_search_loading(false);
+                ui.set_library_loading(false);
+                ui.set_search_error("".into());
+                ui.set_search_scope(
+                    collection_page_scope(
+                        effective_page,
+                        ui.get_library_total_pages().max(0) as usize,
+                        page_items.len(),
+                        result_count,
+                        total_count,
+                        &query,
+                        &media_type,
+                        &sort_order,
+                    )
+                    .into(),
+                );
+                AppCoordinator::request_poster_range_for_current_layout(
+                    ui,
+                    nas_client,
+                    session,
+                    image_cache,
+                    image_request_gate,
+                    request_id,
+                    &matches,
+                    last_poster_range,
+                );
+            }
+            Err(error) => {
+                ui.set_collections(ModelRc::from(Rc::new(VecModel::default())));
+                ui.set_collection_count(0);
+                ui.set_search_active(true);
+                ui.set_search_loading(false);
+                ui.set_library_loading(false);
+                ui.set_search_error(error.user_message().into());
+                ui.set_search_scope(
+                    collection_page_scope(
+                        effective_page,
+                        ui.get_library_total_pages().max(0) as usize,
+                        page_items.len(),
+                        0,
+                        total_count,
+                        &query,
+                        &media_type,
+                        &sort_order,
+                    )
+                    .into(),
+                );
+            }
+        }
+    }
+
+    fn start_library_page_load(
+        ui_weak: slint::Weak<AppWindow>,
+        nas_client: Arc<dyn NasClient>,
+        session: Arc<NasSession>,
+        loaded_collections: Arc<Mutex<Vec<CollectionItem>>>,
+        search_generation: Arc<AtomicU64>,
+        image_cache: ImageCache,
+        image_request_gate: ImageRequestGate,
+        last_poster_range: Arc<Mutex<PosterRangeRequestState>>,
+        classification_id: String,
+        requested_page: usize,
+    ) {
+        let mut page = requested_page.max(1);
+        search_generation.fetch_add(1, Ordering::SeqCst);
+        let request_id = image_request_gate.begin();
+        last_poster_range.lock().unwrap().reset();
+        loaded_collections.lock().unwrap().clear();
+
+        if let Some(ui) = ui_weak.upgrade() {
+            let current_total_pages = ui.get_library_total_pages().max(0) as usize;
+            if current_total_pages > 0 {
+                page = page.min(current_total_pages);
+            }
+            ui.set_library_page(page as i32);
+            ui.set_library_loading(true);
+            ui.set_search_loading(false);
+            ui.set_library_error("".into());
+            ui.set_search_error("".into());
+            ui.set_collections(ModelRc::from(Rc::new(VecModel::default())));
+            ui.set_collection_count(0);
+            ui.set_library_scroll_offset(0.0);
+            ui.set_library_restore_scroll_offset(0.0);
+            ui.set_library_focus_collection_id("".into());
+        }
+
+        if classification_id.trim().is_empty() {
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_library_loading(false);
+                ui.set_library_error("没有可用的片库分类，未请求影视列表。".into());
+            }
+            return;
+        }
+
+        let start = collection_page_start(page, COLLECTION_PAGE_SIZE);
+        let operation = diagnostics::start_event("ui", "library.page");
+        let ui_weak_bg = ui_weak.clone();
+        let nas_client_for_posters = Arc::clone(&nas_client);
+        let session_for_posters = Arc::clone(&session);
+        let image_cache_for_posters = image_cache.clone();
+        let image_request_gate_for_posters = image_request_gate.clone();
+        let last_poster_range_for_posters = Arc::clone(&last_poster_range);
+        std::thread::spawn(move || {
+            let result = nas_client.get_collections(
+                &session,
+                &classification_id,
+                start,
+                COLLECTION_PAGE_SIZE,
+            );
+            let item_count = result
+                .as_ref()
+                .map(|page| page.list.len().to_string())
+                .unwrap_or_else(|_| "0".to_string());
+            operation.finish(
+                if result.is_ok() { "success" } else { "error" },
+                &[
+                    ("classification_id", classification_id.clone()),
+                    ("page", page.to_string()),
+                    ("start", start.to_string()),
+                    ("limit", COLLECTION_PAGE_SIZE.to_string()),
+                    ("item_count", item_count),
+                ],
+            );
+
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = ui_weak_bg.upgrade() else {
+                    return;
+                };
+                if !image_request_gate_for_posters.is_current(request_id) {
+                    return;
+                }
+                match result {
+                    Ok(page_data) => {
+                        AppCoordinator::apply_collection_page_to_ui(
+                            &ui,
+                            page_data,
+                            page,
+                            &loaded_collections,
+                            nas_client_for_posters,
+                            session_for_posters,
+                            image_cache_for_posters,
+                            image_request_gate_for_posters,
+                            request_id,
+                            &last_poster_range_for_posters,
+                        );
+                        ui.set_status_message(format!("已切换到第 {} 页。", page).into());
+                    }
+                    Err(error) => {
+                        ui.set_library_loading(false);
+                        ui.set_library_total_count(0);
+                        ui.set_library_total_pages(0);
+                        ui.set_search_scope("当前页加载失败".into());
+                        ui.set_library_error(error.user_recovery_hint().into());
+                        ui.set_requires_relogin(error.requires_reauthentication());
+                    }
+                }
+            });
+        });
     }
 
     fn clear_continue_watching(ui: &AppWindow) {
@@ -1674,7 +1945,21 @@ impl AppCoordinator {
         ui.set_search_active(false);
         ui.set_search_loading(false);
         ui.set_search_error("".into());
-        ui.set_search_scope(format!("当前已加载范围：{} 部", count).into());
+        let total_count = ui.get_library_total_count().max(count as i32) as usize;
+        let page = ui.get_library_page().max(1) as usize;
+        ui.set_search_scope(
+            collection_page_scope(
+                page,
+                ui.get_library_total_pages().max(0) as usize,
+                count,
+                count,
+                total_count,
+                "",
+                MEDIA_TYPE_ALL,
+                SORT_DEFAULT,
+            )
+            .into(),
+        );
         AppCoordinator::request_poster_range_for_current_layout(
             ui,
             Arc::clone(nas_client),
@@ -1734,6 +2019,7 @@ impl AppCoordinator {
         ui.set_apple_search_input(context.query.clone().into());
         ui.set_media_type_filter(context.media_type.clone().into());
         ui.set_sort_order(context.sort_order.clone().into());
+        ui.set_library_page(context.page.max(1) as i32);
         ui.set_collection_count(matches.len() as i32);
         ui.set_search_active(
             !context.query.trim().is_empty()
@@ -1743,9 +2029,12 @@ impl AppCoordinator {
         ui.set_search_loading(false);
         ui.set_search_error("".into());
         ui.set_search_scope(
-            query_scope(
+            collection_page_scope(
+                context.page.max(1),
+                ui.get_library_total_pages().max(0) as usize,
                 source_items.len(),
                 matches.len(),
+                ui.get_library_total_count().max(source_items.len() as i32) as usize,
                 &context.query,
                 &context.media_type,
                 &context.sort_order,
@@ -1878,9 +2167,12 @@ impl AppCoordinator {
                             ui.set_search_loading(false);
                             ui.set_search_error("".into());
                             ui.set_search_scope(
-                                query_scope(
+                                collection_page_scope(
+                                    ui.get_library_page().max(1) as usize,
+                                    ui.get_library_total_pages().max(0) as usize,
                                     source_count,
                                     count,
+                                    ui.get_library_total_count().max(source_count as i32) as usize,
                                     &query_for_ui,
                                     &media_type_for_ui,
                                     &sort_order_for_ui,
@@ -1947,6 +2239,11 @@ impl AppCoordinator {
         let media_type = media_type.trim().to_string();
         let sort_order = sort_order.trim().to_string();
         ui.set_search_error("".into());
+
+        if ui.get_library_page() > 1 {
+            ui.invoke_library_page_changed(1);
+            return;
+        }
 
         let snapshot = loaded_collections.lock().unwrap().clone();
         if query.is_empty() && media_type == MEDIA_TYPE_ALL && sort_order == SORT_DEFAULT {
@@ -2418,6 +2715,42 @@ impl AppCoordinator {
             );
         });
 
+        let ui_weak_page = self.ui.as_weak();
+        let loaded_collections_for_page = Arc::clone(&loaded_collections);
+        let search_generation_for_page = Arc::clone(&search_generation);
+        let image_cache_for_page = image_cache.clone();
+        let image_request_gate_for_page = image_request_gate.clone();
+        let last_poster_range_for_page = Arc::clone(&last_poster_range);
+        let nas_client_for_page = Arc::clone(&nas_client);
+        let session_for_page = Arc::clone(&session);
+        let browse_context_for_page = Arc::clone(&browse_context);
+        self.ui.on_library_page_changed(move |requested_page| {
+            let Some(ui) = ui_weak_page.upgrade() else {
+                return;
+            };
+            let requested_page = requested_page.max(1) as usize;
+            let current_total_pages = ui.get_library_total_pages().max(0) as usize;
+            let page = if current_total_pages == 0 {
+                requested_page
+            } else {
+                requested_page.min(current_total_pages)
+            };
+            ui.set_library_page(page as i32);
+            remember_browse_context(&browse_context_for_page, &ui, None, None);
+            AppCoordinator::start_library_page_load(
+                ui.as_weak(),
+                Arc::clone(&nas_client_for_page),
+                Arc::clone(&session_for_page),
+                Arc::clone(&loaded_collections_for_page),
+                Arc::clone(&search_generation_for_page),
+                image_cache_for_page.clone(),
+                image_request_gate_for_page.clone(),
+                Arc::clone(&last_poster_range_for_page),
+                ui.get_selected_classification_id().to_string(),
+                page,
+            );
+        });
+
         let ui_weak_scroll = self.ui.as_weak();
         let loaded_collections_for_scroll = Arc::clone(&loaded_collections);
         let nas_client_for_scroll = Arc::clone(&nas_client);
@@ -2495,6 +2828,10 @@ impl AppCoordinator {
             ui.set_search_error("".into());
             ui.set_search_scope("当前已加载范围：0 部".into());
             ui.set_collection_count(0);
+            ui.set_library_total_count(0);
+            ui.set_library_total_pages(0);
+            ui.set_library_page(1);
+            ui.set_library_page_size(COLLECTION_PAGE_SIZE as i32);
 
             let cat_model = ui.get_classifications();
             let count = cat_model.row_count();
@@ -2542,7 +2879,12 @@ impl AppCoordinator {
             let selected_id_for_log = target_id.clone();
 
             std::thread::spawn(move || {
-                let res = client_for_thread.get_collections(&session_for_thread, &target_id, 1, 50);
+                let res = client_for_thread.get_collections(
+                    &session_for_thread,
+                    &target_id,
+                    collection_page_start(1, COLLECTION_PAGE_SIZE),
+                    COLLECTION_PAGE_SIZE,
+                );
                 let result = if res.is_ok() { "success" } else { "error" };
                 let item_count = res
                     .as_ref()
@@ -2568,9 +2910,23 @@ impl AppCoordinator {
                     match res {
                         Ok(page) => {
                             let total = page.list.len();
+                            let total_count = page.count.max(total);
                             *loaded_collections_for_thread.lock().unwrap() = page.list.clone();
                             ui.set_collection_count(total as i32);
-                            ui.set_search_scope(format!("当前已加载范围：{} 部", total).into());
+                            Self::set_library_page_state(&ui, 1, total_count);
+                            ui.set_search_scope(
+                                collection_page_scope(
+                                    1,
+                                    ui.get_library_total_pages().max(0) as usize,
+                                    total,
+                                    total,
+                                    total_count,
+                                    "",
+                                    MEDIA_TYPE_ALL,
+                                    SORT_DEFAULT,
+                                )
+                                .into(),
+                            );
 
                             let ui_items = collection_ui_items(&page.list);
 
@@ -2655,6 +3011,10 @@ impl AppCoordinator {
             ui.set_search_error("".into());
             ui.set_search_scope("当前已加载范围：0 部".into());
             ui.set_collection_count(0);
+            ui.set_library_total_count(0);
+            ui.set_library_total_pages(0);
+            ui.set_library_page(1);
+            ui.set_library_page_size(COLLECTION_PAGE_SIZE as i32);
             ui.set_library_loading(true);
             ui.set_library_error("".into());
             ui.set_requires_relogin(false);
@@ -2720,8 +3080,8 @@ impl AppCoordinator {
                     Ok(_) => client_for_thread.get_collections(
                         &session_for_thread,
                         &effective_sel_id,
-                        1,
-                        50,
+                        collection_page_start(1, COLLECTION_PAGE_SIZE),
+                        COLLECTION_PAGE_SIZE,
                     ),
                 };
                 let selected_id_for_ui = effective_sel_id.clone();
@@ -2818,12 +3178,25 @@ impl AppCoordinator {
 
                     match col_res {
                         Ok(page) => {
+                            let page_item_count = page.list.len();
+                            let total_count = page.count.max(page_item_count);
                             *loaded_collections_for_thread.lock().unwrap() = page.list.clone();
                             let ui_cols = collection_ui_items(&page.list);
                             ui.set_collections(ModelRc::from(Rc::new(VecModel::from(ui_cols))));
-                            ui.set_collection_count(page.list.len() as i32);
+                            ui.set_collection_count(page_item_count as i32);
+                            Self::set_library_page_state(&ui, 1, total_count);
                             ui.set_search_scope(
-                                format!("当前已加载范围：{} 部", page.list.len()).into(),
+                                collection_page_scope(
+                                    1,
+                                    ui.get_library_total_pages().max(0) as usize,
+                                    page_item_count,
+                                    page_item_count,
+                                    total_count,
+                                    "",
+                                    MEDIA_TYPE_ALL,
+                                    SORT_DEFAULT,
+                                )
+                                .into(),
                             );
                             ui.set_status_message("片库已刷新完成。".into());
                             AppCoordinator::start_continue_watching_load(
@@ -4440,7 +4813,10 @@ pub fn find_sample_video_path() -> PathBuf {
 
 #[cfg(test)]
 mod poster_loading_tests {
-    use super::{visible_poster_range, PosterLoadRange, PosterRangeRequestState};
+    use super::{
+        collection_page_count, collection_page_start, visible_poster_range, PosterLoadRange,
+        PosterRangeRequestState,
+    };
     use crate::media::image_cache::ImageRequestGate;
 
     #[test]
@@ -4529,5 +4905,36 @@ mod poster_loading_tests {
                 end: 24,
             }
         );
+    }
+
+    #[test]
+    fn collection_page_math_handles_empty_single_and_last_page() {
+        assert_eq!(collection_page_count(0, 50), 0);
+        assert_eq!(collection_page_count(1, 50), 1);
+        assert_eq!(collection_page_count(50, 50), 1);
+        assert_eq!(collection_page_count(51, 50), 2);
+        assert_eq!(collection_page_count(101, 50), 3);
+
+        assert_eq!(collection_page_start(1, 50), 1);
+        assert_eq!(collection_page_start(2, 50), 51);
+        assert_eq!(collection_page_start(3, 50), 101);
+    }
+
+    #[test]
+    fn page_change_resets_poster_range_state() {
+        let gate = ImageRequestGate::new();
+        let mut state = PosterRangeRequestState::default();
+        let range = PosterLoadRange { start: 0, end: 24 };
+
+        let first_id = state
+            .begin_if_needed(&gate, range, false)
+            .expect("first page must issue an initial poster request");
+        state.reset();
+        let second_id = state
+            .begin_if_needed(&gate, range, false)
+            .expect("new page must issue a fresh initial poster request");
+
+        assert!(!gate.is_current(first_id));
+        assert!(gate.is_current(second_id));
     }
 }
