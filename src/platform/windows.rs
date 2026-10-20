@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Dwm::{
     DwmExtendFrameIntoClientArea, DwmIsCompositionEnabled, DwmSetWindowAttribute,
-    DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE,
+    DWMSBT_NONE, DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE,
 };
 use windows_sys::Win32::Graphics::Gdi::HBRUSH;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -25,6 +25,33 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 pub enum NativeBackdropOutcome {
     Applied,
     Fallback { reason: &'static str },
+}
+
+/// Removes the window-level backdrop and restores ordinary client-area painting.
+/// This is safe to call more than once while a window is being rebuilt.
+pub fn clear_native_backdrop(hwnd: isize) -> bool {
+    if hwnd == 0 {
+        return false;
+    }
+
+    let hwnd = hwnd as HWND;
+    let backdrop = DWMSBT_NONE;
+    let attribute_hr = unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_SYSTEMBACKDROP_TYPE as u32,
+            &backdrop as *const _ as *const c_void,
+            size_of::<i32>() as u32,
+        )
+    };
+    let margins = MARGINS {
+        cxLeftWidth: 0,
+        cxRightWidth: 0,
+        cyTopHeight: 0,
+        cyBottomHeight: 0,
+    };
+    let frame_hr = unsafe { DwmExtendFrameIntoClientArea(hwnd, &margins) };
+    attribute_hr >= 0 && frame_hr >= 0
 }
 
 /// Applies the Windows 11 system backdrop to the top-level app window.
@@ -88,7 +115,10 @@ pub fn apply_native_backdrop(hwnd: isize) -> NativeBackdropOutcome {
     };
     let frame_hr = unsafe { DwmExtendFrameIntoClientArea(hwnd, &margins) };
     if frame_hr < 0 {
-        warn!("native backdrop unavailable: client frame API failed (HRESULT {frame_hr:#x})");
+        let cleanup_succeeded = clear_native_backdrop(hwnd as isize);
+        warn!(
+            "native backdrop unavailable: client frame API failed (HRESULT {frame_hr:#x}, cleanup={cleanup_succeeded})"
+        );
         return NativeBackdropOutcome::Fallback {
             reason: "client-frame-api-failed",
         };

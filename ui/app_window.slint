@@ -1817,7 +1817,9 @@ export component AppWindow inherits Window {
     preferred_width: 1040px;
     preferred_height: 720px;
     // Native mode exposes only the child shell layers after DWM succeeds.
-    background: root.native_backdrop_enabled ? #00000000 : #121418;
+    background: root.native_backdrop_enabled && root.is_logged_in && root.current_view != "player"
+        ? #00000000
+        : #121418;
 
     // View state
     in-out property <bool> is_logged_in: false;
@@ -3252,7 +3254,9 @@ export component AppWindow inherits Window {
         visible: root.is_logged_in && root.current_view != "player";
         sidebar_visible: root.apple_sidebar_visible;
         reduced_transparency: root.reduced_transparency;
-        native_backdrop_enabled: root.native_backdrop_enabled;
+        native_backdrop_enabled: root.native_backdrop_enabled
+            && root.is_logged_in
+            && root.current_view != "player";
         material_evidence: root.material_evidence;
         current_view: root.current_view;
         classifications: root.classifications;

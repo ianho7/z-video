@@ -26,7 +26,9 @@ use crate::nas::models::{
 };
 use crate::nas::session::{NasDeviceMetadata, NasSession};
 #[cfg(windows)]
-use crate::platform::{apply_native_backdrop, NativeBackdropOutcome, Win32VideoSurface};
+use crate::platform::{
+    apply_native_backdrop, clear_native_backdrop, NativeBackdropOutcome, Win32VideoSurface,
+};
 use crate::playback::{PlaybackProgressUpdate, PlaybackSession, PlaybackStream};
 use crate::player::state::{PlaybackControlState, PlaybackProgress, PlaybackState, PlayerEvent};
 use crate::player::traits::Player;
@@ -112,6 +114,16 @@ fn native_backdrop_mode(native_requested: bool, transparency_disabled: bool) -> 
     }
 }
 
+fn native_backdrop_workspace_active(
+    mode: NativeBackdropMode,
+    is_logged_in: bool,
+    current_view: &str,
+) -> bool {
+    matches!(mode, NativeBackdropMode::Requested)
+        && is_logged_in
+        && current_view != "player"
+}
+
 fn native_backdrop_requested() -> bool {
     environment_flag_enabled("Z_VIDEO_NATIVE_BACKDROP")
 }
@@ -143,6 +155,14 @@ fn record_native_backdrop_event(result: &str, fallback: bool, handle_present: bo
             ("reason", reason.to_string()),
         ],
     );
+}
+
+#[cfg(windows)]
+#[derive(Default)]
+struct NativeBackdropLifecycleState {
+    applied_hwnd: Option<isize>,
+    attempted_hwnd: Option<isize>,
+    attempted_mode: Option<NativeBackdropMode>,
 }
 
 const MEDIA_TYPE_ALL: &str = "all";
@@ -4335,7 +4355,7 @@ impl AppCoordinator {
         let mut heartbeat = 0;
         let mut surface_initialized = false;
         #[cfg(windows)]
-        let mut native_backdrop_checked = false;
+        let mut native_backdrop_state = NativeBackdropLifecycleState::default();
 
         self.timer.start(
             slint::TimerMode::Repeated,
@@ -4345,25 +4365,32 @@ impl AppCoordinator {
                 let Some(ui) = ui_weak.upgrade() else { return };
                 ui.set_ui_heartbeat_count(heartbeat);
 
+                let is_logged_in = ui.get_is_logged_in();
+                let current_view = ui.get_current_view();
+
                 #[cfg(windows)]
                 {
-                    if !native_backdrop_checked {
-                        match native_backdrop_mode(
-                            native_backdrop_requested(),
-                            shell_transparency_disabled(),
-                        ) {
-                            NativeBackdropMode::Disabled => {
-                                native_backdrop_checked = true;
-                                record_native_backdrop_event(
-                                    "disabled",
-                                    false,
-                                    false,
-                                    "feature-disabled",
-                                );
-                            }
+                    let transparency_disabled = shell_transparency_disabled();
+                    let mode = native_backdrop_mode(
+                        native_backdrop_requested(),
+                        transparency_disabled,
+                    );
+                    let workspace_active =
+                        native_backdrop_workspace_active(mode, is_logged_in, &current_view);
+                    let mode_changed = native_backdrop_state.attempted_mode != Some(mode);
+
+                    if mode_changed {
+                        native_backdrop_state.attempted_mode = Some(mode);
+                        native_backdrop_state.attempted_hwnd = None;
+                        match mode {
+                            NativeBackdropMode::Disabled => record_native_backdrop_event(
+                                "disabled",
+                                false,
+                                false,
+                                "feature-disabled",
+                            ),
                             NativeBackdropMode::BlockedByTransparency => {
-                                native_backdrop_checked = true;
-                                ui.set_native_backdrop_enabled(false);
+                                ui.set_reduced_transparency(true);
                                 record_native_backdrop_event(
                                     "fallback",
                                     true,
@@ -4371,36 +4398,68 @@ impl AppCoordinator {
                                     "reduced-transparency",
                                 );
                             }
-                            NativeBackdropMode::Requested => {
-                                if let Some(hwnd) = try_get_window_hwnd(ui.window()) {
-                                    native_backdrop_checked = true;
-                                    match apply_native_backdrop(hwnd) {
-                                        NativeBackdropOutcome::Applied => {
-                                            ui.set_native_backdrop_enabled(true);
-                                            record_native_backdrop_event(
-                                                "applied",
-                                                false,
-                                                true,
-                                                "system-backdrop-applied",
-                                            );
-                                        }
-                                        NativeBackdropOutcome::Fallback { reason } => {
-                                            ui.set_native_backdrop_enabled(false);
-                                            record_native_backdrop_event(
-                                                "fallback",
-                                                true,
-                                                true,
-                                                reason,
-                                            );
-                                        }
-                                    }
-                                }
-                            }
+                            NativeBackdropMode::Requested => {}
                         }
                     }
 
-                    let is_logged_in = ui.get_is_logged_in();
-                    let current_view = ui.get_current_view();
+                    if !workspace_active {
+                        if let Some(hwnd) = native_backdrop_state.applied_hwnd.take() {
+                            if !clear_native_backdrop(hwnd) {
+                                warn!("native backdrop cleanup failed while leaving workspace");
+                            }
+                            record_native_backdrop_event(
+                                "disabled",
+                                false,
+                                true,
+                                "workspace-inactive",
+                            );
+                        }
+                        // A later return to the library may have a rebuilt or
+                        // newly ready window. Allow one safe retry then.
+                        native_backdrop_state.attempted_hwnd = None;
+                        ui.set_native_backdrop_enabled(false);
+                    } else if let Some(hwnd) = try_get_window_hwnd(ui.window()) {
+                        if native_backdrop_state.applied_hwnd == Some(hwnd) {
+                            ui.set_native_backdrop_enabled(true);
+                            ui.set_reduced_transparency(false);
+                        } else if native_backdrop_state.attempted_hwnd != Some(hwnd) {
+                            if let Some(previous_hwnd) = native_backdrop_state.applied_hwnd.take() {
+                                if !clear_native_backdrop(previous_hwnd) {
+                                    warn!("native backdrop cleanup failed before reinitialization");
+                                }
+                            }
+                            native_backdrop_state.attempted_hwnd = Some(hwnd);
+                            match apply_native_backdrop(hwnd) {
+                                NativeBackdropOutcome::Applied => {
+                                    native_backdrop_state.applied_hwnd = Some(hwnd);
+                                    native_backdrop_state.attempted_hwnd = None;
+                                    ui.set_native_backdrop_enabled(true);
+                                    ui.set_reduced_transparency(false);
+                                    record_native_backdrop_event(
+                                        "applied",
+                                        false,
+                                        true,
+                                        "system-backdrop-applied",
+                                    );
+                                }
+                                NativeBackdropOutcome::Fallback { reason } => {
+                                    ui.set_native_backdrop_enabled(false);
+                                    ui.set_reduced_transparency(true);
+                                    record_native_backdrop_event(
+                                        "fallback",
+                                        true,
+                                        true,
+                                        reason,
+                                    );
+                                }
+                            }
+                        } else {
+                            ui.set_native_backdrop_enabled(false);
+                        }
+                    } else {
+                        ui.set_native_backdrop_enabled(false);
+                    }
+
                     let scale = ui.window().scale_factor();
                     let area_x = (ui.get_video_area_x() * scale) as i32;
                     let area_y = (ui.get_video_area_y() * scale) as i32;
@@ -4944,8 +5003,8 @@ pub fn find_sample_video_path() -> PathBuf {
 mod poster_loading_tests {
     use super::{
         collection_page_count, collection_page_start, environment_flag_value_enabled,
-        native_backdrop_mode, visible_poster_range, PosterLoadRange,
-        NativeBackdropMode, PosterLoadRange, PosterRangeRequestState,
+        native_backdrop_mode, native_backdrop_workspace_active,
+        visible_poster_range, NativeBackdropMode, PosterLoadRange, PosterRangeRequestState,
     };
     use crate::media::image_cache::ImageRequestGate;
 
@@ -5086,5 +5145,25 @@ mod poster_loading_tests {
             native_backdrop_mode(true, true),
             NativeBackdropMode::BlockedByTransparency
         );
+        assert!(native_backdrop_workspace_active(
+            NativeBackdropMode::Requested,
+            true,
+            "library"
+        ));
+        assert!(!native_backdrop_workspace_active(
+            NativeBackdropMode::Requested,
+            false,
+            "library"
+        ));
+        assert!(!native_backdrop_workspace_active(
+            NativeBackdropMode::Requested,
+            true,
+            "player"
+        ));
+        assert!(!native_backdrop_workspace_active(
+            NativeBackdropMode::BlockedByTransparency,
+            true,
+            "library"
+        ));
     }
 }
