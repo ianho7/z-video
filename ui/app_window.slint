@@ -1,0 +1,3346 @@
+import { Button, Slider, LineEdit, CheckBox, ScrollView } from "std-widgets.slint";
+
+export struct ClassificationUiItem {
+    id: string,
+    name: string,
+    count: int,
+    is_selected: bool,
+}
+export struct CollectionUiItem {
+    collection_id: string,
+    title: string,
+    release_year: string,
+    video_type: string,
+    score: string,
+    cover_image: image,
+    has_cover: bool,
+    cover_status: string,
+}
+
+export struct ContinueWatchingUiItem {
+    collection_id: string,
+    episode_id: string,
+    title: string,
+    episode_title: string,
+    progress_label: string,
+    duration_label: string,
+    progress_percent: int,
+    cover_image: image,
+    has_cover: bool,
+}
+
+export struct EpisodeUiItem {
+    episode_id: string,
+    episode_number: int,
+    title: string,
+    duration: string,
+    is_selected: bool,
+}
+
+export struct NasDiscoveryUiItem {
+    ip: string,
+    name: string,
+    availability: string,
+    available: bool,
+}
+
+export struct SeasonUiItem {
+    season_number: int,
+    title: string,
+    episodes: [EpisodeUiItem],
+}
+
+// The shell uses one small token set so dark surfaces, text hierarchy, and
+// focus treatment stay aligned across the sidebar and toolbar. These tokens
+// are intentionally app-local; they do not alter the player or login views.
+export global ShellTheme {
+    out property <color> canvas: #101113;
+    out property <color> surface: #18191c;
+    // The Skia candidate applies backdrop blur only to these low-frequency
+    // functional layers; cards, grids, detail content and video stay opaque.
+    // Keep the glass readable against the shell atmosphere while leaving
+    // reduced-transparency users on the opaque surfaces below.
+    // Keep the functional glass layers visibly lighter than the canvas even
+    // when the backend does not sample backdrop blur. The alpha remains in
+    // the dark-Apple range while the neutral charcoal keeps the shell calm.
+    out property <color> sidebar_surface: #3b3e44ad;
+    out property <color> toolbar_surface: #3b3e44ad;
+    out property <color> sidebar_opaque_surface: #18191c;
+    out property <color> toolbar_opaque_surface: #18191c;
+    out property <length> shell_blur_radius: 24px;
+    out property <color> nav_selected_surface: #d8dce044;
+    out property <color> nav_selected_border: #f0f2f580;
+    out property <color> nav_selected_ink: #f5f5f7;
+    out property <color> surface_subtle: #202125;
+    out property <color> surface_elevated: #282a2f;
+    out property <color> separator: #36383e;
+    out property <color> separator_strong: #565961;
+    out property <color> text: #f5f5f7;
+    out property <color> text_secondary: #b6b7bd;
+    out property <color> text_tertiary: #8f9098;
+    out property <color> accent: #5aa7ff;
+    out property <color> accent_strong: #8bc2ff;
+    out property <color> accent_ink: #081a2c;
+    out property <color> accent_soft: #263a51;
+    out property <color> accent_soft_strong: #356b9d;
+    out property <color> success: #78c88d;
+    out property <color> danger_surface: #3a2024;
+    out property <color> danger_border: #9b4a55;
+    out property <color> danger_text: #ffc6cc;
+    out property <length> sidebar_width: 220px;
+    out property <length> toolbar_height: 64px;
+    out property <length> control_height: 32px;
+}
+
+// A compact, real button control for shell actions. Focus and keyboard
+// activation stay on the control rather than on a decorative rectangle.
+component ShellButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary: false;
+    in property <bool> action_enabled: true;
+    in property <bool> compact: false;
+    callback clicked;
+
+    min-width: root.compact ? 0px : 72px;
+    height: root.compact ? 30px : ShellTheme.control_height;
+    background: !root.action_enabled ? ShellTheme.surface_subtle
+        : root.primary ? ShellTheme.accent
+        : button_touch.has-hover ? ShellTheme.surface_elevated : ShellTheme.surface_subtle;
+    border-color: root.primary ? ShellTheme.accent : ShellTheme.separator;
+    border-width: 1px;
+    border-radius: 7px;
+    opacity: root.action_enabled ? 1.0 : 0.5;
+    animate background { duration: 160ms; }
+
+    accessible-role: button;
+    accessible-enabled: root.action_enabled;
+    accessible-label: root.text;
+    accessible-action-default => {
+        if root.action_enabled { root.clicked(); }
+    }
+    forward-focus: button_focus;
+
+    HorizontalLayout {
+        padding-left: root.compact ? 10px : 14px;
+        padding-right: root.compact ? 10px : 14px;
+        alignment: center;
+        Text {
+            text: root.text;
+            color: root.primary ? ShellTheme.accent_ink : ShellTheme.text;
+            font_size: 12px;
+            font_weight: root.primary ? 650 : 500;
+            horizontal_alignment: center;
+            vertical_alignment: center;
+        }
+    }
+
+    button_touch := TouchArea {
+        enabled: root.action_enabled;
+        clicked => { root.clicked(); }
+    }
+
+    button_focus := FocusScope {
+        width: 0px;
+        enabled: root.action_enabled;
+        key-pressed(event) => {
+            if event.text == Key.Space || event.text == Key.Return {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    if button_focus.has-focus: Rectangle {
+        x: -2px;
+        y: -2px;
+        width: parent.width + 4px;
+        height: parent.height + 4px;
+        border_color: ShellTheme.accent;
+        border_width: 2px;
+        border_radius: 9px;
+        background: transparent;
+    }
+}
+
+component ShellIconButton inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <bool> action_enabled: true;
+    callback clicked;
+
+    width: 34px;
+    height: 34px;
+    background: !root.action_enabled ? ShellTheme.surface_subtle
+        : button_touch.has-hover ? ShellTheme.surface_elevated : transparent;
+    border_color: button_focus.has-focus ? ShellTheme.accent : ShellTheme.separator;
+    border_width: 1px;
+    border_radius: 7px;
+    opacity: root.action_enabled ? 1.0 : 0.5;
+    animate background { duration: 160ms; }
+
+    accessible-role: button;
+    accessible-enabled: root.action_enabled;
+    accessible-label: root.label;
+    accessible-action-default => {
+        if root.action_enabled { root.clicked(); }
+    }
+    forward-focus: button_focus;
+
+    Image {
+        source: root.icon;
+        width: 18px;
+        height: 18px;
+        colorize: ShellTheme.text_secondary;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    button_touch := TouchArea {
+        enabled: root.action_enabled;
+        clicked => { root.clicked(); }
+    }
+
+    button_focus := FocusScope {
+        width: 0px;
+        enabled: root.action_enabled;
+        key-pressed(event) => {
+            if event.text == Key.Space || event.text == Key.Return {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+}
+
+component ShellNavItem inherits Rectangle {
+    in property <string> label;
+    in property <int> count;
+    in property <bool> selected: false;
+    in property <bool> action_enabled: true;
+    callback activated;
+
+    height: 36px;
+    background: root.selected ? ShellTheme.nav_selected_surface
+        : nav_touch.has-hover ? ShellTheme.surface_elevated : transparent;
+    border_color: root.selected ? ShellTheme.nav_selected_border
+        : nav_focus.has-focus ? ShellTheme.accent : transparent;
+    border_width: 1px;
+    border_radius: 8px;
+    animate background { duration: 160ms; }
+
+    accessible-role: button;
+    accessible-enabled: root.action_enabled;
+    accessible-label: root.label;
+    accessible-checked: root.selected;
+    accessible-action-default => {
+        if root.action_enabled { root.activated(); }
+    }
+    forward-focus: nav_focus;
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 8px;
+        Text {
+            text: "•";
+            color: root.selected ? ShellTheme.nav_selected_ink : ShellTheme.text_tertiary;
+            font_size: 15px;
+            horizontal_alignment: center;
+            vertical_alignment: center;
+        }
+        Text {
+            text: root.label;
+            color: root.selected ? ShellTheme.text : ShellTheme.text_secondary;
+            font_size: 13px;
+            font_weight: root.selected ? 650 : 400;
+            vertical_alignment: center;
+            horizontal_stretch: 1;
+            overflow: elide;
+        }
+        Text {
+            text: root.count;
+            color: ShellTheme.text_tertiary;
+            font_size: 11px;
+            vertical_alignment: center;
+        }
+    }
+
+    nav_touch := TouchArea {
+        enabled: root.action_enabled;
+        clicked => { root.activated(); }
+    }
+
+    nav_focus := FocusScope {
+        width: 0px;
+        enabled: root.action_enabled;
+        key-pressed(event) => {
+            if event.text == Key.Space || event.text == Key.Return {
+                root.activated();
+                return accept;
+            }
+            return reject;
+        }
+    }
+}
+
+component ShellSearchField inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder_text: "搜索片名、类型或简介";
+    in property <bool> action_enabled: true;
+    callback edited(string);
+    callback accepted(string);
+
+    min-width: 180px;
+    height: 34px;
+    background: input.has-focus ? ShellTheme.surface_elevated : ShellTheme.surface_subtle;
+    border_color: input.has-focus ? ShellTheme.accent : ShellTheme.separator;
+    border_width: input.has-focus ? 2px : 1px;
+    border_radius: 8px;
+    animate background { duration: 160ms; }
+
+    accessible-role: text-input;
+    accessible-enabled: root.action_enabled;
+    accessible-value <=> root.text;
+    accessible-placeholder-text: root.placeholder_text;
+    forward-focus: input;
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 8px;
+        Image {
+            source: @image-url("../assets/icons/search.svg");
+            width: 16px;
+            height: 16px;
+            colorize: ShellTheme.text_tertiary;
+            vertical_alignment: center;
+        }
+        input := TextInput {
+            text <=> root.text;
+            enabled: root.action_enabled;
+            single-line: true;
+            color: ShellTheme.text;
+            font_size: 13px;
+            selection-background-color: ShellTheme.accent_soft_strong;
+            selection-foreground-color: ShellTheme.text;
+            horizontal-stretch: 1;
+            edited => { root.edited(root.text); }
+            accepted => { root.accepted(root.text); }
+        }
+        if root.text == "": Text {
+            text: root.placeholder_text;
+            color: ShellTheme.text_tertiary;
+            font_size: 12px;
+            vertical_alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+    }
+
+}
+
+// Evidence-only underlay used by poster_grid_preview --material-evidence.
+// It is disabled by default and is not a product decoration. The fixed hard
+// edges make a real backdrop blur observable through the shell surfaces.
+component MaterialEvidenceBackdrop inherits Rectangle {
+    HorizontalLayout {
+        Rectangle { background: #ef4f4f; horizontal-stretch: 1; }
+        Rectangle { background: #32b8e8; horizontal-stretch: 1; }
+        Rectangle { background: #f2d34f; horizontal-stretch: 1; }
+        Rectangle { background: #8257d6; horizontal-stretch: 1; }
+        Rectangle { background: #36c884; horizontal-stretch: 1; }
+        Rectangle { background: #ee5ca9; horizontal-stretch: 1; }
+        Rectangle { background: #f28c42; horizontal-stretch: 1; }
+    }
+    Rectangle { y: parent.height * 0.28; width: parent.width; height: 4px; background: #ffffff; }
+    Rectangle { y: parent.height * 0.64; width: parent.width; height: 3px; background: #101113; }
+}
+
+// A low-contrast, state-independent shell atmosphere gives the functional
+// glass layers real content to sample in the normal product window. It stays
+// behind the sidebar and toolbar, uses logical dimensions, and is deliberately
+// quieter than the evidence-only colour bands above. The neutral slate shapes
+// are broad enough to reach the sidebar and toolbar without affecting layout.
+component ShellAtmosphere inherits Rectangle {
+    background: ShellTheme.canvas;
+
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width * 0.46;
+        height: parent.height * 0.38;
+        background: #68717d;
+        border_radius: 160px;
+        opacity: 0.42;
+    }
+
+    Rectangle {
+        x: parent.width * 0.34;
+        // Keep a real, low-frequency underlay beneath the top toolbar at all
+        // supported logical heights; no media content is moved into the shell.
+        y: 0px;
+        width: parent.width * 0.42;
+        height: parent.height * 0.40;
+        background: #766f79;
+        border_radius: 180px;
+        opacity: 0.32;
+    }
+
+    Rectangle {
+        x: parent.width * 0.74;
+        y: parent.height * 0.03;
+        width: parent.width * 0.28;
+        height: parent.height * 0.35;
+        background: #59636c;
+        border_radius: 170px;
+        opacity: 0.30;
+    }
+
+    Rectangle {
+        x: parent.width * 0.24;
+        y: parent.height * 0.58;
+        width: parent.width * 0.56;
+        height: parent.height * 0.30;
+        background: #536466;
+        border_radius: 160px;
+        opacity: 0.30;
+    }
+
+    Rectangle {
+        x: parent.width * 0.08;
+        y: parent.height * 0.50;
+        width: parent.width * 0.18;
+        height: 1px;
+        background: #7d8790;
+        opacity: 0.28;
+    }
+}
+// A local copy of the standard focus/click bridge. Keeping it beside the
+// card makes the card a real focus target while retaining the existing Rust
+// collection-click callback.
+component PosterCardFocusTouchArea {
+    in property <bool> enabled: true;
+    out property <bool> has_focus <=> focus_scope.has-focus;
+    out property <bool> has_hover <=> touch_area.has-hover;
+    callback clicked <=> touch_area.clicked;
+
+    forward-focus: focus_scope;
+
+    touch_area := TouchArea {
+        enabled: root.enabled;
+    }
+
+    focus_scope := FocusScope {
+        width: 0px;
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == Key.Space || event.text == Key.Return {
+                touch_area.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+}
+
+// Keep the poster geometry independent from the source image dimensions and
+// title preferred size. The grid owns the card width; this component only
+// fills that fixed width with a 2:3 cover frame and elided metadata.
+component PosterCard inherits Rectangle {
+    in property <CollectionUiItem> item;
+    in property <length> card_width: 150px;
+    in property <string> restore_focus_collection_id: "";
+    callback activated(string);
+
+    changed restore_focus_collection_id => {
+        if root.restore_focus_collection_id == root.item.collection_id {
+            focus_touch_area.focus();
+        }
+    }
+
+    width: root.card_width;
+    height: root.card_width * 1.5 + 48px;
+    background: #18191c;
+    border_color: #36383e;
+    border_width: 1px;
+    border_radius: 10px;
+
+    accessible-role: button;
+    accessible-label: root.item.title;
+    accessible-action-default => { root.activated(root.item.collection_id); }
+    forward-focus: focus_touch_area;
+
+    VerticalLayout {
+        padding: 8px;
+        spacing: 7px;
+
+        Rectangle {
+            width: 100%;
+            height: self.width * 1.5;
+            background: #24262b;
+            border_radius: 7px;
+            clip: true;
+
+            if root.item.cover_status == "ready": Image {
+                source: root.item.cover_image;
+                width: 100%;
+                height: 100%;
+                image_fit: cover;
+            }
+            if root.item.cover_status != "ready": VerticalLayout {
+                alignment: center;
+                Text {
+                    text: root.item.cover_status == "loading" ? "正在加载封面" :
+                        root.item.cover_status == "failed" ? "封面加载失败" : "暂无封面";
+                    color: root.item.cover_status == "failed" ? #ffb3bc : #8f9098;
+                    font_size: 12px;
+                    horizontal_alignment: center;
+                }
+            }
+        }
+
+        Text {
+            text: root.item.title;
+            color: #f5f5f7;
+            font_size: 12px;
+            font_weight: 650;
+            width: 100%;
+            overflow: elide;
+        }
+        Text {
+            text: root.item.release_year + " · " + root.item.video_type;
+            color: #8f9098;
+            font_size: 10px;
+            width: 100%;
+            overflow: elide;
+        }
+    }
+
+    if focus_touch_area.has_focus: Rectangle {
+        x: 1px;
+        y: 1px;
+        width: parent.width - 2px;
+        height: parent.height - 2px;
+        border_color: #5aa7ff;
+        border_width: 2px;
+        border_radius: 9px;
+        background: transparent;
+    }
+
+    focus_touch_area := PosterCardFocusTouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => { root.activated(root.item.collection_id); }
+    }
+}
+
+// Episode rows remain real keyboard targets when the detail page is reached
+// without a mouse. The row owns only presentation and forwards selection to
+// the existing Rust callback.
+component DetailEpisodeRow inherits Rectangle {
+    in property <EpisodeUiItem> episode;
+    callback activated(string);
+
+    height: 46px;
+    background: root.episode.is_selected ? ShellTheme.accent_soft
+        : episode_focus_touch.has_hover ? ShellTheme.surface_elevated : ShellTheme.surface_subtle;
+    border_color: root.episode.is_selected ? ShellTheme.accent_soft_strong
+        : episode_focus_touch.has_focus ? ShellTheme.accent : ShellTheme.separator;
+    border_width: 1px;
+    border_radius: 8px;
+    animate background { duration: 160ms; }
+    animate border_color { duration: 160ms; }
+
+    accessible-role: button;
+    accessible-label: root.episode.title != "" ? root.episode.title : "剧集";
+    accessible-checked: root.episode.is_selected;
+    accessible-action-default => { root.activated(root.episode.episode_id); }
+    forward-focus: episode_focus_touch;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 12px;
+
+        Text {
+            text: root.episode.episode_number > 0
+                ? "第" + root.episode.episode_number + "集"
+                : "正片";
+            color: root.episode.is_selected ? ShellTheme.accent_strong : ShellTheme.text_tertiary;
+            font_size: 11px;
+            font_weight: 700;
+            vertical_alignment: center;
+        }
+        Text {
+            text: root.episode.title != "" ? root.episode.title : "未命名剧集";
+            color: root.episode.is_selected ? ShellTheme.text : ShellTheme.text_secondary;
+            font_size: 12px;
+            horizontal_stretch: 1;
+            vertical_alignment: center;
+            overflow: elide;
+        }
+        if root.episode.duration != "": Text {
+            text: root.episode.duration;
+            color: ShellTheme.text_tertiary;
+            font_size: 11px;
+            vertical_alignment: center;
+        }
+    }
+
+    if episode_focus_touch.has_focus: Rectangle {
+        x: 1px;
+        y: 1px;
+        width: parent.width - 2px;
+        height: parent.height - 2px;
+        border_color: ShellTheme.accent;
+        border_width: 2px;
+        border_radius: 7px;
+        background: transparent;
+    }
+
+    episode_focus_touch := PosterCardFocusTouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => { root.activated(root.episode.episode_id); }
+    }
+}
+
+// The approved HTML prototype keeps the functional shell separate from the
+// media content. This component is the first native slice of that structure.
+// It deliberately consumes the existing Rust-facing models and callbacks so
+// visual work does not invent a second data or playback path.
+component AppleWorkspace inherits Rectangle {
+    in property <bool> sidebar_visible: true;
+    in property <bool> reduced_transparency: false;
+    // Enabled only after the Windows native backdrop API succeeds. The main
+    // content surface below remains opaque while the Sidebar can expose the
+    // window-level backdrop through its alpha.
+    in property <bool> native_backdrop_enabled: false;
+    // Evidence-only switch; production defaults to false.
+    in property <bool> material_evidence: false;
+    in property <string> current_view: "library";
+    in property <[ClassificationUiItem]> classifications: [];
+    in property <[CollectionUiItem]> collections: [];
+    in property <[ContinueWatchingUiItem]> continue_watching_items: [];
+    in property <bool> continue_watching_loading: false;
+    in property <string> continue_watching_error: "";
+    in property <string> selected_classification_id: "";
+    in property <string> selected_classification_name: "全部影片";
+    in property <int> collection_count: 0;
+    in property <int> library_total_count: 0;
+    in property <int> library_page: 1;
+    in property <int> library_total_pages: 0;
+    in property <int> library_page_size: 50;
+    in property <bool> library_loading: false;
+    in property <string> library_error: "";
+    in property <bool> requires_relogin: false;
+    in property <bool> search_active: false;
+    in property <bool> search_loading: false;
+    in property <string> search_error: "";
+    in property <string> search_scope: "当前已加载范围";
+    in property <string> media_type_filter: "all";
+    in property <string> sort_order: "default";
+    in property <length> restore_scroll_offset: 0px;
+    in property <string> restore_focus_collection_id: "";
+    in property <string> session_nas_name: "";
+    in property <string> session_base_url: "";
+    in property <string> session_user: "";
+    out property <length> library_grid_top: 0px;
+    out property <length> library_card_width: 0px;
+    out property <int> library_columns: 0;
+    out property <length> library_viewport_height: 0px;
+    out property <length> library_layout_scroll_offset: 0px;
+    // All shell geometry is logical. Keep the post-sidebar content width
+    // derived from the window and the one fixed sidebar token so the grid
+    // does not depend on a layout-produced width and form a binding loop.
+    property <length> shell_content_width: max(0px,
+        root.width - (root.sidebar_visible ? ShellTheme.sidebar_width : 0px));
+
+    in property <string> detail_title: "";
+    in property <string> detail_release_year: "";
+    in property <string> detail_video_type: "";
+    in property <string> detail_score: "";
+    in property <string> detail_storyline: "";
+    in property <image> detail_cover_image;
+    in property <bool> detail_has_cover: false;
+    in property <bool> detail_is_movie: false;
+    in property <[SeasonUiItem]> detail_seasons: [];
+    in property <string> selected_episode_id: "";
+    in property <bool> detail_loading: false;
+    in property <string> detail_error: "";
+    in property <bool> playback_loading: false;
+    in property <string> playback_error: "";
+
+    in-out property <string> search_input: "";
+
+    callback sidebar_toggled();
+    callback search_changed(string);
+    callback search_submitted(string);
+    callback retry_search();
+    callback filter_changed(string);
+    callback sort_changed(string);
+    callback clear_query();
+    callback select_classification(string);
+    callback refresh_library();
+    callback library_page_changed(int);
+    callback relogin();
+    callback collection_clicked(string);
+    callback library_scrolled(length, length, length, length, int);
+    callback continue_watching_clicked(string, string);
+    callback continue_watching_retry();
+    callback detail_back();
+    callback episode_selected(string);
+    callback play_episode(string);
+
+    // Re-request the current visible range after model or layout changes.
+    // Model replacement can happen after the ScrollView has already received
+    // its geometry, while the grid can also be created after the model is set.
+    // Keep the zero-geometry path in Rust as the bounded 24-item fallback;
+    // this helper only emits a layout-ready request.
+    function request_current_library_layout() {
+        if root.current_view == "library"
+                && root.collections.length > 0
+                && root.library_viewport_height > 0px
+                && root.library_card_width > 0px
+                && root.library_columns > 0 {
+            root.library_scrolled(
+                root.library_layout_scroll_offset,
+                root.library_viewport_height,
+                root.library_grid_top,
+                root.library_card_width,
+                root.library_columns
+            );
+        }
+    }
+
+    changed collections => {
+        root.request_current_library_layout();
+    }
+    changed current_view => {
+        root.request_current_library_layout();
+    }
+
+    // Keep a stable keyboard ancestor for the detail view. The library cards
+    // are separate focus scopes, so the workspace itself must own Escape when
+    // a detail page is opened from one of them.
+    detail_focus_anchor := FocusScope {
+        width: 0px;
+        height: 0px;
+        property <string> view_for_focus: root.current_view;
+        changed view_for_focus => {
+            if self.view_for_focus == "detail" {
+                detail_focus_anchor.focus();
+            }
+        }
+        KeyBinding {
+            keys: @keys(Escape);
+            activated => {
+                if root.current_view == "detail" {
+                    root.detail_back();
+                }
+            }
+        }
+    }
+
+    background: root.native_backdrop_enabled ? #00000000 : ShellTheme.canvas;
+
+    if !root.native_backdrop_enabled: ShellAtmosphere {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+    }
+
+    if root.native_backdrop_enabled: Rectangle {
+        x: root.sidebar_visible ? ShellTheme.sidebar_width : 0px;
+        y: 0px;
+        width: root.shell_content_width;
+        height: parent.height;
+        background: ShellTheme.canvas;
+    }
+
+    if root.material_evidence && !root.native_backdrop_enabled: MaterialEvidenceBackdrop {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+    }
+
+
+    workspace_focus := FocusScope {
+        width: 100%;
+        height: 100%;
+        focus-on-click: true;
+
+        KeyBinding {
+            keys: @keys(Escape);
+            activated => {
+                if root.current_view == "detail" { root.detail_back(); }
+            }
+        }
+
+        HorizontalLayout {
+        spacing: 0px;
+
+        if root.sidebar_visible: Rectangle {
+            width: ShellTheme.sidebar_width;
+            background: root.reduced_transparency
+                ? ShellTheme.sidebar_opaque_surface
+                : ShellTheme.sidebar_surface;
+            // Native mode lets DWM own the external backdrop; the Slint blur
+            // remains the fallback for the normal in-window path.
+            backdrop-blur: root.reduced_transparency || root.native_backdrop_enabled
+                ? 0px
+                : ShellTheme.shell_blur_radius;
+            border_color: ShellTheme.separator;
+            border_width: 1px;
+
+            VerticalLayout {
+                padding-top: 22px;
+                padding-right: 12px;
+                padding-bottom: 16px;
+                padding-left: 12px;
+                spacing: 8px;
+
+                HorizontalLayout {
+                    height: 46px;
+                    padding_left: 10px;
+                    padding_right: 10px;
+                    spacing: 10px;
+                        Rectangle {
+                            width: 28px;
+                            height: 28px;
+                            background: ShellTheme.surface;
+                            border_color: ShellTheme.separator_strong;
+                            border_width: 1px;
+                            border_radius: 8px;
+                            HorizontalLayout {
+                                padding-left: 6px;
+                                padding-right: 6px;
+                                spacing: 3px;
+                                alignment: end;
+                                Rectangle { width: 4px; height: 7px; background: ShellTheme.accent; border_radius: 2px; }
+                                Rectangle { width: 4px; height: 12px; background: ShellTheme.accent; border_radius: 2px; }
+                                Rectangle { width: 4px; height: 16px; background: ShellTheme.accent; border_radius: 2px; }
+                            }
+                        }
+                    VerticalLayout {
+                        spacing: 2px;
+                        Text {
+                            text: "z-video";
+                            color: ShellTheme.text;
+                            font_size: 15px;
+                            font_weight: 700;
+                        }
+                        Text {
+                            text: "局域网片库";
+                            color: ShellTheme.text_secondary;
+                            font_size: 11px;
+                        }
+                    }
+                }
+
+                Text {
+                    text: "片库";
+                    color: ShellTheme.text_tertiary;
+                    font_size: 11px;
+                    font_weight: 600;
+                }
+
+                for item in root.classifications: ShellNavItem {
+                    label: item.name;
+                    count: item.count;
+                    selected: item.id == root.selected_classification_id;
+                    activated => { root.select_classification(item.id); }
+                }
+
+                Rectangle { vertical_stretch: 1; }
+
+                Rectangle {
+                    height: 1px;
+                    background: ShellTheme.separator;
+                }
+
+                Text {
+                    text: "局域网 · 已连接";
+                    color: ShellTheme.success;
+                    font_size: 11px;
+                }
+                Text {
+                    text: root.session_nas_name != "" ? root.session_nas_name : root.session_base_url;
+                    color: ShellTheme.text_tertiary;
+                    font_size: 11px;
+                    overflow: elide;
+                }
+            }
+        }
+
+        VerticalLayout {
+            horizontal_stretch: 1;
+            spacing: 0px;
+
+            header_focus := FocusScope {
+                height: ShellTheme.toolbar_height;
+                Rectangle {
+                    width: parent.width;
+                    height: parent.height;
+                    background: root.reduced_transparency
+                        ? ShellTheme.toolbar_opaque_surface
+                        : ShellTheme.toolbar_surface;
+                    // Keep the glass effect on the toolbar only.
+                    backdrop-blur: root.reduced_transparency || root.native_backdrop_enabled
+                        ? 0px
+                        : ShellTheme.shell_blur_radius;
+                    border_color: ShellTheme.separator;
+                    border_width: 1px;
+
+                    HorizontalLayout {
+                        padding_top: 11px;
+                        padding_bottom: 11px;
+                        padding_left: 30px;
+                        padding_right: 30px;
+                        spacing: 20px;
+
+                        ShellIconButton {
+                            icon: @image-url("../assets/icons/sidebar.svg");
+                            label: root.sidebar_visible ? "隐藏侧栏" : "显示侧栏";
+                            clicked => { root.sidebar_toggled(); }
+                        }
+
+                        VerticalLayout {
+                            spacing: 1px;
+                            Text {
+                                text: root.current_view == "detail" ? "详情" : "片库";
+                                color: ShellTheme.text_secondary;
+                                font_size: 11px;
+                            }
+                            Text {
+                                text: root.current_view == "detail" ? root.detail_title : root.selected_classification_name;
+                                color: ShellTheme.text;
+                                font_size: 16px;
+                                font_weight: 650;
+                                overflow: elide;
+                            }
+                        }
+
+                        Rectangle { horizontal_stretch: 1; }
+
+                        search_field := ShellSearchField {
+                            width: 310px;
+                            text: root.search_input;
+                            placeholder_text: "搜索片名、类型或简介（已加载范围）";
+                            edited(value) => {
+                                root.search_input = value;
+                                root.search_changed(value);
+                            }
+                            accepted(value) => { root.search_submitted(value); }
+                        }
+                        if root.search_input != "": ShellButton {
+                            compact: true;
+                            text: "清除";
+                            clicked => {
+                                root.search_input = "";
+                                root.search_changed("");
+                                search_field.focus();
+                            }
+                        }
+                    }
+                }
+
+                KeyBinding {
+                    keys: @keys(Control + K);
+                    activated => { search_field.focus(); }
+                }
+                KeyBinding {
+                    keys: @keys(Meta + K);
+                    activated => { search_field.focus(); }
+                }
+                KeyBinding {
+                    keys: @keys(Escape);
+                    activated => {
+                        if root.current_view == "detail" { root.detail_back(); }
+                    }
+                }
+            }
+
+            if root.current_view == "library": library_scroll_view := ScrollView {
+                vertical_stretch: 1;
+                content-y: -root.restore_scroll_offset;
+
+                scrolled => {
+                    root.library_viewport_height = self.visible-height;
+                    root.library_layout_scroll_offset = max(0px, -self.content-y);
+                    root.library_scrolled(
+                        max(0px, -self.content-y),
+                        self.visible-height,
+                        root.library_grid_top,
+                        root.library_card_width,
+                        root.library_columns
+                    );
+                }
+
+                changed visible-height => {
+                    root.library_viewport_height = self.visible-height;
+                    root.library_layout_scroll_offset = max(0px, -self.content-y);
+                    root.request_current_library_layout();
+                }
+
+                changed content-y => {
+                    root.library_layout_scroll_offset = max(0px, -self.content-y);
+                }
+
+                // Scroll content must pack to its preferred logical height;
+                // the grid owns its row heights and must not absorb the
+                // viewport's remaining height under the default stretch
+                // alignment.
+                VerticalLayout {
+                    alignment: start;
+                    padding-top: 24px;
+                    padding-right: 32px;
+                    padding-bottom: 48px;
+                    padding-left: 32px;
+                    spacing: 18px;
+
+                    HorizontalLayout {
+                        spacing: 12px;
+                        VerticalLayout {
+                            spacing: 4px;
+                            Text {
+                                text: "片库";
+                                color: ShellTheme.accent;
+                                font_size: 12px;
+                                font_weight: 650;
+                            }
+                            Text {
+                                text: root.selected_classification_name;
+                                color: ShellTheme.text;
+                                font_size: 30px;
+                                font_weight: 700;
+                            }
+                        }
+                        Text {
+                            text: root.collection_count + " 个结果 · " + root.search_scope;
+                            color: ShellTheme.text_tertiary;
+                            font_size: 12px;
+                            vertical_alignment: center;
+                        }
+                        Rectangle { horizontal_stretch: 1; }
+                        ShellIconButton {
+                            icon: @image-url("../assets/icons/refresh.svg");
+                            label: "刷新片库";
+                            clicked => { root.refresh_library(); }
+                        }
+                    }
+
+                    // Keep filter/sort controls at the logical token height.
+                    // Without an explicit non-stretching row, the content
+                    // layout can distribute the large-window free height to
+                    // this row and push the poster grid to the bottom.
+                    HorizontalLayout {
+                        height: ShellTheme.control_height;
+                        vertical-stretch: 0;
+                        spacing: 8px;
+
+                        Text {
+                            text: "类型";
+                            color: #8f9098;
+                            font_size: 11px;
+                            vertical_alignment: center;
+                        }
+                        Button {
+                            height: ShellTheme.control_height;
+                            vertical-stretch: 0;
+                            text: "全部";
+                            primary: root.media_type_filter == "all";
+                            clicked => { root.filter_changed("all"); }
+                        }
+                        Button {
+                            height: ShellTheme.control_height;
+                            vertical-stretch: 0;
+                            text: "电影";
+                            primary: root.media_type_filter == "movie";
+                            clicked => { root.filter_changed("movie"); }
+                        }
+                        Button {
+                            height: ShellTheme.control_height;
+                            vertical-stretch: 0;
+                            text: "剧集";
+                            primary: root.media_type_filter == "tv";
+                            clicked => { root.filter_changed("tv"); }
+                        }
+
+                        Text {
+                            text: "排序";
+                            color: #8f9098;
+                            font_size: 11px;
+                            vertical_alignment: center;
+                        }
+                        Button {
+                            height: ShellTheme.control_height;
+                            vertical-stretch: 0;
+                            text: "默认";
+                            primary: root.sort_order == "default";
+                            clicked => { root.sort_changed("default"); }
+                        }
+                        Button {
+                            height: ShellTheme.control_height;
+                            vertical-stretch: 0;
+                            text: "片名 A-Z";
+                            primary: root.sort_order == "title_asc";
+                            clicked => { root.sort_changed("title_asc"); }
+                        }
+                        Button {
+                            height: ShellTheme.control_height;
+                            vertical-stretch: 0;
+                            text: "评分↓";
+                            primary: root.sort_order == "score_desc";
+                            clicked => { root.sort_changed("score_desc"); }
+                        }
+                        Button {
+                            height: ShellTheme.control_height;
+                            vertical-stretch: 0;
+                            text: "年份↓";
+                            primary: root.sort_order == "release_year_desc";
+                            clicked => { root.sort_changed("release_year_desc"); }
+                        }
+                        Rectangle { horizontal_stretch: 1; }
+                        Button {
+                            height: ShellTheme.control_height;
+                            vertical-stretch: 0;
+                            text: "清除条件";
+                            clicked => { root.clear_query(); }
+                        }
+                    }
+
+                    if root.search_error != "": Rectangle {
+                        min_height: 48px;
+                        background: ShellTheme.danger_surface;
+                        border_color: ShellTheme.danger_border;
+                        border_width: 1px;
+                        border_radius: 10px;
+                        HorizontalLayout {
+                            padding_left: 14px;
+                            padding_right: 14px;
+                            spacing: 12px;
+                            Text {
+                                text: root.search_error;
+                                color: ShellTheme.danger_text;
+                                font_size: 12px;
+                                vertical_alignment: center;
+                                horizontal_stretch: 1;
+                                wrap: word-wrap;
+                            }
+                            ShellButton {
+                                compact: true;
+                                text: "重试搜索";
+                                clicked => { root.retry_search(); }
+                            }
+                        }
+                    }
+
+                    if root.library_error != "": Rectangle {
+                        min_height: 48px;
+                        background: ShellTheme.danger_surface;
+                        border_color: ShellTheme.danger_border;
+                        border_width: 1px;
+                        border_radius: 10px;
+                        HorizontalLayout {
+                            padding_left: 14px;
+                            padding_right: 14px;
+                            spacing: 12px;
+                            Text {
+                                text: root.library_error;
+                                color: ShellTheme.danger_text;
+                                font_size: 12px;
+                                vertical_alignment: center;
+                                horizontal_stretch: 1;
+                                wrap: word-wrap;
+                            }
+                            ShellButton {
+                                compact: true;
+                                text: "重试";
+                                clicked => { root.refresh_library(); }
+                            }
+                            if root.requires_relogin: ShellButton {
+                                compact: true;
+                                text: "重新登录";
+                                clicked => { root.relogin(); }
+                            }
+                        }
+                    }
+
+                    if root.continue_watching_loading: Rectangle {
+                        height: 54px;
+                        background: #18191c;
+                        border_color: #36383e;
+                        border_width: 1px;
+                        border_radius: 10px;
+                        HorizontalLayout {
+                            padding_left: 14px;
+                            padding_right: 14px;
+                            Text {
+                                text: "正在读取本机最近播放…";
+                                color: #b6b7bd;
+                                font_size: 12px;
+                                vertical_alignment: center;
+                            }
+                        }
+                    }
+
+                    if !root.continue_watching_loading && root.continue_watching_error != "": Rectangle {
+                        height: 54px;
+                        background: #3a2024;
+                        border_color: #9b4a55;
+                        border_width: 1px;
+                        border_radius: 10px;
+                        HorizontalLayout {
+                            padding_left: 14px;
+                            padding_right: 14px;
+                            spacing: 12px;
+                            Text {
+                                text: root.continue_watching_error;
+                                color: #ffc6cc;
+                                font_size: 12px;
+                                vertical_alignment: center;
+                                horizontal_stretch: 1;
+                            }
+                            Button {
+                                text: "重试";
+                                clicked => { root.continue_watching_retry(); }
+                            }
+                        }
+                    }
+
+                    if !root.continue_watching_loading && root.continue_watching_error == "" && root.continue_watching_items.length > 0: Rectangle {
+                        height: 144px;
+                        background: #16191f;
+                        border_color: #2a3340;
+                        border_width: 1px;
+                        border_radius: 10px;
+
+                        VerticalLayout {
+                            padding_left: 14px;
+                            padding_right: 14px;
+                            padding_top: 10px;
+                            padding_bottom: 10px;
+                            spacing: 8px;
+
+                            Text {
+                                text: "继续观看 · 本机最近播放";
+                                color: #64b5f6;
+                                font_size: 12px;
+                                font_weight: 700;
+                            }
+
+                            HorizontalLayout {
+                                spacing: 10px;
+                                for item in root.continue_watching_items: Rectangle {
+                                    width: 360px;
+                                    height: 98px;
+                                    background: #1c2027;
+                                    border_color: #2f3a48;
+                                    border_width: 1px;
+                                    border_radius: 8px;
+
+                                    accessible-role: button;
+                                    accessible-label: item.title + "，" + item.episode_title + "，" + item.progress_label;
+                                    accessible-action-default => {
+                                        root.continue_watching_clicked(item.collection_id, item.episode_id);
+                                    }
+                                    forward-focus: continue_focus_touch;
+
+                                    HorizontalLayout {
+                                        padding: 8px;
+                                        spacing: 10px;
+
+                                        Rectangle {
+                                            width: 144px;
+                                            height: 81px;
+                                            background: #252b36;
+                                            border_radius: 5px;
+                                            clip: true;
+                                            if item.has_cover: Image {
+                                                source: item.cover_image;
+                                                width: 100%;
+                                                height: 100%;
+                                                image_fit: cover;
+                                            }
+                                            if !item.has_cover: Text {
+                                                text: "封面";
+                                                color: #8f9098;
+                                                font_size: 11px;
+                                                horizontal_alignment: center;
+                                                vertical_alignment: center;
+                                            }
+                                        }
+
+                                        VerticalLayout {
+                                            spacing: 3px;
+                                            horizontal_stretch: 1;
+                                            Text {
+                                                text: item.title;
+                                                color: #f5f5f7;
+                                                font_size: 13px;
+                                                font_weight: 700;
+                                                overflow: elide;
+                                            }
+                                            Text {
+                                                text: item.episode_title;
+                                                color: #b6b7bd;
+                                                font_size: 11px;
+                                                overflow: elide;
+                                            }
+                                            Text {
+                                                text: item.progress_label + " · " + item.duration_label;
+                                                color: #8f9098;
+                                                font_size: 10px;
+                                                overflow: elide;
+                                            }
+                                            Rectangle {
+                                                height: 4px;
+                                                background: #303947;
+                                                border_radius: 2px;
+                                                if item.progress_percent >= 0: Rectangle {
+                                                    width: parent.width * (item.progress_percent / 100.0);
+                                                    height: 4px;
+                                                    background: #42a5f5;
+                                                    border_radius: 2px;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if continue_focus_touch.has_focus: Rectangle {
+                                        x: 1px;
+                                        y: 1px;
+                                        width: parent.width - 2px;
+                                        height: parent.height - 2px;
+                                        border_color: #5aa7ff;
+                                        border_width: 2px;
+                                        border_radius: 7px;
+                                        background: transparent;
+                                    }
+
+                                    continue_focus_touch := PosterCardFocusTouchArea {
+                                        width: 100%;
+                                        height: 100%;
+                                        clicked => {
+                                            root.continue_watching_clicked(item.collection_id, item.episode_id);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if root.library_loading: Rectangle {
+                        height: 180px;
+                        background: ShellTheme.surface;
+                        border_color: ShellTheme.separator;
+                        border_width: 1px;
+                        border_radius: 12px;
+                        VerticalLayout {
+                            alignment: center;
+                            Text {
+                                text: "正在加载片库";
+                                color: ShellTheme.text;
+                                font_size: 16px;
+                                font_weight: 650;
+                                horizontal_alignment: center;
+                            }
+                            Text {
+                                text: "网络任务在后台运行，窗口仍可操作。";
+                                color: ShellTheme.text_secondary;
+                                font_size: 12px;
+                                horizontal_alignment: center;
+                            }
+                        }
+                    }
+
+                    if root.search_loading: Rectangle {
+                        height: 180px;
+                        background: ShellTheme.surface;
+                        border_color: ShellTheme.separator;
+                        border_width: 1px;
+                        border_radius: 12px;
+                        VerticalLayout {
+                            alignment: center;
+                            Text {
+                                text: "正在搜索已加载片库";
+                                color: ShellTheme.text;
+                                font_size: 16px;
+                                font_weight: 650;
+                                horizontal_alignment: center;
+                            }
+                            Text {
+                                text: root.search_scope;
+                                color: ShellTheme.text_secondary;
+                                font_size: 12px;
+                                horizontal_alignment: center;
+                            }
+                        }
+                    }
+
+                    if !root.library_loading && !root.search_loading && root.library_error == "" && root.search_error == "" && !root.search_active && root.collections.length == 0: Rectangle {
+                        height: 180px;
+                        background: ShellTheme.surface;
+                        border_color: ShellTheme.separator;
+                        border_width: 1px;
+                        border_radius: 12px;
+                        VerticalLayout {
+                            alignment: center;
+                            Text {
+                                text: "该分类暂无影视内容";
+                                color: ShellTheme.text;
+                                font_size: 16px;
+                                font_weight: 650;
+                                horizontal_alignment: center;
+                            }
+                            Text {
+                                text: "刷新片库或选择其他分类。";
+                                color: ShellTheme.text_secondary;
+                                font_size: 12px;
+                                horizontal_alignment: center;
+                            }
+                        }
+                    }
+
+                    if !root.library_loading && !root.search_loading && root.library_error == "" && root.search_error == "" && root.search_active && root.collections.length == 0: Rectangle {
+                        height: 180px;
+                        background: ShellTheme.surface;
+                        border_color: ShellTheme.separator;
+                        border_width: 1px;
+                        border_radius: 12px;
+                        VerticalLayout {
+                            alignment: center;
+                            Text {
+                                text: "已加载范围内没有匹配结果";
+                                color: ShellTheme.text;
+                                font_size: 16px;
+                                font_weight: 650;
+                                horizontal_alignment: center;
+                            }
+                            Text {
+                                text: "清空搜索可恢复当前分类的浏览列表。";
+                                color: ShellTheme.text_secondary;
+                                font_size: 12px;
+                                horizontal_alignment: center;
+                            }
+                        }
+                    }
+
+                    if !root.library_loading && !root.search_loading && root.library_error == "" && root.search_error == "" && root.collections.length > 0: library_grid := GridLayout {
+                        // The content width is the only input to the column
+                        // count. A 140px target yields about seven columns at
+                        // the 1440px reference size and fewer columns when
+                        // the sidebar leaves a narrow viewport.
+                        property <length> min_card_width: 140px;
+                        // The grid is inside the post-sidebar main column;
+                        // shell_content_width already accounts for that column
+                        // and keeps the calculation in logical units.
+                        property <length> available_width: max(0px, root.shell_content_width - 64px);
+                        property <int> raw_columns: Math.floor((self.available_width + self.spacing) / (self.min_card_width + self.spacing));
+                        property <int> columns: Math.max(1, Math.min(12, self.raw_columns));
+                        property <length> card_width: self.columns > 0
+                            ? (self.available_width - (self.columns - 1) * self.spacing) / self.columns
+                            : self.min_card_width;
+                        changed y => {
+                            root.library_grid_top = self.y;
+                            root.request_current_library_layout();
+                        }
+                        changed card_width => {
+                            root.library_card_width = self.card_width;
+                            root.request_current_library_layout();
+                        }
+                        changed columns => {
+                            root.library_columns = self.columns;
+                            root.request_current_library_layout();
+                        }
+                        width: 100%;
+                        min_width: 0px;
+                        preferred_width: 0px;
+                        horizontal_stretch: 1;
+                        vertical_stretch: 0;
+                        spacing: 14px;
+
+                        for item[index] in root.collections: PosterCard {
+                            row: index / parent.columns;
+                            col: Math.mod(index, parent.columns);
+                            card_width: parent.card_width;
+                            restore_focus_collection_id: root.restore_focus_collection_id;
+                            item: item;
+                            activated(id) => { root.collection_clicked(id); }
+                        }
+                    }
+
+                    if !root.library_loading && !root.search_loading
+                        && root.library_error == "" && root.search_error == "": HorizontalLayout {
+                        height: 40px;
+                        vertical-stretch: 0;
+                        spacing: 8px;
+
+                        Text {
+                            text: root.library_total_pages == 0
+                                ? "暂无条目 · 第 " + root.library_page + " 页 / 共 0 页"
+                                : "第 " + root.library_page + " 页 / 共 "
+                                    + root.library_total_pages + " 页 · 本页 "
+                                    + root.collection_count + " 部 / 共 "
+                                    + root.library_total_count + " 部";
+                            color: ShellTheme.text_tertiary;
+                            font_size: 11px;
+                            vertical_alignment: center;
+                        }
+
+                        Rectangle { horizontal_stretch: 1; }
+
+                        ShellButton {
+                            compact: true;
+                            text: "首页";
+                            action_enabled: !root.library_loading && !root.search_loading
+                                && root.library_page > 1;
+                            clicked => { root.library_page_changed(1); }
+                        }
+                        ShellButton {
+                            compact: true;
+                            text: "上一页";
+                            action_enabled: !root.library_loading && !root.search_loading
+                                && root.library_page > 1;
+                            clicked => { root.library_page_changed(root.library_page - 1); }
+                        }
+                        ShellButton {
+                            compact: true;
+                            text: "下一页";
+                            action_enabled: !root.library_loading && !root.search_loading
+                                && root.library_total_pages > 0
+                                && root.library_page < root.library_total_pages;
+                            clicked => { root.library_page_changed(root.library_page + 1); }
+                        }
+                        ShellButton {
+                            compact: true;
+                            text: "末页";
+                            action_enabled: !root.library_loading && !root.search_loading
+                                && root.library_total_pages > 0
+                                && root.library_page < root.library_total_pages;
+                            clicked => { root.library_page_changed(root.library_total_pages); }
+                        }
+                    }
+                }
+            }
+
+            if root.current_view == "detail": ScrollView {
+                vertical_stretch: 1;
+                VerticalLayout {
+                    padding-top: 28px;
+                    padding-right: 32px;
+                    padding-bottom: 40px;
+                    padding-left: 32px;
+                    spacing: 20px;
+
+                    HorizontalLayout {
+                        spacing: 12px;
+                        Text {
+                            text: "内容详情";
+                            color: ShellTheme.accent;
+                            font_size: 12px;
+                            font_weight: 650;
+                            vertical_alignment: center;
+                        }
+                        Text {
+                            text: "· 详情替换片库主内容";
+                            color: ShellTheme.text_tertiary;
+                            font_size: 11px;
+                            vertical_alignment: center;
+                        }
+                        Rectangle { horizontal_stretch: 1; }
+                        ShellButton {
+                            compact: true;
+                            text: "返回片库";
+                            clicked => { root.detail_back(); }
+                        }
+                    }
+
+                    if root.detail_loading: Rectangle {
+                        min_height: 280px;
+                        background: ShellTheme.surface;
+                        border_color: ShellTheme.separator;
+                        border_width: 1px;
+                        border_radius: 12px;
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 8px;
+                            Text {
+                                text: "正在加载详情与选集…";
+                                color: ShellTheme.text;
+                                font_size: 16px;
+                                font_weight: 650;
+                                horizontal_alignment: center;
+                            }
+                            Text {
+                                text: "网络请求在后台执行，片库列表保持在独立页面之外";
+                                color: ShellTheme.text_secondary;
+                                font_size: 12px;
+                                horizontal_alignment: center;
+                            }
+                        }
+                    }
+
+                    if !root.detail_loading && root.detail_error != "": Rectangle {
+                        min_height: 280px;
+                        background: ShellTheme.danger_surface;
+                        border_color: ShellTheme.danger_border;
+                        border_width: 1px;
+                        border_radius: 12px;
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 10px;
+                            Text {
+                                text: "详情加载失败";
+                                color: ShellTheme.danger_text;
+                                font_size: 17px;
+                                font_weight: 700;
+                                horizontal_alignment: center;
+                            }
+                            Text {
+                                text: root.detail_error;
+                                color: ShellTheme.danger_text;
+                                font_size: 12px;
+                                horizontal_alignment: center;
+                                wrap: word-wrap;
+                            }
+                            ShellButton {
+                                compact: true;
+                                text: "返回片库";
+                                clicked => { root.detail_back(); }
+                            }
+                        }
+                    }
+
+                    if !root.detail_loading && root.detail_error == "": Rectangle {
+                        background: ShellTheme.surface;
+                        border_color: ShellTheme.separator;
+                        border_width: 1px;
+                        border_radius: 12px;
+
+                        HorizontalLayout {
+                            padding: 24px;
+                            spacing: 28px;
+
+                            Rectangle {
+                                width: 240px;
+                                height: 344px;
+                                background: ShellTheme.surface_elevated;
+                                border_radius: 9px;
+                                clip: true;
+                                if root.detail_has_cover: Image {
+                                    source: root.detail_cover_image;
+                                    width: 100%;
+                                    height: 100%;
+                                    image_fit: cover;
+                                }
+                                if !root.detail_has_cover: VerticalLayout {
+                                    alignment: center;
+                                    spacing: 8px;
+                                    Text {
+                                        text: "暂无封面";
+                                        color: ShellTheme.text_secondary;
+                                        font_size: 15px;
+                                        font_weight: 650;
+                                        horizontal_alignment: center;
+                                    }
+                                    Text {
+                                        text: "NAS 未提供可用图片";
+                                        color: ShellTheme.text_tertiary;
+                                        font_size: 11px;
+                                        horizontal_alignment: center;
+                                    }
+                                }
+                            }
+
+                            VerticalLayout {
+                                spacing: 14px;
+                                vertical_stretch: 1;
+                                horizontal_stretch: 1;
+                                Text {
+                                    text: root.detail_video_type != "" ? root.detail_video_type : "影视";
+                                    color: ShellTheme.accent;
+                                    font_size: 12px;
+                                    font_weight: 650;
+                                }
+                                Text {
+                                    text: root.detail_title != "" ? root.detail_title : "未命名影视";
+                                    color: ShellTheme.text;
+                                    font_size: 34px;
+                                    font_weight: 700;
+                                    wrap: word-wrap;
+                                }
+                                HorizontalLayout {
+                                    spacing: 0px;
+                                    Text {
+                                        text: root.detail_release_year != "" ? root.detail_release_year : "年份未知";
+                                        color: ShellTheme.text_secondary;
+                                        font_size: 12px;
+                                    }
+                                    Text {
+                                        text: "  ·  ";
+                                        color: ShellTheme.text_tertiary;
+                                        font_size: 12px;
+                                    }
+                                    Text {
+                                        text: root.detail_is_movie ? "电影" : "剧集";
+                                        color: ShellTheme.text_secondary;
+                                        font_size: 12px;
+                                    }
+                                    if root.detail_score != "": Text {
+                                        text: "  ·  评分 " + root.detail_score;
+                                        color: ShellTheme.text_secondary;
+                                        font_size: 12px;
+                                    }
+                                }
+                                Rectangle { vertical_stretch: 1; }
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    ShellButton {
+                                        compact: false;
+                                        text: root.detail_is_movie ? "播放正片" : "播放选中集";
+                                        primary: true;
+                                        action_enabled: root.selected_episode_id != "" && !root.playback_loading;
+                                        clicked => { root.play_episode(root.selected_episode_id); }
+                                    }
+                                    if root.playback_loading: Text {
+                                        text: "正在准备媒体流…";
+                                        color: ShellTheme.text_secondary;
+                                        font_size: 12px;
+                                        vertical_alignment: center;
+                                    }
+                                }
+                                if root.playback_error != "": Text {
+                                    text: root.playback_error;
+                                    color: ShellTheme.danger_text;
+                                    font_size: 12px;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
+                    }
+
+                    if !root.detail_loading && root.detail_error == "": Text {
+                        text: root.detail_is_movie ? "播放入口" : "选集";
+                        color: ShellTheme.text;
+                        font_size: 17px;
+                        font_weight: 650;
+                    }
+
+                    if !root.detail_loading && root.detail_error == "" && root.detail_seasons.length == 0: Rectangle {
+                        min_height: 86px;
+                        background: ShellTheme.surface;
+                        border_color: ShellTheme.separator;
+                        border_width: 1px;
+                        border_radius: 10px;
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 4px;
+                            Text {
+                                text: "暂无可用剧集";
+                                color: ShellTheme.text_secondary;
+                                font_size: 13px;
+                                font_weight: 650;
+                                horizontal_alignment: center;
+                            }
+                            Text {
+                                text: "详情已加载，但服务端未返回可播放 Episode";
+                                color: ShellTheme.text_tertiary;
+                                font_size: 11px;
+                                horizontal_alignment: center;
+                            }
+                        }
+                    }
+
+                    for season in root.detail_seasons: Rectangle {
+                        background: ShellTheme.surface;
+                        border_color: ShellTheme.separator;
+                        border_width: 1px;
+                        border_radius: 10px;
+                        VerticalLayout {
+                            padding: 14px;
+                            spacing: 9px;
+                            Text {
+                                text: season.title != "" ? season.title : "第" + season.season_number + "季";
+                                color: ShellTheme.text;
+                                font_size: 14px;
+                                font_weight: 650;
+                            }
+                            for episode in season.episodes: DetailEpisodeRow {
+                                episode: episode;
+                                activated(id) => { root.episode_selected(id); }
+                            }
+                        }
+                    }
+
+                    if !root.detail_loading && root.detail_error == "": Rectangle {
+                        background: ShellTheme.surface;
+                        border_color: ShellTheme.separator;
+                        border_width: 1px;
+                        border_radius: 10px;
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 8px;
+                            Text {
+                                text: "简介";
+                                color: ShellTheme.text;
+                                font_size: 15px;
+                                font_weight: 650;
+                            }
+                            Text {
+                                text: root.detail_storyline != ""
+                                    ? root.detail_storyline
+                                    : "暂无剧情简介（NAS 未提供）";
+                                color: ShellTheme.text_secondary;
+                                font_size: 13px;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    }
+
+}
+
+export component AppWindow inherits Window {
+    title: app_title;
+    min_width: 900px;
+    min_height: 640px;
+    preferred_width: 1040px;
+    preferred_height: 720px;
+    // Native mode exposes only the child shell layers after DWM succeeds.
+    background: root.native_backdrop_enabled && root.is_logged_in && root.current_view != "player"
+        ? #00000000
+        : #121418;
+
+    // View state
+    in-out property <bool> is_logged_in: false;
+    in-out property <string> current_view: "library"; // "library" | "detail" | "player"
+    in-out property <bool> apple_sidebar_visible: true;
+    // Rust sets this for reduced-transparency/high-contrast policy.
+    in-out property <bool> reduced_transparency: false;
+    // Experimental Windows-only system backdrop; default remains disabled.
+    in-out property <bool> native_backdrop_enabled: false;
+    // Evidence-only switch, set by poster_grid_preview.
+    in-out property <bool> material_evidence: false;
+    in-out property <string> apple_search_input: "";
+
+    // Login Form State
+    in-out property <string> server_url_input: "192.168.1.100";
+    in-out property <string> username_input: "";
+    in-out property <string> password_input: "";
+    in-out property <string> sms_code_input: "";
+    in-out property <bool> show_sms_field: false;
+    in-out property <string> mfa_challenge_type: "";
+    in-out property <bool> mfa_code_sent: false;
+    in-out property <bool> mfa_code_sending: false;
+    in-out property <bool> mfa_verifying: false;
+    in-out property <string> mfa_status_hint: "";
+    in-out property <bool> remember_credentials: true;
+    in-out property <bool> login_loading: false;
+    in-out property <string> login_error_message: "";
+    in-out property <string> login_status_hint: "请输入极空间局域网 IP (默认端口 5055) 与管理账号密码";
+
+    // LAN NAS discovery state
+    in-out property <[NasDiscoveryUiItem]> discovery_results: [];
+    in-out property <bool> discovery_loading: false;
+    in-out property <string> discovery_error: "";
+
+    // Active Authenticated Session Profile
+    in-out property <string> session_user: "";
+    in-out property <string> session_nas_name: "";
+    in-out property <string> session_base_url: "";
+
+    // Library State
+    in-out property <[ClassificationUiItem]> classifications: [];
+    in-out property <[CollectionUiItem]> collections: [];
+    in-out property <[ContinueWatchingUiItem]> continue_watching_items: [];
+    in-out property <bool> continue_watching_loading: false;
+    in-out property <string> continue_watching_error: "";
+    in-out property <string> selected_classification_id: "";
+    in-out property <string> selected_classification_name: "全部影片";
+    in-out property <bool> library_loading: false;
+    in-out property <string> library_error: "";
+    in-out property <int> library_total_count: 0;
+    in-out property <int> library_page: 1;
+    in-out property <int> library_total_pages: 0;
+    in-out property <int> library_page_size: 50;
+    in-out property <bool> requires_relogin: false;
+    in-out property <int> collection_count: 0;
+    in-out property <bool> search_active: false;
+    in-out property <bool> search_loading: false;
+    in-out property <string> search_error: "";
+    in-out property <string> search_scope: "当前已加载范围";
+    in-out property <string> media_type_filter: "all";
+    in-out property <string> sort_order: "default";
+    in-out property <length> library_scroll_offset: 0px;
+    in-out property <length> library_restore_scroll_offset: 0px;
+    in-out property <string> library_focus_collection_id: "";
+    out property <length> library_grid_top: apple_workspace.library_grid_top;
+    out property <length> library_card_width: apple_workspace.library_card_width;
+    out property <int> library_columns: apple_workspace.library_columns;
+    out property <length> library_viewport_height: apple_workspace.library_viewport_height;
+    out property <length> library_layout_scroll_offset: apple_workspace.library_layout_scroll_offset;
+
+    // Collection detail state
+    in-out property <string> detail_collection_id: "";
+    in-out property <string> detail_title: "";
+    in-out property <string> detail_release_year: "";
+    in-out property <string> detail_video_type: "";
+    in-out property <string> detail_score: "";
+    in-out property <string> detail_storyline: "";
+    in-out property <image> detail_cover_image;
+    in-out property <image> detail_background_image;
+    in-out property <bool> detail_has_cover: false;
+    in-out property <bool> detail_has_background: false;
+    in-out property <bool> detail_is_movie: false;
+    in-out property <[SeasonUiItem]> detail_seasons: [];
+    in-out property <string> selected_episode_id: "";
+    in-out property <bool> detail_loading: false;
+    in-out property <string> detail_error: "";
+    in-out property <bool> playback_loading: false;
+    in-out property <string> playback_error: "";
+
+    // App & Player Diagnostic Info
+    in-out property <string> app_title: "z-video — 极空间影视客户端";
+    in-out property <string> engine_name: "libmpv 2.6 (D3D11 / hwdec=auto-safe; runtime unverified)";
+    in-out property <string> playback_status: "Idle";
+    in-out property <string> playback_track_status: "";
+    in-out property <string> media_path: "未载入测试视频";
+    in-out property <string> time_label: "00:00 / 00:00";
+    in-out property <float> progress_value: 0.0;
+    in-out property <float> duration_value: 100.0;
+    in-out property <bool> is_playing: false;
+    in-out property <string> status_message: "就绪。已通过局域网安全鉴权。";
+    in-out property <int> ui_heartbeat_count: 0;
+
+    // Video surface layout geometry for Win32 child HWND embedding (only active in player view)
+    out property <length> video_area_x: (root.is_logged_in && root.current_view == "player") ? video_container.x : 0px;
+    out property <length> video_area_y: (root.is_logged_in && root.current_view == "player") ? video_container.y : 0px;
+    out property <length> video_area_width: (root.is_logged_in && root.current_view == "player") ? video_container.width : 0px;
+    out property <length> video_area_height: (root.is_logged_in && root.current_view == "player") ? video_container.height : 0px;
+
+    // Authentication Callbacks
+    callback login_requested(string, string, string, string, bool);
+    callback send_mfa_code_requested(string, string, string);
+    callback verify_mfa_login_requested(string, string, string, string, bool);
+    callback logout_requested();
+    callback relogin_requested();
+    callback discover_nas_requested();
+    callback cancel_discovery_requested();
+    callback select_discovery_result(string);
+
+    // Library Callbacks
+    callback select_classification(string);
+    callback search_changed(string);
+    callback search_submitted(string);
+    callback retry_search();
+    callback filter_changed(string);
+    callback sort_changed(string);
+    callback clear_query();
+    callback collection_clicked(string);
+    callback library_scrolled(length, length, length, length, int);
+    callback continue_watching_clicked(string, string);
+    callback continue_watching_retry();
+    callback refresh_library_clicked();
+    callback library_page_changed(int);
+    callback switch_view(string);
+    callback detail_back_clicked();
+    callback episode_selected(string);
+    callback play_episode_clicked(string);
+
+    // Player Callbacks
+    callback play_clicked();
+    callback pause_clicked();
+    callback toggle_pause_clicked();
+    callback stop_clicked();
+    callback seek_preview(float);
+    callback seek_relative(float);
+    callback seek_absolute(float);
+    callback fullscreen_clicked();
+    callback load_sample_clicked();
+    callback return_to_detail_clicked();
+
+    property <bool> osd_visible: true;
+    osd_hide_timer := Timer {
+        interval: 3s;
+        running: root.current_view == "player" && root.osd_visible;
+        triggered => {
+            root.osd_visible = false;
+        }
+    }
+
+    function show_osd() {
+        root.osd_visible = true;
+        osd_hide_timer.restart();
+    }
+
+    // ==========================================
+    // 1. LOGIN VIEW (Visible when !is_logged_in)
+    // ==========================================
+    if !root.is_logged_in: VerticalLayout {
+        padding: 24px;
+        spacing: 16px;
+        alignment: center;
+
+        // Top Status Line
+        HorizontalLayout {
+            alignment: space_between;
+
+            HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    text: "z-video 极空间影视客户端";
+                    color: #ffffff;
+                    font_size: 16px;
+                    font_weight: 700;
+                    vertical_alignment: center;
+                }
+                Rectangle {
+                    background: #2a3340;
+                    border_radius: 4px;
+                    height: 22px;
+                    HorizontalLayout {
+                        padding_left: 6px;
+                        padding_right: 6px;
+                        Text {
+                            text: root.engine_name;
+                            color: #64b5f6;
+                            font_size: 11px;
+                            vertical_alignment: center;
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                background: #232830;
+                border_radius: 4px;
+                height: 22px;
+                HorizontalLayout {
+                    padding_left: 8px;
+                    padding_right: 8px;
+                    Text {
+                        text: "UI 线程活跃 (tick: " + root.ui_heartbeat_count + ")";
+                        color: #81c784;
+                        font_size: 11px;
+                        vertical_alignment: center;
+                    }
+                }
+            }
+        }
+
+        // Center Login Card
+        Rectangle {
+            horizontal_stretch: 0;
+            width: 480px;
+            background: #1c2026;
+            border_radius: 12px;
+            border_color: #2e3846;
+            border_width: 1px;
+
+            VerticalLayout {
+                padding: 28px;
+                spacing: 16px;
+
+                // Card Header
+                VerticalLayout {
+                    spacing: 4px;
+                    Text {
+                        text: "局域网 NAS 安全登录";
+                        color: #ffffff;
+                        font_size: 18px;
+                        font_weight: 700;
+                        horizontal_alignment: center;
+                    }
+                    Text {
+                        text: root.login_status_hint;
+                        color: #90a4ae;
+                        font_size: 12px;
+                        horizontal_alignment: center;
+                        wrap: word-wrap;
+                    }
+                }
+
+                // Error Banner
+                if root.login_error_message != "": Rectangle {
+                    background: #381a1d;
+                    border_color: #e53935;
+                    border_width: 1px;
+                    border_radius: 6px;
+
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 4px;
+
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Text {
+                                text: "⚠ 认证或连接异常";
+                                color: #ff8a80;
+                                font_size: 12px;
+                                font_weight: 700;
+                            }
+                        }
+
+                        Text {
+                            text: root.login_error_message;
+                            color: #ffebee;
+                            font_size: 12px;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+
+                // Minimal LAN discovery and selection panel.
+                Rectangle {
+                    background: #202731;
+                    border_color: #344150;
+                    border_width: 1px;
+                    border_radius: 6px;
+
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 8px;
+
+                        HorizontalLayout {
+                            alignment: space_between;
+                            Text {
+                                text: "发现本机局域网 NAS";
+                                color: #cfd8dc;
+                                font_size: 12px;
+                                font_weight: 600;
+                            }
+                            if root.discovery_loading: Button {
+                                text: "取消扫描";
+                                clicked => { root.cancel_discovery_requested(); }
+                            }
+                            if !root.discovery_loading: Button {
+                                text: "扫描 NAS";
+                                enabled: !root.login_loading;
+                                clicked => { root.discover_nas_requested(); }
+                            }
+                        }
+
+                        if root.discovery_error != "": Text {
+                            text: "⚠ " + root.discovery_error;
+                            color: #ffccbc;
+                            font_size: 11px;
+                            wrap: word-wrap;
+                        }
+
+                        if root.discovery_loading: Text {
+                            text: "正在扫描本机私有局域网，请稍候...";
+                            color: #90caf9;
+                            font_size: 11px;
+                        }
+
+                        for item in root.discovery_results: Rectangle {
+                            background: item.available ? #263238 : #2b2528;
+                            border_color: item.available ? #456a7d : #5d4246;
+                            border_width: 1px;
+                            border_radius: 4px;
+                            height: 42px;
+
+                            HorizontalLayout {
+                                padding_left: 8px;
+                                padding_right: 8px;
+                                spacing: 8px;
+                                Text {
+                                    text: item.name + " · " + item.ip;
+                                    color: #ffffff;
+                                    font_size: 12px;
+                                    vertical_alignment: center;
+                                    horizontal_stretch: 1;
+                                }
+                                Text {
+                                    text: item.availability;
+                                    color: item.available ? #a5d6a7 : #ef9a9a;
+                                    font_size: 11px;
+                                    vertical_alignment: center;
+                                }
+                                Button {
+                                    text: "使用此地址";
+                                    enabled: item.available && !root.login_loading;
+                                    clicked => { root.select_discovery_result(item.ip); }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Fields
+                VerticalLayout {
+                    spacing: 4px;
+                    Text {
+                        text: "极空间访问地址 (LAN IP / Host)";
+                        color: #cfd8dc;
+                        font_size: 12px;
+                        font_weight: 500;
+                    }
+                    LineEdit {
+                        text: root.server_url_input;
+                        placeholder_text: "例如: 192.168.1.100 或 192.168.1.100:5055";
+                        enabled: !root.login_loading && !root.mfa_code_sending && !root.mfa_verifying;
+                        edited(val) => { root.server_url_input = val; }
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: 4px;
+                    Text {
+                        text: "账号 (Username)";
+                        color: #cfd8dc;
+                        font_size: 12px;
+                        font_weight: 500;
+                    }
+                    LineEdit {
+                        text: root.username_input;
+                        placeholder_text: "请输入极空间账号 / 手机号";
+                        enabled: !root.login_loading && !root.mfa_code_sending && !root.mfa_verifying;
+                        edited(val) => { root.username_input = val; }
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: 4px;
+                    Text {
+                        text: "密码 (Password - RSA 公钥独立加密传输)";
+                        color: #cfd8dc;
+                        font_size: 12px;
+                        font_weight: 500;
+                    }
+                    LineEdit {
+                        text: root.password_input;
+                        placeholder_text: "请输入登录密码";
+                        input_type: password;
+                        enabled: !root.login_loading && !root.mfa_code_sending && !root.mfa_verifying;
+                        edited(val) => { root.password_input = val; }
+                        accepted => {
+                            if !root.login_loading && root.server_url_input != "" && root.username_input != "" {
+                                root.login_requested(
+                                    root.server_url_input,
+                                    root.username_input,
+                                    root.password_input,
+                                    "",
+                                    root.remember_credentials
+                                );
+                            }
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: 4px;
+                    HorizontalLayout {
+                        alignment: space_between;
+                        Text {
+                            text: "短信/安全验证码 (SMS Code)";
+                            color: root.show_sms_field ? #ffb74d : #90a4ae;
+                            font_size: 12px;
+                            font_weight: root.show_sms_field ? 700 : 400;
+                        }
+                        if root.show_sms_field: Text {
+                            text: "【必须输入验证码以完成二次鉴权】";
+                            color: #ffb74d;
+                            font_size: 11px;
+                        }
+                    }
+                    if root.show_sms_field && root.mfa_status_hint != "": Text {
+                        text: root.mfa_status_hint;
+                        color: #90caf9;
+                        font_size: 11px;
+                        wrap: word-wrap;
+                    }
+                    LineEdit {
+                        text: root.sms_code_input;
+                        placeholder_text: root.show_sms_field ? "请输入收到的短信/邮件验证码" : "如开启两步验证或遇到新设备验证时输入";
+                        enabled: root.show_sms_field && !root.login_loading && !root.mfa_code_sending && !root.mfa_verifying;
+                        edited(val) => { root.sms_code_input = val; }
+                    }
+                }
+
+                HorizontalLayout {
+                    alignment: space_between;
+                    CheckBox {
+                        text: "记住登录凭证 (安全存储至系统凭据管理器)";
+                        checked: root.remember_credentials;
+                        toggled => {
+                            root.remember_credentials = !root.remember_credentials;
+                        }
+                    }
+                }
+
+                if !root.show_sms_field: Button {
+                    text: root.login_loading ? "正在连接 NAS 并验证身份..." : "登 录 (Login)";
+                    primary: true;
+                    enabled: !root.login_loading && root.server_url_input != "" && root.username_input != "";
+                    clicked => {
+                        root.login_requested(
+                            root.server_url_input,
+                            root.username_input,
+                            root.password_input,
+                            "",
+                            root.remember_credentials
+                        );
+                    }
+                }
+
+                if root.show_sms_field: HorizontalLayout {
+                    spacing: 8px;
+
+                    Button {
+                        text: root.mfa_code_sending ? "正在发送验证码..." : "发送验证码";
+                        enabled: !root.login_loading && !root.mfa_code_sending && !root.mfa_verifying && root.server_url_input != "" && root.username_input != "";
+                        clicked => {
+                            root.send_mfa_code_requested(
+                                root.server_url_input,
+                                root.username_input,
+                                root.mfa_challenge_type
+                            );
+                        }
+                    }
+
+                    Button {
+                        text: root.mfa_verifying ? "正在验证登录..." : "验证登录";
+                        primary: true;
+                        enabled: root.mfa_code_sent && !root.login_loading && !root.mfa_code_sending && !root.mfa_verifying && root.server_url_input != "" && root.username_input != "" && root.password_input != "" && root.sms_code_input != "";
+                        clicked => {
+                            root.verify_mfa_login_requested(
+                                root.server_url_input,
+                                root.username_input,
+                                root.password_input,
+                                root.sms_code_input,
+                                root.remember_credentials
+                            );
+                        }
+                    }
+                }
+
+                if root.login_loading: HorizontalLayout {
+                    alignment: center;
+                    Text {
+                        text: "正在执行局域网 RSA 密钥握手与独立加密校验...";
+                        color: #64b5f6;
+                        font_size: 12px;
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            alignment: center;
+            Text {
+                text: "极空间原生轻量客户端 — 凭据通过系统安全凭据管理器加密保存，绝不明文输出";
+                color: #546e7a;
+                font_size: 11px;
+            }
+        }
+    }
+
+    // ==========================================
+    // 2. MAIN LOGGED-IN WORKSPACE
+    // ==========================================
+    VerticalLayout {
+        visible: root.is_logged_in && root.current_view == "player";
+        padding: 16px;
+        spacing: 12px;
+
+        // Top Shared Header Bar
+        Rectangle {
+            height: 52px;
+            background: #1c2026;
+            border_radius: 8px;
+
+            HorizontalLayout {
+                padding_left: 16px;
+                padding_right: 16px;
+                alignment: space_between;
+
+                // Left: Title & Navigation Tabs
+                HorizontalLayout {
+                    spacing: 12px;
+                    y: 11px;
+
+                    Text {
+                        text: "极影视";
+                        color: #ffffff;
+                        font_size: 18px;
+                        font_weight: 800;
+                        vertical_alignment: center;
+                    }
+
+                    // View switch: Library vs Player
+                    Rectangle {
+                        background: root.current_view == "library" ? #2979ff : #263238;
+                        border_radius: 4px;
+                        height: 28px;
+                        animate background { duration: 150ms; }
+
+                        HorizontalLayout {
+                            padding_left: 12px;
+                            padding_right: 12px;
+                            Text {
+                                text: "片库海报墙";
+                                color: #ffffff;
+                                font_size: 12px;
+                                font_weight: root.current_view == "library" ? 700 : 500;
+                                vertical_alignment: center;
+                            }
+                        }
+
+                        TouchArea {
+                            clicked => {
+                                root.current_view = "library";
+                                root.switch_view("library");
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        background: root.current_view == "player" ? #2979ff : #263238;
+                        border_radius: 4px;
+                        height: 28px;
+                        animate background { duration: 150ms; }
+
+                        HorizontalLayout {
+                            padding_left: 12px;
+                            padding_right: 12px;
+                            Text {
+                                text: "播放器探针";
+                                color: #ffffff;
+                                font_size: 12px;
+                                font_weight: root.current_view == "player" ? 700 : 500;
+                                vertical_alignment: center;
+                            }
+                        }
+
+                        TouchArea {
+                            clicked => {
+                                root.current_view = "player";
+                                root.switch_view("player");
+                            }
+                        }
+                    }
+                }
+
+                // Right: Session Profile & Actions
+                HorizontalLayout {
+                    spacing: 10px;
+                    y: 13px;
+
+                    Rectangle {
+                        background: #1e3a2f;
+                        border_color: #2e7d32;
+                        border_width: 1px;
+                        border_radius: 4px;
+                        height: 26px;
+
+                        HorizontalLayout {
+                            padding_left: 8px;
+                            padding_right: 8px;
+                            Text {
+                                text: "NAS: " + (root.session_nas_name != "" ? root.session_nas_name : root.session_base_url) + " (" + root.session_user + ")";
+                                color: #a5d6a7;
+                                font_size: 11px;
+                                font_weight: 600;
+                                vertical_alignment: center;
+                            }
+                        }
+                    }
+
+                    Button {
+                        text: "注销会话";
+                        clicked => {
+                            root.logout_requested();
+                        }
+                    }
+                }
+            }
+        }
+
+        // ==========================================
+        // 2A. LIBRARY VIEW (Default)
+        // ==========================================
+        VerticalLayout {
+            visible: root.current_view == "library";
+            spacing: 12px;
+            vertical_stretch: 1;
+
+            // Classification Filter Sub-bar
+            Rectangle {
+                height: 44px;
+                background: #191c22;
+                border_radius: 6px;
+
+                HorizontalLayout {
+                    padding_left: 12px;
+                    padding_right: 12px;
+                    spacing: 8px;
+                    alignment: start;
+
+                    for cat in root.classifications: Rectangle {
+                        background: cat.is_selected ? #37474f : #21262d;
+                        border_color: cat.is_selected ? #64b5f6 : transparent;
+                        border_width: 1px;
+                        border_radius: 14px;
+                        height: 28px;
+                        y: 8px;
+
+                        HorizontalLayout {
+                            padding_left: 12px;
+                            padding_right: 12px;
+                            Text {
+                                text: cat.name;
+                                color: cat.is_selected ? #ffffff : #b0bec5;
+                                font_size: 12px;
+                                font_weight: cat.is_selected ? 700 : 400;
+                                vertical_alignment: center;
+                            }
+                        }
+
+                        TouchArea {
+                            clicked => {
+                                root.select_classification(cat.id);
+                            }
+                        }
+                    }
+
+                    // Spacer
+                    Rectangle { horizontal_stretch: 1; }
+
+                    // Refresh Button
+                    Button {
+                        text: "刷新片库";
+                        clicked => {
+                            root.refresh_library_clicked();
+                        }
+                    }
+                }
+            }
+
+            // Error Banner in Library
+            if root.library_error != "": Rectangle {
+                height: 48px;
+                background: #381a1d;
+                border_color: #e53935;
+                border_width: 1px;
+                border_radius: 6px;
+
+                HorizontalLayout {
+                    padding_left: 16px;
+                    padding_right: 16px;
+                    alignment: space_between;
+
+                    Text {
+                        text: "⚠ " + root.library_error;
+                        color: #ffcdd2;
+                        font_size: 13px;
+                        vertical_alignment: center;
+                    }
+
+                    Button {
+                        text: "重试加载";
+                        clicked => {
+                            root.refresh_library_clicked();
+                        }
+                    }
+
+                    if root.requires_relogin: Button {
+                        text: "重新登录";
+                        clicked => {
+                            root.relogin_requested();
+                        }
+                    }
+                }
+            }
+
+            // Loading state
+            if root.library_loading: Rectangle {
+                vertical_stretch: 1;
+                background: #16191f;
+                border_radius: 6px;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 8px;
+
+                    Text {
+                        text: "正在从极空间拉取片库元数据与海报...";
+                        color: #64b5f6;
+                        font_size: 15px;
+                        font_weight: 600;
+                        horizontal_alignment: center;
+                    }
+                    Text {
+                        text: "分类: " + root.selected_classification_name;
+                        color: #90a4ae;
+                        font_size: 12px;
+                        horizontal_alignment: center;
+                    }
+                }
+            }
+
+            // Empty state
+            if !root.library_loading && root.collections.length == 0 && root.library_error == "": Rectangle {
+                vertical_stretch: 1;
+                background: #16191f;
+                border_radius: 6px;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 12px;
+
+                    Text {
+                        text: "该分类下暂无影视内容";
+                        color: #cfd8dc;
+                        font_size: 16px;
+                        font_weight: 600;
+                        horizontal_alignment: center;
+                    }
+                    Text {
+                        text: "请确认极空间 NAS 中极影视已添加对应媒体文件夹或稍后刷新";
+                        color: #78909c;
+                        font_size: 12px;
+                        horizontal_alignment: center;
+                    }
+                    Button {
+                        text: "刷新数据";
+                        clicked => {
+                            root.refresh_library_clicked();
+                        }
+                    }
+                }
+            }
+
+            // Collection Poster Grid View (ScrollView)
+            if !root.library_loading && root.collections.length > 0: ScrollView {
+                vertical_stretch: 1;
+
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 16px;
+
+                    HorizontalLayout {
+                        alignment: space_between;
+                        Text {
+                            text: root.selected_classification_name + " (" + root.collections.length + " 部作品)";
+                            color: #eceff1;
+                            font_size: 14px;
+                            font_weight: 700;
+                        }
+                    }
+
+                    // Flexible flow grid list
+                    VerticalLayout {
+                        spacing: 14px;
+
+                        for col in root.collections: Rectangle {
+                            height: 120px;
+                            background: #1c2027;
+                            border_radius: 8px;
+                            border_color: touch.has_hover ? #42a5f5 : #2a3340;
+                            border_width: 1px;
+                            animate border_color { duration: 150ms; }
+
+                            HorizontalLayout {
+                                padding: 10px;
+                                spacing: 14px;
+
+                                // Poster / Cover Image Container
+                                Rectangle {
+                                    width: 74px;
+                                    height: 100px;
+                                    background: #252b36;
+                                    border_radius: 4px;
+                                    clip: true;
+
+                                    if col.has_cover: Image {
+                                        source: col.cover_image;
+                                        width: 100%;
+                                        height: 100%;
+                                        image_fit: cover;
+                                    }
+
+                                    if !col.has_cover: VerticalLayout {
+                                        alignment: center;
+                                        Text {
+                                            text: "🎬";
+                                            font_size: 24px;
+                                            horizontal_alignment: center;
+                                        }
+                                    }
+                                }
+
+                                // Information details
+                                VerticalLayout {
+                                    spacing: 6px;
+                                    alignment: center;
+                                    horizontal_stretch: 1;
+
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        Text {
+                                            text: col.title;
+                                            color: #ffffff;
+                                            font_size: 15px;
+                                            font_weight: 700;
+                                        }
+
+                                        if col.score != "": Rectangle {
+                                            background: #ff8f00;
+                                            border_radius: 3px;
+                                            height: 18px;
+                                            HorizontalLayout {
+                                                padding_left: 4px;
+                                                padding_right: 4px;
+                                                Text {
+                                                    text: "★ " + col.score;
+                                                    color: #000000;
+                                                    font_size: 10px;
+                                                    font_weight: 800;
+                                                    vertical_alignment: center;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    HorizontalLayout {
+                                        spacing: 12px;
+                                        Text {
+                                            text: "上映年份: " + (col.release_year != "" ? col.release_year : "未知");
+                                            color: #90a4ae;
+                                            font_size: 12px;
+                                        }
+                                        Text {
+                                            text: "类型: " + col.video_type;
+                                            color: #90a4ae;
+                                            font_size: 12px;
+                                        }
+                                    }
+
+                                    Text {
+                                        text: "点击进入详情 / 准备播放";
+                                        color: touch.has_hover ? #64b5f6 : #546e7a;
+                                        font_size: 11px;
+                                    }
+                                }
+
+                                // Play action hint button
+                                VerticalLayout {
+                                    alignment: center;
+                                    Button {
+                                        text: "查看 / 播放";
+                                        clicked => {
+                                            root.collection_clicked(col.collection_id);
+                                        }
+                                    }
+                                }
+                            }
+
+                            touch := TouchArea {
+                                clicked => {
+                                    root.collection_clicked(col.collection_id);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ==========================================
+        // 2B. COLLECTION DETAIL VIEW
+        // ==========================================
+        VerticalLayout {
+            visible: root.current_view == "detail";
+            spacing: 12px;
+            vertical_stretch: 1;
+
+            Rectangle {
+                height: 44px;
+                background: #191c22;
+                border_radius: 6px;
+
+                HorizontalLayout {
+                    padding_left: 12px;
+                    padding_right: 12px;
+                    spacing: 12px;
+
+                    Button {
+                        text: "← 返回片库";
+                        clicked => {
+                            root.detail_back_clicked();
+                        }
+                    }
+
+                    Text {
+                        text: root.detail_title != "" ? root.detail_title : "影视详情";
+                        color: #ffffff;
+                        font_size: 15px;
+                        font_weight: 700;
+                        vertical_alignment: center;
+                        horizontal_stretch: 1;
+                    }
+
+                    Text {
+                        text: root.detail_loading ? "正在加载详情..." : root.detail_video_type;
+                        color: #90a4ae;
+                        font_size: 12px;
+                        vertical_alignment: center;
+                    }
+                }
+            }
+
+            if root.playback_loading || root.playback_error != "": Rectangle {
+                height: 38px;
+                background: root.playback_error != "" ? #381a1d : #162b3d;
+                border_color: root.playback_error != "" ? #e53935 : #245b7c;
+                border_width: 1px;
+                border_radius: 6px;
+
+                Text {
+                    text: root.playback_error != "" ? "⚠ " + root.playback_error : "正在后台获取媒体流地址...";
+                    color: root.playback_error != "" ? #ffcdd2 : #90caf9;
+                    font_size: 12px;
+                    horizontal_alignment: center;
+                    vertical_alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+
+            if root.detail_loading: Rectangle {
+                vertical_stretch: 1;
+                background: #16191f;
+                border_radius: 6px;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 8px;
+                    Text {
+                        text: "正在从极空间加载影视详情与选集...";
+                        color: #64b5f6;
+                        font_size: 15px;
+                        horizontal_alignment: center;
+                    }
+                    Text {
+                        text: "网络请求在后台执行，界面仍可操作";
+                        color: #78909c;
+                        font_size: 12px;
+                        horizontal_alignment: center;
+                    }
+                }
+            }
+
+            if !root.detail_loading && root.detail_error != "": Rectangle {
+                vertical_stretch: 1;
+                background: #381a1d;
+                border_color: #e53935;
+                border_width: 1px;
+                border_radius: 6px;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 10px;
+                    Text {
+                        text: "⚠ " + root.detail_error;
+                        color: #ffcdd2;
+                        font_size: 14px;
+                        horizontal_alignment: center;
+                        wrap: word-wrap;
+                    }
+                    Button {
+                        text: "返回片库";
+                        clicked => {
+                            root.detail_back_clicked();
+                        }
+                    }
+                    if root.requires_relogin: Button {
+                        text: "重新登录";
+                        clicked => {
+                            root.relogin_requested();
+                        }
+                    }
+                }
+            }
+
+            if !root.detail_loading && root.detail_error == "": ScrollView {
+                vertical_stretch: 1;
+
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 14px;
+
+                    Rectangle {
+                        min_height: 230px;
+                        background: #1c2027;
+                        border_radius: 8px;
+                        clip: true;
+
+                        if root.detail_has_background: Image {
+                            source: root.detail_background_image;
+                            width: 100%;
+                            height: 100%;
+                            image_fit: cover;
+                            opacity: 0.22;
+                        }
+
+                        HorizontalLayout {
+                            padding: 16px;
+                            spacing: 18px;
+
+                            Rectangle {
+                                width: 138px;
+                                height: 196px;
+                                background: #252b36;
+                                border_radius: 6px;
+                                clip: true;
+
+                                if root.detail_has_cover: Image {
+                                    source: root.detail_cover_image;
+                                    width: 100%;
+                                    height: 100%;
+                                    image_fit: cover;
+                                }
+
+                                if !root.detail_has_cover: VerticalLayout {
+                                    alignment: center;
+                                    Text {
+                                        text: "🎬";
+                                        font_size: 32px;
+                                        horizontal_alignment: center;
+                                    }
+                                }
+                            }
+
+                            VerticalLayout {
+                                spacing: 8px;
+                                vertical_stretch: 1;
+                                horizontal_stretch: 1;
+
+                                Text {
+                                    text: root.detail_title;
+                                    color: #ffffff;
+                                    font_size: 24px;
+                                    font_weight: 700;
+                                    overflow: elide;
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 12px;
+                                    Text {
+                                        text: "上映年份: " + (root.detail_release_year != "" ? root.detail_release_year : "未知");
+                                        color: #b0bec5;
+                                        font_size: 12px;
+                                    }
+                                    Text {
+                                        text: "类型: " + (root.detail_video_type != "" ? root.detail_video_type : "影视");
+                                        color: #b0bec5;
+                                        font_size: 12px;
+                                    }
+                                    if root.detail_score != "": Text {
+                                        text: "★ " + root.detail_score;
+                                        color: #ffb300;
+                                        font_size: 12px;
+                                        font_weight: 700;
+                                    }
+                                }
+
+                                Text {
+                                    text: root.detail_storyline != "" ? root.detail_storyline : "暂无剧情简介";
+                                    color: #cfd8dc;
+                                    font_size: 13px;
+                                    wrap: word-wrap;
+                                    vertical_stretch: 1;
+                                }
+
+                                HorizontalLayout {
+                                    alignment: space_between;
+                                    Text {
+                                        text: root.detail_is_movie ? "电影 · 单集" : "剧集 · 可按季选集";
+                                        color: #64b5f6;
+                                        font_size: 12px;
+                                    }
+                                    Button {
+                                        text: root.detail_is_movie ? "播放正片" : "播放选中集";
+                                        primary: true;
+                                        clicked => {
+                                            root.play_episode_clicked(root.selected_episode_id);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: root.detail_is_movie ? "播放入口" : "选集";
+                        color: #eceff1;
+                        font_size: 15px;
+                        font_weight: 700;
+                    }
+
+                    for season in root.detail_seasons: Rectangle {
+                        background: #1c2027;
+                        border_radius: 8px;
+                        border_color: #2a3340;
+                        border_width: 1px;
+
+                        VerticalLayout {
+                            padding: 12px;
+                            spacing: 8px;
+                            Text {
+                                text: season.title;
+                                color: #ffffff;
+                                font_size: 14px;
+                                font_weight: 700;
+                            }
+
+                            for episode in season.episodes: Rectangle {
+                                height: 42px;
+                                background: episode.is_selected ? #174b73 : #252b36;
+                                border_color: episode.is_selected ? #42a5f5 : transparent;
+                                border_width: 1px;
+                                border_radius: 5px;
+
+                                HorizontalLayout {
+                                    padding_left: 10px;
+                                    padding_right: 10px;
+                                    spacing: 10px;
+                                    Text {
+                                        text: episode.episode_number > 0 ? "第" + episode.episode_number + "集" : "正片";
+                                        color: episode.is_selected ? #ffffff : #cfd8dc;
+                                        font_size: 12px;
+                                        font_weight: 700;
+                                        vertical_alignment: center;
+                                    }
+                                    Text {
+                                        text: episode.title;
+                                        color: #eceff1;
+                                        font_size: 12px;
+                                        vertical_alignment: center;
+                                        horizontal_stretch: 1;
+                                        overflow: elide;
+                                    }
+                                    if episode.duration != "": Text {
+                                        text: episode.duration;
+                                        color: #90a4ae;
+                                        font_size: 11px;
+                                        vertical_alignment: center;
+                                    }
+                                }
+
+                                TouchArea {
+                                    clicked => {
+                                        root.episode_selected(episode.episode_id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ==========================================
+        // 2C. PLAYER PROBE VIEW
+        // ==========================================
+        player_focus := FocusScope {
+            visible: root.current_view == "player";
+            vertical_stretch: 1;
+            horizontal_stretch: 1;
+            focus-on-click: true;
+
+            KeyBinding {
+                keys: @keys(Space);
+                activated => {
+                    root.show_osd();
+                    root.toggle_pause_clicked();
+                }
+            }
+
+            video_container := Rectangle {
+                width: parent.width;
+                height: parent.height;
+                background: #000000;
+                border_radius: 6px;
+                clip: true;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 8px;
+
+                    Text {
+                        text: root.playback_status == "Idle" ? "【原生视频画面嵌入表面】" : "";
+                        color: #555555;
+                        font_size: 16px;
+                        horizontal_alignment: center;
+                    }
+                    Text {
+                        text: root.playback_status == "Idle" ? "Windows Win32 HWND + Direct3D 11 Swapchain" : "";
+                        color: #444444;
+                        font_size: 12px;
+                        horizontal_alignment: center;
+                    }
+                }
+
+                video_input := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    pointer-event(event) => {
+                        if event.kind == PointerEventKind.move || event.kind == PointerEventKind.down || event.kind == PointerEventKind.up {
+                            root.show_osd();
+                        }
+                    }
+                    clicked => {
+                        root.show_osd();
+                    }
+                }
+
+                osd_panel := Rectangle {
+                    x: 0px;
+                    y: parent.height - self.height;
+                    width: parent.width;
+                    height: 128px;
+                    background: #11161dcc;
+                    opacity: root.osd_visible ? 1.0 : 0.0;
+                    animate opacity { duration: 250ms; }
+
+                    osd_input := TouchArea {
+                        enabled: root.osd_visible;
+                        width: parent.width;
+                        height: parent.height;
+                        pointer-event(event) => {
+                            root.show_osd();
+                        }
+                    }
+
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 6px;
+
+                        HorizontalLayout {
+                            alignment: space_between;
+
+                            Text {
+                                text: "媒体: " + root.media_path;
+                                color: #cfd8dc;
+                                font_size: 12px;
+                                overflow: elide;
+                                horizontal_stretch: 1;
+                            }
+
+                            Text {
+                                text: root.status_message;
+                                color: #b0bec5;
+                                font_size: 12px;
+                                overflow: elide;
+                            }
+
+                            Text {
+                                text: root.playback_track_status;
+                                color: #ffcc80;
+                                font_size: 11px;
+                                overflow: elide;
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 12px;
+                            alignment: center;
+
+                            Slider {
+                                horizontal_stretch: 1;
+                                minimum: 0.0;
+                                maximum: root.duration_value > 0.0 ? root.duration_value : 100.0;
+                                value: root.progress_value;
+                                changed(val) => {
+                                    root.show_osd();
+                                    root.seek_preview(val);
+                                }
+                                released(val) => {
+                                    root.show_osd();
+                                    root.seek_absolute(val);
+                                }
+                            }
+
+                            Text {
+                                text: root.time_label;
+                                color: #ffffff;
+                                font_size: 13px;
+                                font_weight: 600;
+                                vertical_alignment: center;
+                                min_width: 100px;
+                                horizontal_alignment: right;
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: center;
+
+                            Button {
+                                text: "载入样本视频 (assets/test_video.mp4)";
+                                primary: true;
+                                clicked => {
+                                    root.show_osd();
+                                    root.load_sample_clicked();
+                                }
+                            }
+
+                            Button {
+                                text: root.is_playing ? "暂停 (Pause)" : "播放 (Play)";
+                                clicked => {
+                                    root.show_osd();
+                                    root.toggle_pause_clicked();
+                                }
+                            }
+
+                            Button {
+                                text: "停止 (Stop)";
+                                clicked => {
+                                    root.show_osd();
+                                    root.stop_clicked();
+                                }
+                            }
+
+                            Button {
+                                text: "返回详情";
+                                clicked => {
+                                    root.show_osd();
+                                    root.return_to_detail_clicked();
+                                }
+                            }
+
+                            Button {
+                                text: "快退 -5s";
+                                clicked => {
+                                    root.show_osd();
+                                    root.seek_relative(-5.0);
+                                }
+                            }
+
+                            Button {
+                                text: "快进 +5s";
+                                clicked => {
+                                    root.show_osd();
+                                    root.seek_relative(5.0);
+                                }
+                            }
+
+                            Button {
+                                text: root.full-screen ? "退出全屏" : "全屏";
+                                clicked => {
+                                    root.show_osd();
+                                    root.fullscreen_clicked();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    apple_workspace := AppleWorkspace {
+        visible: root.is_logged_in && root.current_view != "player";
+        sidebar_visible: root.apple_sidebar_visible;
+        reduced_transparency: root.reduced_transparency;
+        native_backdrop_enabled: root.native_backdrop_enabled
+            && root.is_logged_in
+            && root.current_view != "player";
+        material_evidence: root.material_evidence;
+        current_view: root.current_view;
+        classifications: root.classifications;
+        collections: root.collections;
+        continue_watching_items: root.continue_watching_items;
+        continue_watching_loading: root.continue_watching_loading;
+        continue_watching_error: root.continue_watching_error;
+        selected_classification_id: root.selected_classification_id;
+        selected_classification_name: root.selected_classification_name;
+        collection_count: root.collection_count;
+        library_total_count: root.library_total_count;
+        library_page: root.library_page;
+        library_total_pages: root.library_total_pages;
+        library_page_size: root.library_page_size;
+        library_loading: root.library_loading;
+        library_error: root.library_error;
+        requires_relogin: root.requires_relogin;
+        search_active: root.search_active;
+        search_loading: root.search_loading;
+        search_error: root.search_error;
+        search_scope: root.search_scope;
+        media_type_filter: root.media_type_filter;
+        sort_order: root.sort_order;
+        restore_scroll_offset: root.library_restore_scroll_offset;
+        restore_focus_collection_id: root.library_focus_collection_id;
+        session_nas_name: root.session_nas_name;
+        session_base_url: root.session_base_url;
+        session_user: root.session_user;
+        detail_title: root.detail_title;
+        detail_release_year: root.detail_release_year;
+        detail_video_type: root.detail_video_type;
+        detail_score: root.detail_score;
+        detail_storyline: root.detail_storyline;
+        detail_cover_image: root.detail_cover_image;
+        detail_has_cover: root.detail_has_cover;
+        detail_is_movie: root.detail_is_movie;
+        detail_seasons: root.detail_seasons;
+        selected_episode_id: root.selected_episode_id;
+        detail_loading: root.detail_loading;
+        detail_error: root.detail_error;
+        playback_loading: root.playback_loading;
+        playback_error: root.playback_error;
+        search_input: root.apple_search_input;
+
+        sidebar-toggled => {
+            root.apple_sidebar_visible = !root.apple_sidebar_visible;
+        }
+        search-changed(query) => {
+            root.apple_search_input = query;
+            root.search_changed(query);
+        }
+        search-submitted(query) => {
+            root.apple_search_input = query;
+            root.search_submitted(query);
+        }
+        retry-search => { root.retry_search(); }
+        filter-changed(value) => {
+            root.media_type_filter = value;
+            root.filter_changed(value);
+        }
+        sort-changed(value) => {
+            root.sort_order = value;
+            root.sort_changed(value);
+        }
+        clear-query => {
+            root.apple_search_input = "";
+            root.media_type_filter = "all";
+            root.sort_order = "default";
+            root.clear_query();
+        }
+        select-classification(id) => { root.select_classification(id); }
+        refresh-library => { root.refresh_library_clicked(); }
+        library-page-changed(page) => { root.library_page_changed(page); }
+        relogin => { root.relogin_requested(); }
+        collection-clicked(id) => { root.collection_clicked(id); }
+        library-scrolled(scroll_offset, viewport_height, grid_top, card_width, columns) => {
+            root.library_scrolled(scroll_offset, viewport_height, grid_top, card_width, columns);
+        }
+        continue-watching-clicked(collection-id, episode-id) => {
+            root.continue_watching_clicked(collection-id, episode-id);
+        }
+        continue-watching-retry => { root.continue_watching_retry(); }
+        detail-back => { root.detail_back_clicked(); }
+        episode-selected(id) => { root.episode_selected(id); }
+        play-episode(id) => { root.play_episode_clicked(id); }
+    }
+}

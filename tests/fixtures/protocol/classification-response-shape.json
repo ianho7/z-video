@@ -1,0 +1,47 @@
+{
+  "fixture_version": 1,
+  "name": "classification-response-shape",
+  "evidence": [
+    {
+      "level": "static",
+      "source": "reference/nas-video-api.md",
+      "scope": "NAS 页面分类列表路径"
+    },
+    {
+      "level": "runtime",
+      "source": "reference/runtime-login-play-2026-10-16.md",
+      "scope": "登录会话中的分类列表 HTTP 200"
+    }
+  ],
+  "endpoints": [
+    { "method": "POST", "path": "/zvideo/classification/list", "purpose": "library-categories" }
+  ],
+  "variants": {
+    "success": {
+      "http_status_type": "integer",
+      "code_types": ["integer", "string"],
+      "data": {
+        "presence": "required",
+        "type": "array",
+        "item_fields": {
+          "id": { "types": ["string"], "value_omitted": true },
+          "name": { "types": ["string"], "value_omitted": true },
+          "is_system": { "types": ["integer"], "value_omitted": true },
+          "is_enable": { "types": ["integer"], "value_omitted": true },
+          "count": { "types": ["integer"], "value_omitted": true },
+          "collection_count": { "types": ["integer"], "value_omitted": true }
+        }
+      }
+    },
+    "business_error": {
+      "http_status_type": "integer",
+      "code_types": ["integer", "string"],
+      "data": { "presence": "absent_or_null", "type": "null_or_absent" }
+    }
+  },
+  "safety": {
+    "values_omitted": true,
+    "raw_payload_included": false,
+    "note": "shape only; category names and identifiers are not stored"
+  }
+}

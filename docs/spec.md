@@ -98,7 +98,7 @@ Windows 先交付；平台代码集中处理，macOS 后续单独构建和运行
 
 以 Windows 实际应用的“局域网登录 → 分类/片库 → Collection 详情/Episode → 播放 → NAS 进度保存 → 再次打开续播”为主要验收路径。只验证外部行为、持久化结果和独立协议契约，不冻结内部函数、组件树或调用次数。
 
-当前仓库仅有文档和参考资料，没有应用、测试框架、Cargo 配置或 CI。没有可复用测试先例；既有官方客户端运行证据仅作为协议线索，不作为替代实现通过证据。不预设尚未存在的构建命令或新增测试专用生产接口。
+当前仓库已有 Cargo/Slint 应用、`tests/` 下的契约与集成测试，以及用于原生窗口快照的 `poster_grid_preview` 入口；当前未配置 CI。既有官方客户端运行证据仅作为协议线索，不作为替代实现通过证据。真实 NAS、播放器和跨平台运行仍按上面的边界分别验收，不把本地编译或快照当成这些能力的替代证明。
 
 ### 风险与主要证明
 
@@ -137,3 +137,22 @@ Windows 先交付；平台代码集中处理，macOS 后续单独构建和运行
 官方 Windows 客户端曾通过本地代理进入极影视、启动 UZPlayer/VLC 并上报递增播放秒数；此事实不证明新客户端能脱离官方运行时工作，也不证明上报已持久化。原始日志可能含敏感字段，未迁入项目；逆向报告和 catalog 是特定版本的证据，不作为跨固件通用规范。
 
 本 spec 汇总已有 ADR、架构、扩展契约和交接资料。后续改变已确认范围时同步维护相关文档；实现细节可由开发者据证据决定，不借选型扩充首版功能。
+
+## Ticket #9 Skia backdrop-blur candidate（2026-10-19）
+
+本候选把 Slint 与 `slint-build` 固定到已验证的 git rev `0ade85bfd0a88b6de2f87f767420975f98c141d0`，两者使用同一 rev；Rust 构建前提为 `rustc/cargo 1.99.1`。已核对 upstream PR #13821 的 merge commit 为 `e492aa7`，本候选使用的是其后仍包含该功能的 rev。
+
+Windows 构建显式使用 `backend-winit`、`renderer-skia`、`accessibility` 和兼容 feature，并由 `SLINT_BACKEND=winit-skia` 选择 Skia。非 Windows 保留同一 git compiler rev 和默认 renderer features，但本候选没有进行非 Windows 构建或运行验收，不能宣称跨平台 renderer 支持。仓库的稳定 Slint 依赖线不能解析当前 `backdrop-blur` 语法，因此不能作为本候选的编译基线。
+
+`backdrop-blur` 只允许出现在侧栏和工具栏；网格、卡片、详情和视频区域保持锐利。`Z_VIDEO_REDUCED_TRANSPARENCY=1` 或 `Z_VIDEO_HIGH_CONTRAST=1` 时，侧栏和工具栏改用不透明 surface 并关闭 blur。Windows 1440x900 logical、125% scale 的两组同 fixture 截图、DPI 和命令记录在 `docs/design/evidence/ticket-09/README.md`；本证据不包含性能比例。
+
+回滚时应恢复候选 commit 前的 Cargo/Slint 配置并移除 `backdrop-blur` 语法；只把 git 依赖换回稳定版本会导致编译失败。macOS/Linux、非 Windows renderer、软件 Skia、真实视频帧、系统透明度探测及性能仍未验证。
+
+### Ticket #9 shell layout follow-up（2026-10-20）
+
+正式 shell 默认在侧栏/工具栏玻璃层下使用低对比 `ShellAtmosphere`，仅提供真实采样背景；
+七色 `MaterialEvidenceBackdrop` 仍是显式 fixture 开关，不进入产品默认状态。窗口和布局均按
+logical 尺寸计算：preferred `1040x720`、sidebar `220px`、toolbar `64px`、内容左右各
+`32px`；grid/detail 内宽为窗口宽减去 `220+64px`。`Z_VIDEO_REDUCED_TRANSPARENCY=1`
+或 `Z_VIDEO_HIGH_CONTRAST=1` 仍回退到不透明 shell。三种尺寸的 Windows geometry 证据见
+[filter-fix README](design/evidence/ticket-09-shell-layout-filter-fix/README.md)：[Skia 1040x720](design/evidence/ticket-09-shell-layout-filter-fix/skia-1040x720.png)、[Skia 1440x900](design/evidence/ticket-09-shell-layout-filter-fix/skia-1440x900.png)、[Skia 2560x1351](design/evidence/ticket-09-shell-layout-filter-fix/skia-2560x1351.png)、[opaque 1040x720](design/evidence/ticket-09-shell-layout-filter-fix/opaque-1040x720.png)、[opaque 1440x900](design/evidence/ticket-09-shell-layout-filter-fix/opaque-1440x900.png)、[opaque 2560x1351](design/evidence/ticket-09-shell-layout-filter-fix/opaque-2560x1351.png)；它不扩展 blur 到网格、卡片、详情或视频。

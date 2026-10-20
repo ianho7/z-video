@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="z-video 片库体验原型：模拟数据，不连接真实 NAS。" />
+    <title>z-video · 片库原型</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="window-shell" id="windowShell">
+      <header class="window-chrome" aria-label="窗口标题栏">
+        <div class="window-caption">
+          <span class="brand-mark" aria-hidden="true">z</span>
+          <span>z-video · 影视库</span>
+          <span class="chrome-badge">原型</span>
+        </div>
+        <div class="window-controls" aria-label="窗口控制">
+          <button class="window-control" type="button" aria-label="最小化" title="最小化">−</button>
+          <button class="window-control" type="button" aria-label="最大化" title="最大化">□</button>
+          <button class="window-control close-control" type="button" aria-label="关闭原型窗口" title="关闭">×</button>
+        </div>
+      </header>
+
+      <div class="app-shell">
+        <aside class="sidebar" aria-label="片库导航">
+          <div class="sidebar-head">
+            <div>
+              <p class="eyebrow">局域网片库</p>
+              <h1>观看空间</h1>
+            </div>
+            <button class="icon-button" type="button" data-action="open-login" aria-label="打开连接状态" title="连接状态">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v7m0 4v7M5.6 6.4 10 10.8m4 4 4.4 4.4M3 12h7m4 0h7M5.6 17.6 10 13.2m4-4 4.4-4.4" /></svg>
+            </button>
+          </div>
+
+          <nav class="nav-group" aria-label="片库分类">
+            <p class="nav-label">片库</p>
+            <div id="categoryNav"></div>
+          </nav>
+
+          <nav class="nav-group nav-secondary" aria-label="其他入口">
+            <p class="nav-label">浏览</p>
+            <button class="nav-item" type="button" data-action="open-actor-index">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3" /><circle cx="17" cy="9" r="2.5" /><path d="M3.5 19c.5-3 2.3-5 5.5-5s5 2 5.5 5M14 14.5c2.5-.5 5 .9 5.8 3.6" /></svg></span>
+              <span>演员</span>
+            </button>
+            <button class="nav-item" type="button" data-action="open-login">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13 4H5v16h8M14 8l4 4-4 4M10 12h8" /></svg></span>
+              <span>连接状态</span>
+            </button>
+          </nav>
+
+          <div class="sidebar-foot">
+            <div class="connection-summary" role="status" aria-live="polite">
+              <span class="status-dot" aria-hidden="true"></span>
+              <div>
+                <strong>局域网已连接</strong>
+                <span>模拟会话 · 未发送请求</span>
+              </div>
+            </div>
+            <button class="text-button" type="button" data-action="show-about">原型说明</button>
+          </div>
+        </aside>
+
+        <div class="content-layout" id="workspace">
+          <main class="app-main" id="appMain" tabindex="-1">
+            <header class="app-toolbar">
+              <div class="toolbar-title" id="toolbarTitle">
+                <span class="toolbar-kicker">片库</span>
+                <span class="toolbar-current">全部影片</span>
+              </div>
+              <div class="toolbar-actions">
+                <div class="search-box" role="search">
+                  <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.4" /><path d="m16 16 4.3 4.3" /></svg>
+                  <label class="sr-only" for="searchInput">搜索片名或演员</label>
+                  <input id="searchInput" type="search" autocomplete="off" placeholder="搜索片名或演员" />
+                  <button class="search-mode" type="button" data-action="toggle-search-mode" aria-pressed="false" title="切换演员搜索">片名</button>
+                  <kbd>Ctrl K</kbd>
+                </div>
+                <button class="toolbar-button" type="button" data-action="toggle-demo-menu" aria-expanded="false">
+                  <span class="status-dot muted" aria-hidden="true"></span>原型状态
+                </button>
+                <button class="toolbar-button" type="button" data-action="open-login">连接</button>
+                <div class="demo-menu" id="demoMenu" hidden>
+                  <p class="menu-heading">状态演示</p>
+                  <button type="button" data-demo="normal">正常片库</button>
+                  <button type="button" data-demo="loading">加载中</button>
+                  <button type="button" data-demo="empty">空片库</button>
+                  <button type="button" data-demo="error">请求失败</button>
+                  <button type="button" data-demo="image-failure">封面失败样本</button>
+                </div>
+              </div>
+            </header>
+
+            <div class="main-scroll" id="mainContent"></div>
+          </main>
+
+          <aside class="detail-panel" id="detailPanel" aria-label="影片详情" aria-hidden="true" hidden></aside>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+    <svg class="icon-sprite" aria-hidden="true" focusable="false">
+      <symbol id="icon-arrow-left" viewBox="0 0 24 24"><path d="M19 12H5m6-6-6 6 6 6" /></symbol>
+      <symbol id="icon-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6" /></symbol>
+      <symbol id="icon-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" /></symbol>
+      <symbol id="icon-play" viewBox="0 0 24 24"><path d="m9 6 9 6-9 6V6Z" /></symbol>
+      <symbol id="icon-pause" viewBox="0 0 24 24"><path d="M8 6v12M16 6v12" /></symbol>
+      <symbol id="icon-check" viewBox="0 0 24 24"><path d="m5 12 4.2 4.2L19 6.5" /></symbol>
+      <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0 1 4M20 5v6h-6" /></symbol>
+      <symbol id="icon-external" viewBox="0 0 24 24"><path d="M14 5h5v5M19 5l-8 8M19 13v5H6V6h5" /></symbol>
+    </svg>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>

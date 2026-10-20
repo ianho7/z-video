@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="z-video Apple 风格简约桌面端高保真交互原型，包含片库、搜索和详情状态。"
+    />
+    <title>z-video · 片库</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell" id="appShell">
+      <aside class="sidebar" id="sidebar" aria-label="片库导航">
+        <div class="sidebar-inner">
+          <div class="brand-lockup">
+            <span class="brand-mark" aria-hidden="true">
+              <span></span><span></span><span></span>
+            </span>
+            <div>
+              <strong>z-video</strong>
+              <span>局域网片库</span>
+            </div>
+          </div>
+
+          <nav class="sidebar-nav" aria-label="主要片库入口">
+            <p class="nav-heading">片库</p>
+            <button class="nav-item" type="button" data-action="select-category" data-category="all">
+              <span class="nav-icon" aria-hidden="true" data-icon="grid"></span>
+              <span class="nav-label">全部影片</span>
+              <span class="nav-count">36</span>
+            </button>
+            <button class="nav-item" type="button" data-action="select-category" data-category="movie">
+              <span class="nav-icon" aria-hidden="true" data-icon="film"></span>
+              <span class="nav-label">电影</span>
+              <span class="nav-count">24</span>
+            </button>
+            <button class="nav-item" type="button" data-action="select-category" data-category="series">
+              <span class="nav-icon" aria-hidden="true" data-icon="tv"></span>
+              <span class="nav-label">剧集</span>
+              <span class="nav-count">12</span>
+            </button>
+
+            <p class="nav-heading nav-heading-secondary">浏览</p>
+            <button class="nav-item" type="button" data-action="select-category" data-category="recent">
+              <span class="nav-icon" aria-hidden="true" data-icon="clock"></span>
+              <span class="nav-label">最近添加</span>
+              <span class="nav-count">06</span>
+            </button>
+            <button class="nav-item" type="button" data-action="select-category" data-category="favorite">
+              <span class="nav-icon" aria-hidden="true" data-icon="heart"></span>
+              <span class="nav-label">我的收藏</span>
+              <span class="nav-count">04</span>
+            </button>
+            <button class="nav-item" type="button" data-action="select-category" data-category="resume">
+              <span class="nav-icon" aria-hidden="true" data-icon="play"></span>
+              <span class="nav-label">继续观看</span>
+              <span class="nav-count">02</span>
+            </button>
+          </nav>
+
+          <div class="sidebar-footer">
+            <div class="connection-status" role="status" aria-live="polite">
+              <span class="status-dot" aria-hidden="true"></span>
+              <span>局域网 · 已连接</span>
+            </div>
+            <p class="sidebar-note">原型数据 · 不连接 NAS</p>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main-panel" id="mainPanel" tabindex="-1">
+        <header class="toolbar" aria-label="片库工具栏">
+          <div class="toolbar-leading">
+            <button
+              class="icon-button sidebar-toggle"
+              type="button"
+              data-action="toggle-sidebar"
+              aria-label="隐藏侧边栏"
+              aria-controls="sidebar"
+              aria-pressed="false"
+              title="隐藏侧边栏"
+            >
+              <span aria-hidden="true" data-icon="sidebar"></span>
+            </button>
+            <div class="toolbar-heading">
+              <span class="toolbar-context" id="toolbarContext">片库</span>
+              <h1 id="toolbarTitle">全部影片</h1>
+            </div>
+          </div>
+
+          <div class="toolbar-trailing">
+            <form class="search-form" id="searchForm" role="search">
+              <label class="sr-only" for="searchInput">搜索片名、演员或类型</label>
+              <span class="search-icon" aria-hidden="true" data-icon="search"></span>
+              <input
+                id="searchInput"
+                type="search"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="搜索片名、演员或类型"
+              />
+              <kbd class="key-hint" aria-label="快捷键 Control 或 Command 加 K">Ctrl K</kbd>
+              <button class="search-clear" id="clearSearch" type="button" data-action="clear-search" hidden aria-label="清空搜索">
+                <span aria-hidden="true" data-icon="close"></span>
+              </button>
+            </form>
+            <button
+              class="toolbar-button"
+              type="button"
+              data-action="toggle-filters"
+              aria-expanded="false"
+              aria-controls="filterBar"
+            >
+              筛选
+            </button>
+          </div>
+        </header>
+
+        <div class="content-scroll" id="contentScroll" tabindex="-1">
+          <div class="content" id="content" aria-live="polite"></div>
+        </div>
+      </main>
+    </div>
+
+    <p class="sr-only" id="liveRegion" role="status" aria-live="polite"></p>
+    <noscript>
+      <p class="noscript-message">此原型需要启用 JavaScript 才能切换片库、搜索和详情状态。</p>
+    </noscript>
+    <script src="app.js" defer></script>
+  </body>
+</html>

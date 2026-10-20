@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>片库桌面客户端 · 低保真线框</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="prototype-toolbar">
+      <div>
+        <p class="eyebrow">LOW-FI / STRUCTURE CHECK</p>
+        <h1>片库桌面客户端线框</h1>
+        <p class="toolbar-note">桌面窗口基准 1440 × 900 · 仅验证结构、信息层级和状态路径</p>
+      </div>
+      <nav class="state-switcher" aria-label="切换线框状态">
+        <span class="switcher-label">预览状态</span>
+        <button type="button" data-state-target="default" aria-pressed="true">默认片库</button>
+        <button type="button" data-state-target="detail" aria-pressed="false">选中详情</button>
+        <button type="button" data-state-target="search" aria-pressed="false">搜索 / 筛选</button>
+      </nav>
+    </header>
+
+    <main>
+      <section class="app-window" data-app-window data-state="default" aria-label="影视客户端线框窗口">
+        <aside class="sidebar" aria-label="主导航">
+          <div class="sidebar-brand">
+            <span class="brand-mark" aria-hidden="true">□</span>
+            <span>影视客户端</span>
+          </div>
+
+          <nav class="primary-nav" aria-label="片库导航">
+            <p class="nav-caption">片库</p>
+            <button type="button" class="nav-item is-active" data-nav-item="library">
+              <span class="nav-icon" aria-hidden="true">▦</span>
+              <span>全部影片</span>
+            </button>
+            <button type="button" class="nav-item" data-nav-item="movies">
+              <span class="nav-icon" aria-hidden="true">□</span>
+              <span>电影</span>
+            </button>
+            <button type="button" class="nav-item" data-nav-item="series">
+              <span class="nav-icon" aria-hidden="true">▤</span>
+              <span>剧集</span>
+            </button>
+            <p class="nav-caption nav-caption-spaced">本机入口</p>
+            <button type="button" class="nav-item" data-nav-item="settings">
+              <span class="nav-icon" aria-hidden="true">⚙</span>
+              <span>设置</span>
+            </button>
+          </nav>
+
+          <div class="sidebar-footer">
+            <span class="connection-dot" aria-hidden="true"></span>
+            <span>LAN / NAS 已连接</span>
+          </div>
+        </aside>
+
+        <section class="app-main" aria-label="片库与详情内容">
+          <header class="app-toolbar">
+            <div class="toolbar-heading">
+              <span class="breadcrumb-muted">片库</span>
+              <span class="breadcrumb-separator" aria-hidden="true">/</span>
+              <strong data-state-visible="default search">全部影片</strong>
+              <strong data-state-visible="detail" hidden>详情</strong>
+            </div>
+
+            <form class="search-form" id="search-form" role="search">
+              <label class="visually-hidden" for="search-input">搜索片库</label>
+              <input id="search-input" type="search" placeholder="搜索标题 / 演职员" autocomplete="off" />
+              <button type="submit" class="text-button" aria-label="提交搜索">搜索</button>
+            </form>
+            <button type="button" class="text-button" data-state-visible="detail" data-close-detail hidden>返回片库</button>
+            <button type="button" class="text-button" data-action="refresh">刷新</button>
+          </header>
+
+          <section class="filter-bar" data-library-chrome aria-label="筛选和排序">
+            <span class="bar-label">筛选 / 排序</span>
+            <button type="button" class="filter-chip is-selected">全部类型 <span aria-hidden="true">⌄</span></button>
+            <button type="button" class="filter-chip">观看状态 <span aria-hidden="true">⌄</span></button>
+            <button type="button" class="filter-chip">上映年份 <span aria-hidden="true">⌄</span></button>
+            <button type="button" class="filter-chip">排序：最近添加 <span aria-hidden="true">⌄</span></button>
+            <button type="button" class="filter-reset" data-clear-search>清空条件</button>
+          </section>
+
+          <section class="library-content" data-library-view>
+            <div class="content-header">
+              <div data-state-visible="default detail">
+                <p class="section-kicker">当前分类</p>
+                <h2>全部影片 <span class="count">248 部</span></h2>
+              </div>
+              <div data-state-visible="search" hidden>
+                <p class="section-kicker">搜索结果</p>
+                <h2>“<span data-query-label>星际</span>” <span class="count">12 项</span></h2>
+              </div>
+              <div class="content-header-actions">
+                <span class="selection-hint" data-state-visible="default" aria-live="polite">点击卡片查看详情</span>
+                <span class="selection-hint" data-state-visible="detail" aria-live="polite" hidden>详情页已进入 · 返回可恢复原位置</span>
+                <button type="button" class="text-button" data-state-visible="search" data-back-library hidden>返回片库</button>
+              </div>
+            </div>
+
+            <div class="search-status" data-state-visible="search" hidden aria-live="polite">
+              <span class="status-mark" aria-hidden="true">✓</span>
+              <span>已提交搜索 · 范围：片库 · 当前条件：全部类型 / 未观看</span>
+              <button type="button" class="inline-link" data-clear-search>清除搜索</button>
+            </div>
+
+            <div class="content-boundary">
+              <div class="boundary-heading">
+                <span class="boundary-label">主内容区边界</span>
+                <span class="boundary-rule" aria-hidden="true"></span>
+                <span class="boundary-size" data-state-visible="default search">约 1200px / 7 列</span>
+              </div>
+
+              <div class="poster-grid" aria-label="片库海报墙">
+                <button type="button" class="media-card" data-open-detail>
+                  <span class="poster-placeholder" aria-hidden="true">海报<br />01</span>
+                  <span class="card-title">影片标题 A</span>
+                  <span class="card-meta">2024 · 未观看</span>
+                  <span class="progress-track progress-empty" aria-label="观看进度 0%"><span></span></span>
+                </button>
+                <button type="button" class="media-card" data-open-detail>
+                  <span class="poster-placeholder" aria-hidden="true">海报<br />02</span>
+                  <span class="card-title">影片标题 B</span>
+                  <span class="card-meta">2023 · 已看 25%</span>
+                  <span class="progress-track progress-quarter" aria-label="观看进度 25%"><span></span></span>
+                </button>
+                <button type="button" class="media-card" data-open-detail>
+                  <span class="poster-placeholder" aria-hidden="true">海报<br />03</span>
+                  <span class="card-title">影片标题 C</span>
+                  <span class="card-meta">2022 · 未观看</span>
+                  <span class="progress-track progress-empty" aria-label="观看进度 0%"><span></span></span>
+                </button>
+                <button type="button" class="media-card" data-open-detail>
+                  <span class="poster-placeholder" aria-hidden="true">海报<br />04</span>
+                  <span class="card-title">影片标题 D</span>
+                  <span class="card-meta">2021 · 已看 70%</span>
+                  <span class="progress-track progress-most" aria-label="观看进度 70%"><span></span></span>
+                </button>
+                <button type="button" class="media-card" data-open-detail>
+                  <span class="poster-placeholder" aria-hidden="true">海报<br />05</span>
+                  <span class="card-title">影片标题 E</span>
+                  <span class="card-meta">2020 · 未观看</span>
+                  <span class="progress-track progress-empty" aria-label="观看进度 0%"><span></span></span>
+                </button>
+                <button type="button" class="media-card" data-open-detail>
+                  <span class="poster-placeholder" aria-hidden="true">海报<br />06</span>
+                  <span class="card-title">影片标题 F</span>
+                  <span class="card-meta">2019 · 已看 10%</span>
+                  <span class="progress-track progress-small" aria-label="观看进度 10%"><span></span></span>
+                </button>
+                <button type="button" class="media-card" data-open-detail>
+                  <span class="poster-placeholder" aria-hidden="true">海报<br />07</span>
+                  <span class="card-title">影片标题 G</span>
+                  <span class="card-meta">2018 · 未观看</span>
+                  <span class="progress-track progress-empty" aria-label="观看进度 0%"><span></span></span>
+                </button>
+                <button type="button" class="media-card" data-open-detail>
+                  <span class="poster-placeholder" aria-hidden="true">海报<br />08</span>
+                  <span class="card-title">影片标题 H</span>
+                  <span class="card-meta">2017 · 已看 40%</span>
+                  <span class="progress-track progress-half" aria-label="观看进度 40%"><span></span></span>
+                </button>
+                <button type="button" class="media-card" data-open-detail>
+                  <span class="poster-placeholder" aria-hidden="true">海报<br />09</span>
+                  <span class="card-title">影片标题 I</span>
+                  <span class="card-meta">2016 · 未观看</span>
+                  <span class="progress-track progress-empty" aria-label="观看进度 0%"><span></span></span>
+                </button>
+                <button type="button" class="media-card" data-open-detail>
+                  <span class="poster-placeholder" aria-hidden="true">海报<br />10</span>
+                  <span class="card-title">影片标题 J</span>
+                  <span class="card-meta">2015 · 已看 85%</span>
+                  <span class="progress-track progress-most" aria-label="观看进度 85%"><span></span></span>
+                </button>
+                <button type="button" class="media-card" data-open-detail>
+                  <span class="poster-placeholder" aria-hidden="true">海报<br />11</span>
+                  <span class="card-title">影片标题 K</span>
+                  <span class="card-meta">2014 · 未观看</span>
+                  <span class="progress-track progress-empty" aria-label="观看进度 0%"><span></span></span>
+                </button>
+                <button type="button" class="media-card" data-open-detail>
+                  <span class="poster-placeholder" aria-hidden="true">海报<br />12</span>
+                  <span class="card-title">影片标题 L</span>
+                  <span class="card-meta">2013 · 已看 55%</span>
+                  <span class="progress-track progress-half" aria-label="观看进度 55%"><span></span></span>
+                </button>
+                <button type="button" class="media-card" data-open-detail>
+                  <span class="poster-placeholder" aria-hidden="true">海报<br />13</span>
+                  <span class="card-title">影片标题 M</span>
+                  <span class="card-meta">2012 · 未观看</span>
+                  <span class="progress-track progress-empty" aria-label="观看进度 0%"><span></span></span>
+                </button>
+                <button type="button" class="media-card" data-open-detail>
+                  <span class="poster-placeholder" aria-hidden="true">海报<br />14</span>
+                  <span class="card-title">影片标题 N</span>
+                  <span class="card-meta">2011 · 已看 15%</span>
+                  <span class="progress-track progress-small" aria-label="观看进度 15%"><span></span></span>
+                </button>
+              </div>
+
+              <div class="content-footer">
+                <span>第 1 页 / 共 25 页</span>
+                <div class="pagination" aria-label="分页">
+                  <button type="button" disabled aria-label="上一页">‹</button>
+                  <button type="button" class="is-current" aria-current="page">1</button>
+                  <button type="button">2</button>
+                  <button type="button">3</button>
+                  <button type="button" aria-label="下一页">›</button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <section class="detail-page" data-detail-page aria-labelledby="detail-page-title" hidden>
+          <div class="detail-page-toolbar">
+            <button type="button" class="back-link" data-close-detail>← 返回片库</button>
+            <span class="detail-return-context" data-detail-return-context>返回片库将恢复：当前筛选 · 网格位置 0px</span>
+            <span class="detail-key-hint">ESC 返回</span>
+          </div>
+
+          <div class="detail-page-content">
+            <div class="detail-visual-column">
+              <div class="detail-poster" aria-label="详情海报占位">详情海报<br />320 × 480</div>
+              <p class="detail-visual-note">海报占位 · 详情主视觉</p>
+            </div>
+
+            <div class="detail-main-content">
+              <p class="section-kicker">详情页</p>
+              <h2 id="detail-page-title" data-detail-title>影片标题 E</h2>
+              <p class="detail-meta" data-detail-meta>2024 · 电影 · 未观看</p>
+
+              <div class="detail-actions">
+                <button type="button" class="primary-action">播放</button>
+                <button type="button" class="secondary-action">继续播放</button>
+              </div>
+
+              <section class="detail-priority" aria-label="详情信息优先级">
+                <div class="priority-row"><span class="priority-number">1</span><strong>标题 / 年份 / 类型</strong><span class="priority-note">先判断是不是要看</span></div>
+                <div class="priority-row"><span class="priority-number">2</span><strong>播放 / 继续播放</strong><span class="priority-note">主要动作</span></div>
+                <div class="priority-row"><span class="priority-number">3</span><strong>选集和观看进度</strong><span class="priority-note">剧集需要</span></div>
+                <div class="priority-row"><span class="priority-number">4</span><strong>简介 / 演员 / 导演</strong><span class="priority-note">补充信息</span></div>
+              </section>
+
+              <section class="episode-section">
+                <div class="subsection-heading">
+                  <h3>选集</h3>
+                  <span>12 集</span>
+                </div>
+                <div class="episode-list" role="list" aria-label="剧集列表">
+                  <button type="button" class="episode-item is-current" role="listitem"><span>01</span><span>第 1 集 · 片名占位</span><span>已看 40%</span></button>
+                  <button type="button" class="episode-item" role="listitem"><span>02</span><span>第 2 集 · 片名占位</span><span>未观看</span></button>
+                  <button type="button" class="episode-item" role="listitem"><span>03</span><span>第 3 集 · 片名占位</span><span>未观看</span></button>
+                </div>
+              </section>
+
+              <section class="detail-copy">
+                <h3>简介</h3>
+                <p>这里放 NAS 已有简介。缺失字段时收起，不用占位文案伪造数据。</p>
+              </section>
+
+              <section class="detail-copy">
+                <h3>演员 / 导演</h3>
+                <p>演员名占位 · 导演名占位 · 仅在返回字段存在时展示。</p>
+              </section>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <section class="state-notes" aria-labelledby="state-notes-title">
+        <div class="notes-heading">
+          <p class="section-kicker">页面 / 状态关系</p>
+          <h2 id="state-notes-title">三条结构路径</h2>
+        </div>
+        <div class="state-note-grid">
+          <article class="state-note-card">
+            <span class="state-note-index">A</span>
+            <h3>默认片库</h3>
+            <p>左侧导航 → 顶部搜索 → 筛选排序 → 7 列海报墙。主内容区边界清楚，卡片直接可点。</p>
+          </article>
+          <article class="state-note-card">
+            <span class="state-note-index">B</span>
+            <h3>选中详情</h3>
+            <p>点击卡片进入同一窗口内的完整详情页；片库不与详情并排，ESC 或返回恢复搜索词、筛选和网格位置。</p>
+          </article>
+          <article class="state-note-card">
+            <span class="state-note-index">C</span>
+            <h3>搜索 / 筛选</h3>
+            <p>输入并提交 → 显示结果计数和条件 → 结果网格 → 清除搜索或返回片库。当前只验证读片库路径。</p>
+          </article>
+        </div>
+        <p class="scope-note">本线框只覆盖片库浏览、详情查看和搜索筛选；不扩展管理、删除、刮削、收藏写入或播放实现。</p>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>

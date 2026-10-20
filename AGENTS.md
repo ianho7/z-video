@@ -29,3 +29,26 @@
 当前只有文档，没有已配置的构建或测试命令；以未来真实的 Cargo/Slint 配置为准，不把计划命令写成已存在的能力。Win/mac 分别记录验证状态，单平台通过不能宣称跨端通过。
 
 用简明中文报告结果、证据、未解决项和下一步；新建目录及文件采用英文名称，根目录仅放入口文档和项目配置，详细说明放 `docs/`，逆向资料放 `reference/`。
+
+## 已确认故障模式与调查规则（2026-10-19）
+
+- UI 异步刷新必须先获取分类并确定有效的 `classification_id`，再请求影视列表；空 ID 不得静默转换为空列表。
+- “无错误但暂无内容”必须区分真实空片库、请求未发送、响应解析为空，以及鉴权或协议错误。
+- 登录成功后的会话恢复必须使用系统安全存储中的 `token` 和 `nas_id`，并保留可观测的恢复证据。
+- Windows/macOS 发布构建必须启用 `keyring` 对应的原生后端 feature（Windows `windows-native`、macOS `apple-native`）；未启用时会退回进程内 mock，重启后必然丢失登录凭据。
+- `nas_id` 是设备身份，`nas_sign` 是 `/key/pub` 返回的签名上下文；两者必须分开保存、恢复和传参，不能用一个字段代替另一个。
+- 启动恢复遇到 `401/403` 或明确的未认证响应时，必须清理失效凭据并回到登录页，不能反复使用坏 token 进入片库刷新。
+- 影视列表响应只有在确认 `data.list` 存在后才能映射为空列表；缺少该字段必须报告解析/协议异常，并记录服务返回的业务错误码。
+- 本地诊断日志默认写入 `%LOCALAPPDATA%\z-video\logs\diagnostics.jsonl`，至少覆盖 UI 操作、请求路径、HTTP 状态、解析结果、业务结果、耗时和错误码。
+- 在沙箱或复现环境中可设置 `Z_VIDEO_LOG_DIR` 覆盖日志目录；覆盖只用于诊断，不改变正式环境的默认路径。
+- 协议参数以官方 Windows app 的静态与运行时证据为准，Web 端参数不得直接套用；静态候选与运行时确认必须分开记录。
+- 任何接口参数、响应字段或协议解析变更，必须同步更新 `reference/protocol-ledger.md`、`tests/fixtures/protocol/` 和对应 owner 边界契约测试；完成前运行 `cargo test --test protocol_contract_test -- --test-threads=1`、`cargo check`、`python scripts/check_protocol_contracts.py` 与 `git diff --check`。这些检查只证明本地契约，不替代真实 NAS 验收。
+- 普通片库列表 `POST /zvideo/video/v2/list` 经真实 NAS 验证使用 `system=94`；`system=7` 在同一分类会返回 `count=0/list=[]`，只能作为兼容回退，不能作为默认参数。
+- 片库卡片的 `release_year`、评分等字段可能返回数字或字符串；模型解析必须兼容两种 JSON 类型，不能因 `integer 2026` 这类值丢弃整页。
+- `/auth/login` 返回成功不代表片库身份已经完整；登录后及恢复保存会话时，都要通过 `/zhelper/state` 补齐并保存 `nas_id`，再请求分类和列表。
+- `/key/pub` 返回的 `sign` 是签名上下文，不是 `nas_id`；请求和凭据持久化必须分别保留 `nas_sign` 与 `nas_id`。
+- 分类响应的片库总数可能在 `collection_count`，不能只读取 `count`；HTTP 200 也必须继续检查响应字段、列表长度和业务结果。
+- 新版 `POST /zvideo/collection/v2/info` 可能只返回详情和剧集、不带 `data.history`；详情缺少历史时，按官方客户端证据只读回退 `POST /zvideo/collection/info`（同样传 `collection_id`、`classification_id`、`get_type=all`），再把 `data.history` 合并到详情。回退失败不能把已成功的详情伪装成空片库，但必须留下可观测的请求和错误记录。
+- Windows 验证前要确认运行进程来自当前 `target\\debug\\z-video.exe`；旧进程会锁住可执行文件，也会让界面看起来像修复没有生效。
+- 所有诊断日志必须脱敏，不得保存密码、短信验证码、完整 token、原始播放地址或完整私密媒体路径。
+- 调查输出必须记录证据来源、覆盖范围、未知项和验证命令；未被证据确认的结论不得写成已实现事实。

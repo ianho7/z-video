@@ -1,0 +1,2034 @@
+{
+  "observed_at": "2026-10-18T19:07:08.146016+00:00",
+  "scope": "read-only; no playback, progress, favorites or credential writes",
+  "requests": [
+    {
+      "path": "/zvideo/classification/list",
+      "label": "/zvideo/classification/list",
+      "method": "POST",
+      "parameter_keys": [],
+      "http_status": 200,
+      "business_code": "200",
+      "business_success": true,
+      "response_shape": {
+        "type": "object",
+        "fields": {
+          "code": {
+            "type": "string"
+          },
+          "data": {
+            "type": "array",
+            "length": 2,
+            "sample_shapes": [
+              {
+                "type": "object",
+                "fields": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "is_system": {
+                    "type": "number"
+                  },
+                  "is_enable": {
+                    "type": "number"
+                  },
+                  "collection_count": {
+                    "type": "number"
+                  }
+                },
+                "other_field_count": 10
+              },
+              {
+                "type": "object",
+                "fields": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "is_system": {
+                    "type": "number"
+                  },
+                  "is_enable": {
+                    "type": "number"
+                  },
+                  "collection_count": {
+                    "type": "number"
+                  }
+                },
+                "other_field_count": 10
+              }
+            ]
+          }
+        },
+        "other_field_count": 2
+      },
+      "elapsed_ms": 125
+    },
+    {
+      "path": "/zvideo/video/v2/list",
+      "label": "sample_library",
+      "method": "POST",
+      "parameter_keys": [
+        "classification_id",
+        "limit",
+        "start",
+        "system"
+      ],
+      "http_status": 200,
+      "business_code": "200",
+      "business_success": true,
+      "response_shape": {
+        "type": "object",
+        "fields": {
+          "code": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "fields": {
+              "is_enable": {
+                "type": "number"
+              },
+              "count": {
+                "type": "number"
+              },
+              "classification_id": {
+                "type": "string"
+              },
+              "is_system": {
+                "type": "number"
+              },
+              "list": {
+                "type": "array",
+                "length": 5,
+                "sample_shapes": [
+                  {
+                    "type": "object",
+                    "fields": {
+                      "title": {
+                        "type": "string"
+                      },
+                      "classification_id": {
+                        "type": "string"
+                      },
+                      "is_system": {
+                        "type": "number"
+                      },
+                      "collection_id": {
+                        "type": "string"
+                      },
+                      "cover": {
+                        "type": "string"
+                      },
+                      "release_year": {
+                        "type": "number"
+                      },
+                      "score": {
+                        "type": "number"
+                      },
+                      "type": {
+                        "type": "number"
+                      },
+                      "extend_type": {
+                        "type": "number"
+                      },
+                      "video_id": {
+                        "type": "string"
+                      },
+                      "file_name": {
+                        "type": "string"
+                      },
+                      "file_path": {
+                        "type": "string"
+                      },
+                      "is_fav": {
+                        "type": "number"
+                      },
+                      "is_seen": {
+                        "type": "number"
+                      },
+                      "genres": {
+                        "type": "string"
+                      },
+                      "regions": {
+                        "type": "string"
+                      },
+                      "storyline": {
+                        "type": "string"
+                      }
+                    },
+                    "other_field_count": 11
+                  },
+                  {
+                    "type": "object",
+                    "fields": {
+                      "title": {
+                        "type": "string"
+                      },
+                      "classification_id": {
+                        "type": "string"
+                      },
+                      "is_system": {
+                        "type": "number"
+                      },
+                      "collection_id": {
+                        "type": "string"
+                      },
+                      "cover": {
+                        "type": "string"
+                      },
+                      "release_year": {
+                        "type": "number"
+                      },
+                      "score": {
+                        "type": "number"
+                      },
+                      "type": {
+                        "type": "number"
+                      },
+                      "extend_type": {
+                        "type": "number"
+                      },
+                      "video_id": {
+                        "type": "string"
+                      },
+                      "file_name": {
+                        "type": "string"
+                      },
+                      "file_path": {
+                        "type": "string"
+                      },
+                      "is_fav": {
+                        "type": "number"
+                      },
+                      "is_seen": {
+                        "type": "number"
+                      },
+                      "genres": {
+                        "type": "string"
+                      },
+                      "regions": {
+                        "type": "string"
+                      },
+                      "storyline": {
+                        "type": "string"
+                      }
+                    },
+                    "other_field_count": 11
+                  }
+                ]
+              }
+            },
+            "other_field_count": 6
+          }
+        },
+        "other_field_count": 2
+      },
+      "elapsed_ms": 150
+    },
+    {
+      "path": "/zvideo/video/v2/playlist",
+      "label": "/zvideo/video/v2/playlist",
+      "method": "POST",
+      "parameter_keys": [
+        "limit",
+        "start"
+      ],
+      "http_status": 200,
+      "business_code": "200",
+      "business_success": true,
+      "response_shape": {
+        "type": "object",
+        "fields": {
+          "code": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "fields": {
+              "count": {
+                "type": "number"
+              },
+              "list": {
+                "type": "array",
+                "length": 5,
+                "sample_shapes": [
+                  {
+                    "type": "object",
+                    "fields": {
+                      "title": {
+                        "type": "string"
+                      },
+                      "collection_id": {
+                        "type": "string"
+                      },
+                      "classification_id": {
+                        "type": "string"
+                      },
+                      "last_video_id": {
+                        "type": "string"
+                      },
+                      "play_chapter": {
+                        "type": "string"
+                      },
+                      "play_duration": {
+                        "type": "number"
+                      },
+                      "is_fav": {
+                        "type": "number"
+                      },
+                      "is_seen": {
+                        "type": "number"
+                      },
+                      "cover": {
+                        "type": "string"
+                      },
+                      "score": {
+                        "type": "number"
+                      },
+                      "type": {
+                        "type": "number"
+                      },
+                      "release_year": {
+                        "type": "number"
+                      },
+                      "extend_type": {
+                        "type": "number"
+                      },
+                      "regions": {
+                        "type": "string"
+                      },
+                      "genres": {
+                        "type": "string"
+                      }
+                    },
+                    "other_field_count": 7
+                  },
+                  {
+                    "type": "object",
+                    "fields": {
+                      "title": {
+                        "type": "string"
+                      },
+                      "collection_id": {
+                        "type": "string"
+                      },
+                      "classification_id": {
+                        "type": "string"
+                      },
+                      "last_video_id": {
+                        "type": "string"
+                      },
+                      "play_chapter": {
+                        "type": "string"
+                      },
+                      "play_duration": {
+                        "type": "number"
+                      },
+                      "is_fav": {
+                        "type": "number"
+                      },
+                      "is_seen": {
+                        "type": "number"
+                      },
+                      "cover": {
+                        "type": "string"
+                      },
+                      "score": {
+                        "type": "number"
+                      },
+                      "type": {
+                        "type": "number"
+                      },
+                      "release_year": {
+                        "type": "number"
+                      },
+                      "extend_type": {
+                        "type": "number"
+                      },
+                      "regions": {
+                        "type": "string"
+                      },
+                      "genres": {
+                        "type": "string"
+                      }
+                    },
+                    "other_field_count": 7
+                  }
+                ]
+              }
+            },
+            "other_field_count": 0
+          }
+        },
+        "other_field_count": 2
+      },
+      "elapsed_ms": 70
+    },
+    {
+      "path": "/zvideo/favorite/list",
+      "label": "/zvideo/favorite/list",
+      "method": "POST",
+      "parameter_keys": [
+        "limit",
+        "start"
+      ],
+      "http_status": 200,
+      "business_code": "200",
+      "business_success": true,
+      "response_shape": {
+        "type": "object",
+        "fields": {
+          "code": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "fields": {
+              "count": {
+                "type": "number"
+              },
+              "list": {
+                "type": "array",
+                "length": 1,
+                "sample_shapes": [
+                  {
+                    "type": "object",
+                    "fields": {
+                      "title": {
+                        "type": "string"
+                      },
+                      "classification_id": {
+                        "type": "string"
+                      },
+                      "is_system": {
+                        "type": "number"
+                      },
+                      "collection_id": {
+                        "type": "string"
+                      },
+                      "cover": {
+                        "type": "string"
+                      },
+                      "release_year": {
+                        "type": "number"
+                      },
+                      "score": {
+                        "type": "number"
+                      },
+                      "type": {
+                        "type": "number"
+                      },
+                      "extend_type": {
+                        "type": "number"
+                      },
+                      "video_id": {
+                        "type": "string"
+                      },
+                      "file_name": {
+                        "type": "string"
+                      },
+                      "file_path": {
+                        "type": "string"
+                      },
+                      "is_fav": {
+                        "type": "number"
+                      },
+                      "is_seen": {
+                        "type": "number"
+                      },
+                      "genres": {
+                        "type": "string"
+                      },
+                      "regions": {
+                        "type": "string"
+                      },
+                      "storyline": {
+                        "type": "string"
+                      }
+                    },
+                    "other_field_count": 11
+                  }
+                ]
+              }
+            },
+            "other_field_count": 0
+          }
+        },
+        "other_field_count": 2
+      },
+      "elapsed_ms": 37
+    },
+    {
+      "path": "/zvideo/video/v2/lately",
+      "label": "/zvideo/video/v2/lately",
+      "method": "POST",
+      "parameter_keys": [
+        "limit",
+        "start"
+      ],
+      "http_status": 200,
+      "business_code": "200",
+      "business_success": true,
+      "response_shape": {
+        "type": "object",
+        "fields": {
+          "code": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "fields": {
+              "add_task": {
+                "type": "number"
+              },
+              "count": {
+                "type": "number"
+              },
+              "list": {
+                "type": "array",
+                "length": 5,
+                "sample_shapes": [
+                  {
+                    "type": "object",
+                    "fields": {
+                      "title": {
+                        "type": "string"
+                      },
+                      "classification_id": {
+                        "type": "string"
+                      },
+                      "is_system": {
+                        "type": "number"
+                      },
+                      "collection_id": {
+                        "type": "string"
+                      },
+                      "cover": {
+                        "type": "string"
+                      },
+                      "release_year": {
+                        "type": "number"
+                      },
+                      "score": {
+                        "type": "number"
+                      },
+                      "type": {
+                        "type": "number"
+                      },
+                      "extend_type": {
+                        "type": "number"
+                      },
+                      "video_id": {
+                        "type": "string"
+                      },
+                      "file_name": {
+                        "type": "string"
+                      },
+                      "file_path": {
+                        "type": "string"
+                      },
+                      "is_fav": {
+                        "type": "number"
+                      },
+                      "is_seen": {
+                        "type": "number"
+                      },
+                      "genres": {
+                        "type": "string"
+                      },
+                      "regions": {
+                        "type": "string"
+                      },
+                      "storyline": {
+                        "type": "string"
+                      }
+                    },
+                    "other_field_count": 11
+                  },
+                  {
+                    "type": "object",
+                    "fields": {
+                      "title": {
+                        "type": "string"
+                      },
+                      "classification_id": {
+                        "type": "string"
+                      },
+                      "is_system": {
+                        "type": "number"
+                      },
+                      "collection_id": {
+                        "type": "string"
+                      },
+                      "cover": {
+                        "type": "string"
+                      },
+                      "release_year": {
+                        "type": "number"
+                      },
+                      "score": {
+                        "type": "number"
+                      },
+                      "type": {
+                        "type": "number"
+                      },
+                      "extend_type": {
+                        "type": "number"
+                      },
+                      "video_id": {
+                        "type": "string"
+                      },
+                      "file_name": {
+                        "type": "string"
+                      },
+                      "file_path": {
+                        "type": "string"
+                      },
+                      "is_fav": {
+                        "type": "number"
+                      },
+                      "is_seen": {
+                        "type": "number"
+                      },
+                      "genres": {
+                        "type": "string"
+                      },
+                      "regions": {
+                        "type": "string"
+                      },
+                      "storyline": {
+                        "type": "string"
+                      }
+                    },
+                    "other_field_count": 11
+                  }
+                ]
+              }
+            },
+            "other_field_count": 0
+          }
+        },
+        "other_field_count": 2
+      },
+      "elapsed_ms": 120
+    },
+    {
+      "path": "/zvideo/collection/filter/v2",
+      "label": "/zvideo/collection/filter/v2",
+      "method": "POST",
+      "parameter_keys": [],
+      "http_status": 200,
+      "business_code": "200",
+      "business_success": true,
+      "response_shape": {
+        "type": "object",
+        "fields": {
+          "code": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "fields": {
+              "collection_tag": {
+                "type": "array",
+                "length": 6,
+                "sample_shapes": [
+                  {
+                    "type": "object",
+                    "fields": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "list": {
+                        "type": "array",
+                        "length": 6,
+                        "sample_shapes": [
+                          {
+                            "type": "object",
+                            "field_count": 2
+                          },
+                          {
+                            "type": "object",
+                            "field_count": 2
+                          }
+                        ]
+                      }
+                    },
+                    "other_field_count": 1
+                  },
+                  {
+                    "type": "object",
+                    "fields": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "list": {
+                        "type": "array",
+                        "length": 6,
+                        "sample_shapes": [
+                          {
+                            "type": "object",
+                            "field_count": 2
+                          },
+                          {
+                            "type": "object",
+                            "field_count": 2
+                          }
+                        ]
+                      }
+                    },
+                    "other_field_count": 1
+                  }
+                ]
+              },
+              "collection_type": {
+                "type": "array",
+                "length": 1,
+                "sample_shapes": [
+                  {
+                    "type": "object",
+                    "fields": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "list": {
+                        "type": "array",
+                        "length": 3,
+                        "sample_shapes": [
+                          {
+                            "type": "object",
+                            "field_count": 2
+                          },
+                          {
+                            "type": "object",
+                            "field_count": 2
+                          }
+                        ]
+                      }
+                    },
+                    "other_field_count": 1
+                  }
+                ]
+              }
+            },
+            "other_field_count": 2
+          }
+        },
+        "other_field_count": 2
+      },
+      "elapsed_ms": 34
+    },
+    {
+      "path": "/zvideo/search/index",
+      "label": "search_existing_title",
+      "method": "POST",
+      "parameter_keys": [
+        "key_word"
+      ],
+      "http_status": 200,
+      "business_code": "200",
+      "business_success": true,
+      "response_shape": {
+        "type": "object",
+        "fields": {
+          "code": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "fields": {
+              "collection": {
+                "type": "array",
+                "length": 1,
+                "sample_shapes": [
+                  {
+                    "type": "object",
+                    "fields": {
+                      "title": {
+                        "type": "string"
+                      },
+                      "classification_id": {
+                        "type": "string"
+                      },
+                      "is_system": {
+                        "type": "number"
+                      },
+                      "collection_id": {
+                        "type": "string"
+                      },
+                      "cover": {
+                        "type": "string"
+                      },
+                      "release_year": {
+                        "type": "number"
+                      },
+                      "score": {
+                        "type": "number"
+                      },
+                      "type": {
+                        "type": "number"
+                      },
+                      "extend_type": {
+                        "type": "number"
+                      },
+                      "video_id": {
+                        "type": "string"
+                      },
+                      "file_name": {
+                        "type": "string"
+                      },
+                      "file_path": {
+                        "type": "string"
+                      },
+                      "is_fav": {
+                        "type": "number"
+                      },
+                      "is_seen": {
+                        "type": "number"
+                      },
+                      "genres": {
+                        "type": "string"
+                      },
+                      "regions": {
+                        "type": "string"
+                      },
+                      "storyline": {
+                        "type": "string"
+                      }
+                    },
+                    "other_field_count": 11
+                  }
+                ]
+              },
+              "person": {
+                "type": "array",
+                "length": 0,
+                "sample_shapes": []
+              },
+              "video": {
+                "type": "array",
+                "length": 0,
+                "sample_shapes": []
+              }
+            },
+            "other_field_count": 0
+          }
+        },
+        "other_field_count": 2
+      },
+      "elapsed_ms": 134
+    },
+    {
+      "path": "/zvideo/search/suggest",
+      "label": "/zvideo/search/suggest",
+      "method": "POST",
+      "parameter_keys": [
+        "key_word"
+      ],
+      "http_status": 200,
+      "business_code": "200",
+      "business_success": true,
+      "response_shape": {
+        "type": "object",
+        "fields": {
+          "code": {
+            "type": "string"
+          },
+          "data": {
+            "type": "array",
+            "length": 2,
+            "sample_shapes": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "other_field_count": 2
+      },
+      "elapsed_ms": 88
+    },
+    {
+      "path": "/zvideo/collection/v2/info",
+      "label": "/zvideo/collection/v2/info",
+      "method": "POST",
+      "parameter_keys": [
+        "classification_id",
+        "collection_id",
+        "get_type"
+      ],
+      "http_status": 200,
+      "business_code": "200",
+      "business_success": true,
+      "response_shape": {
+        "type": "object",
+        "fields": {
+          "code": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "fields": {
+              "title": {
+                "type": "string"
+              },
+              "cover": {
+                "type": "string"
+              },
+              "regions": {
+                "type": "string"
+              },
+              "genres": {
+                "type": "string"
+              },
+              "storyline": {
+                "type": "string"
+              },
+              "release_year": {
+                "type": "number"
+              },
+              "score": {
+                "type": "number"
+              },
+              "episode": {
+                "type": "number"
+              },
+              "type": {
+                "type": "number"
+              },
+              "is_fav": {
+                "type": "number"
+              },
+              "is_seen": {
+                "type": "number"
+              },
+              "extend_type": {
+                "type": "number"
+              },
+              "classification_id": {
+                "type": "string"
+              },
+              "collection_id": {
+                "type": "string"
+              },
+              "last_video_id": {
+                "type": "string"
+              },
+              "play_chapter": {
+                "type": "string"
+              },
+              "play_duration": {
+                "type": "number"
+              },
+              "audio_index": {
+                "type": "string"
+              },
+              "subtitle_index": {
+                "type": "string"
+              },
+              "subtitle_hash": {
+                "type": "string"
+              },
+              "subtitle_setting": {
+                "type": "string"
+              },
+              "list": {
+                "type": "array",
+                "length": 1,
+                "sample_shapes": [
+                  {
+                    "type": "object",
+                    "fields": {
+                      "version_list": {
+                        "type": "array",
+                        "length": 1,
+                        "sample_shapes": [
+                          {
+                            "type": "object",
+                            "field_count": 17
+                          }
+                        ]
+                      }
+                    },
+                    "other_field_count": 3
+                  }
+                ]
+              }
+            },
+            "other_field_count": 28
+          }
+        },
+        "other_field_count": 2
+      },
+      "elapsed_ms": 67
+    },
+    {
+      "path": "/zvideo/collection/person",
+      "label": "/zvideo/collection/person",
+      "method": "POST",
+      "parameter_keys": [
+        "collection_id"
+      ],
+      "http_status": 200,
+      "business_code": "200",
+      "business_success": true,
+      "response_shape": {
+        "type": "object",
+        "fields": {
+          "code": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "fields": {
+              "actor": {
+                "type": "array",
+                "length": 1,
+                "sample_shapes": [
+                  {
+                    "type": "object",
+                    "fields": {
+                      "person_id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "profile": {
+                        "type": "string"
+                      }
+                    },
+                    "other_field_count": 5
+                  }
+                ]
+              },
+              "director": {
+                "type": "array",
+                "length": 1,
+                "sample_shapes": [
+                  {
+                    "type": "object",
+                    "fields": {
+                      "person_id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "profile": {
+                        "type": "string"
+                      }
+                    },
+                    "other_field_count": 5
+                  }
+                ]
+              }
+            },
+            "other_field_count": 0
+          }
+        },
+        "other_field_count": 2
+      },
+      "elapsed_ms": 54
+    },
+    {
+      "path": "/zvideo/search/index",
+      "label": "search_existing_actor",
+      "method": "POST",
+      "parameter_keys": [
+        "key_word"
+      ],
+      "http_status": 200,
+      "business_code": "200",
+      "business_success": true,
+      "response_shape": {
+        "type": "object",
+        "fields": {
+          "code": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "fields": {
+              "collection": {
+                "type": "array",
+                "length": 5,
+                "sample_shapes": [
+                  {
+                    "type": "object",
+                    "fields": {
+                      "title": {
+                        "type": "string"
+                      },
+                      "classification_id": {
+                        "type": "string"
+                      },
+                      "is_system": {
+                        "type": "number"
+                      },
+                      "collection_id": {
+                        "type": "string"
+                      },
+                      "cover": {
+                        "type": "string"
+                      },
+                      "release_year": {
+                        "type": "number"
+                      },
+                      "score": {
+                        "type": "number"
+                      },
+                      "type": {
+                        "type": "number"
+                      },
+                      "extend_type": {
+                        "type": "number"
+                      },
+                      "video_id": {
+                        "type": "string"
+                      },
+                      "file_name": {
+                        "type": "string"
+                      },
+                      "file_path": {
+                        "type": "string"
+                      },
+                      "is_fav": {
+                        "type": "number"
+                      },
+                      "is_seen": {
+                        "type": "number"
+                      },
+                      "genres": {
+                        "type": "string"
+                      },
+                      "regions": {
+                        "type": "string"
+                      },
+                      "storyline": {
+                        "type": "string"
+                      }
+                    },
+                    "other_field_count": 11
+                  },
+                  {
+                    "type": "object",
+                    "fields": {
+                      "title": {
+                        "type": "string"
+                      },
+                      "classification_id": {
+                        "type": "string"
+                      },
+                      "is_system": {
+                        "type": "number"
+                      },
+                      "collection_id": {
+                        "type": "string"
+                      },
+                      "cover": {
+                        "type": "string"
+                      },
+                      "release_year": {
+                        "type": "number"
+                      },
+                      "score": {
+                        "type": "number"
+                      },
+                      "type": {
+                        "type": "number"
+                      },
+                      "extend_type": {
+                        "type": "number"
+                      },
+                      "video_id": {
+                        "type": "string"
+                      },
+                      "file_name": {
+                        "type": "string"
+                      },
+                      "file_path": {
+                        "type": "string"
+                      },
+                      "is_fav": {
+                        "type": "number"
+                      },
+                      "is_seen": {
+                        "type": "number"
+                      },
+                      "genres": {
+                        "type": "string"
+                      },
+                      "regions": {
+                        "type": "string"
+                      },
+                      "storyline": {
+                        "type": "string"
+                      }
+                    },
+                    "other_field_count": 11
+                  }
+                ]
+              },
+              "person": {
+                "type": "array",
+                "length": 1,
+                "sample_shapes": [
+                  {
+                    "type": "object",
+                    "fields": {
+                      "person_id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "profile": {
+                        "type": "string"
+                      }
+                    },
+                    "other_field_count": 4
+                  }
+                ]
+              },
+              "video": {
+                "type": "array",
+                "length": 0,
+                "sample_shapes": []
+              }
+            },
+            "other_field_count": 0
+          }
+        },
+        "other_field_count": 2
+      },
+      "elapsed_ms": 177
+    },
+    {
+      "path": "/zvideo/person/collection/list",
+      "label": "/zvideo/person/collection/list",
+      "method": "POST",
+      "parameter_keys": [
+        "collection_id",
+        "field",
+        "limit",
+        "person_id",
+        "person_name",
+        "sort",
+        "start",
+        "type"
+      ],
+      "http_status": 200,
+      "business_code": "200",
+      "business_success": true,
+      "response_shape": {
+        "type": "object",
+        "fields": {
+          "code": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "fields": {
+              "count": {
+                "type": "number"
+              },
+              "list": {
+                "type": "array",
+                "length": 5,
+                "sample_shapes": [
+                  {
+                    "type": "object",
+                    "fields": {
+                      "title": {
+                        "type": "string"
+                      },
+                      "classification_id": {
+                        "type": "string"
+                      },
+                      "is_system": {
+                        "type": "number"
+                      },
+                      "collection_id": {
+                        "type": "string"
+                      },
+                      "cover": {
+                        "type": "string"
+                      },
+                      "release_year": {
+                        "type": "number"
+                      },
+                      "score": {
+                        "type": "number"
+                      },
+                      "type": {
+                        "type": "number"
+                      },
+                      "extend_type": {
+                        "type": "number"
+                      },
+                      "video_id": {
+                        "type": "string"
+                      },
+                      "file_name": {
+                        "type": "string"
+                      },
+                      "file_path": {
+                        "type": "string"
+                      },
+                      "is_fav": {
+                        "type": "number"
+                      },
+                      "is_seen": {
+                        "type": "number"
+                      },
+                      "genres": {
+                        "type": "string"
+                      },
+                      "regions": {
+                        "type": "string"
+                      },
+                      "storyline": {
+                        "type": "string"
+                      }
+                    },
+                    "other_field_count": 11
+                  },
+                  {
+                    "type": "object",
+                    "fields": {
+                      "title": {
+                        "type": "string"
+                      },
+                      "classification_id": {
+                        "type": "string"
+                      },
+                      "is_system": {
+                        "type": "number"
+                      },
+                      "collection_id": {
+                        "type": "string"
+                      },
+                      "cover": {
+                        "type": "string"
+                      },
+                      "release_year": {
+                        "type": "number"
+                      },
+                      "score": {
+                        "type": "number"
+                      },
+                      "type": {
+                        "type": "number"
+                      },
+                      "extend_type": {
+                        "type": "number"
+                      },
+                      "video_id": {
+                        "type": "string"
+                      },
+                      "file_name": {
+                        "type": "string"
+                      },
+                      "file_path": {
+                        "type": "string"
+                      },
+                      "is_fav": {
+                        "type": "number"
+                      },
+                      "is_seen": {
+                        "type": "number"
+                      },
+                      "genres": {
+                        "type": "string"
+                      },
+                      "regions": {
+                        "type": "string"
+                      },
+                      "storyline": {
+                        "type": "string"
+                      }
+                    },
+                    "other_field_count": 11
+                  }
+                ]
+              }
+            },
+            "other_field_count": 0
+          }
+        },
+        "other_field_count": 2
+      },
+      "elapsed_ms": 93
+    },
+    {
+      "path": "/zvideo/collection/info",
+      "label": "history_read",
+      "method": "POST",
+      "parameter_keys": [
+        "classification_id",
+        "collection_id",
+        "get_type"
+      ],
+      "http_status": 200,
+      "business_code": "200",
+      "business_success": true,
+      "response_shape": {
+        "type": "object",
+        "fields": {
+          "code": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "fields": {
+              "classification_id": {
+                "type": "string"
+              },
+              "collection_id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "cover": {
+                "type": "string"
+              },
+              "regions": {
+                "type": "string"
+              },
+              "genres": {
+                "type": "string"
+              },
+              "storyline": {
+                "type": "string"
+              },
+              "release_year": {
+                "type": "number"
+              },
+              "score": {
+                "type": "number"
+              },
+              "episode": {
+                "type": "number"
+              },
+              "type": {
+                "type": "number"
+              },
+              "extend_type": {
+                "type": "number"
+              },
+              "is_fav": {
+                "type": "number"
+              },
+              "is_seen": {
+                "type": "number"
+              },
+              "history": {
+                "type": "object",
+                "fields": {
+                  "last_video_id": {
+                    "type": "string"
+                  },
+                  "play_chapter": {
+                    "type": "string"
+                  },
+                  "play_duration": {
+                    "type": "number"
+                  },
+                  "audio_index": {
+                    "type": "string"
+                  },
+                  "subtitle_index": {
+                    "type": "string"
+                  },
+                  "subtitle_hash": {
+                    "type": "string"
+                  },
+                  "subtitle_setting": {
+                    "type": "string"
+                  }
+                },
+                "other_field_count": 7
+              }
+            },
+            "other_field_count": 17
+          }
+        },
+        "other_field_count": 2
+      },
+      "elapsed_ms": 37
+    },
+    {
+      "path": "/zvideo/video/v2/playlist",
+      "label": "additional_history_samples",
+      "method": "POST",
+      "parameter_keys": [
+        "limit",
+        "start"
+      ],
+      "http_status": 200,
+      "business_code": "200",
+      "business_success": true,
+      "response_shape": {
+        "type": "object",
+        "fields": {
+          "code": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "fields": {
+              "count": {
+                "type": "number"
+              },
+              "list": {
+                "type": "array",
+                "length": 5,
+                "sample_shapes": [
+                  {
+                    "type": "object",
+                    "fields": {
+                      "title": {
+                        "type": "string"
+                      },
+                      "collection_id": {
+                        "type": "string"
+                      },
+                      "classification_id": {
+                        "type": "string"
+                      },
+                      "last_video_id": {
+                        "type": "string"
+                      },
+                      "play_chapter": {
+                        "type": "string"
+                      },
+                      "play_duration": {
+                        "type": "number"
+                      },
+                      "is_fav": {
+                        "type": "number"
+                      },
+                      "is_seen": {
+                        "type": "number"
+                      },
+                      "cover": {
+                        "type": "string"
+                      },
+                      "score": {
+                        "type": "number"
+                      },
+                      "type": {
+                        "type": "number"
+                      },
+                      "release_year": {
+                        "type": "number"
+                      },
+                      "extend_type": {
+                        "type": "number"
+                      },
+                      "regions": {
+                        "type": "string"
+                      },
+                      "genres": {
+                        "type": "string"
+                      }
+                    },
+                    "other_field_count": 7
+                  },
+                  {
+                    "type": "object",
+                    "fields": {
+                      "title": {
+                        "type": "string"
+                      },
+                      "collection_id": {
+                        "type": "string"
+                      },
+                      "classification_id": {
+                        "type": "string"
+                      },
+                      "last_video_id": {
+                        "type": "string"
+                      },
+                      "play_chapter": {
+                        "type": "string"
+                      },
+                      "play_duration": {
+                        "type": "number"
+                      },
+                      "is_fav": {
+                        "type": "number"
+                      },
+                      "is_seen": {
+                        "type": "number"
+                      },
+                      "cover": {
+                        "type": "string"
+                      },
+                      "score": {
+                        "type": "number"
+                      },
+                      "type": {
+                        "type": "number"
+                      },
+                      "release_year": {
+                        "type": "number"
+                      },
+                      "extend_type": {
+                        "type": "number"
+                      },
+                      "regions": {
+                        "type": "string"
+                      },
+                      "genres": {
+                        "type": "string"
+                      }
+                    },
+                    "other_field_count": 7
+                  }
+                ]
+              }
+            },
+            "other_field_count": 0
+          }
+        },
+        "other_field_count": 2
+      },
+      "elapsed_ms": 60
+    },
+    {
+      "path": "/zvideo/collection/info",
+      "label": "additional_history_read",
+      "method": "POST",
+      "parameter_keys": [
+        "classification_id",
+        "collection_id",
+        "get_type"
+      ],
+      "http_status": 200,
+      "business_code": "200",
+      "business_success": true,
+      "response_shape": {
+        "type": "object",
+        "fields": {
+          "code": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "fields": {
+              "classification_id": {
+                "type": "string"
+              },
+              "collection_id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "cover": {
+                "type": "string"
+              },
+              "regions": {
+                "type": "string"
+              },
+              "genres": {
+                "type": "string"
+              },
+              "storyline": {
+                "type": "string"
+              },
+              "release_year": {
+                "type": "number"
+              },
+              "score": {
+                "type": "number"
+              },
+              "episode": {
+                "type": "number"
+              },
+              "type": {
+                "type": "number"
+              },
+              "extend_type": {
+                "type": "number"
+              },
+              "is_fav": {
+                "type": "number"
+              },
+              "is_seen": {
+                "type": "number"
+              },
+              "history": {
+                "type": "object",
+                "fields": {
+                  "last_video_id": {
+                    "type": "string"
+                  },
+                  "play_chapter": {
+                    "type": "string"
+                  },
+                  "play_duration": {
+                    "type": "number"
+                  },
+                  "audio_index": {
+                    "type": "string"
+                  },
+                  "subtitle_index": {
+                    "type": "string"
+                  },
+                  "subtitle_hash": {
+                    "type": "string"
+                  },
+                  "subtitle_setting": {
+                    "type": "string"
+                  }
+                },
+                "other_field_count": 7
+              }
+            },
+            "other_field_count": 17
+          }
+        },
+        "other_field_count": 2
+      },
+      "elapsed_ms": 55
+    },
+    {
+      "path": "/zvideo/collection/info",
+      "label": "additional_history_read",
+      "method": "POST",
+      "parameter_keys": [
+        "classification_id",
+        "collection_id",
+        "get_type"
+      ],
+      "http_status": 200,
+      "business_code": "200",
+      "business_success": true,
+      "response_shape": {
+        "type": "object",
+        "fields": {
+          "code": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "fields": {
+              "classification_id": {
+                "type": "string"
+              },
+              "collection_id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "cover": {
+                "type": "string"
+              },
+              "regions": {
+                "type": "string"
+              },
+              "genres": {
+                "type": "string"
+              },
+              "storyline": {
+                "type": "string"
+              },
+              "release_year": {
+                "type": "number"
+              },
+              "score": {
+                "type": "number"
+              },
+              "episode": {
+                "type": "number"
+              },
+              "type": {
+                "type": "number"
+              },
+              "extend_type": {
+                "type": "number"
+              },
+              "is_fav": {
+                "type": "number"
+              },
+              "is_seen": {
+                "type": "number"
+              },
+              "history": {
+                "type": "object",
+                "fields": {
+                  "last_video_id": {
+                    "type": "string"
+                  },
+                  "play_chapter": {
+                    "type": "string"
+                  },
+                  "play_duration": {
+                    "type": "number"
+                  },
+                  "audio_index": {
+                    "type": "string"
+                  },
+                  "subtitle_index": {
+                    "type": "string"
+                  },
+                  "subtitle_hash": {
+                    "type": "string"
+                  },
+                  "subtitle_setting": {
+                    "type": "string"
+                  }
+                },
+                "other_field_count": 7
+              }
+            },
+            "other_field_count": 17
+          }
+        },
+        "other_field_count": 2
+      },
+      "elapsed_ms": 49
+    },
+    {
+      "path": "/zvideo/collection/info",
+      "label": "additional_history_read",
+      "method": "POST",
+      "parameter_keys": [
+        "classification_id",
+        "collection_id",
+        "get_type"
+      ],
+      "http_status": 200,
+      "business_code": "200",
+      "business_success": true,
+      "response_shape": {
+        "type": "object",
+        "fields": {
+          "code": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "fields": {
+              "classification_id": {
+                "type": "string"
+              },
+              "collection_id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "cover": {
+                "type": "string"
+              },
+              "regions": {
+                "type": "string"
+              },
+              "genres": {
+                "type": "string"
+              },
+              "storyline": {
+                "type": "string"
+              },
+              "release_year": {
+                "type": "number"
+              },
+              "score": {
+                "type": "number"
+              },
+              "episode": {
+                "type": "number"
+              },
+              "type": {
+                "type": "number"
+              },
+              "extend_type": {
+                "type": "number"
+              },
+              "is_fav": {
+                "type": "number"
+              },
+              "is_seen": {
+                "type": "number"
+              },
+              "history": {
+                "type": "object",
+                "fields": {
+                  "last_video_id": {
+                    "type": "string"
+                  },
+                  "play_chapter": {
+                    "type": "string"
+                  },
+                  "play_duration": {
+                    "type": "number"
+                  },
+                  "audio_index": {
+                    "type": "string"
+                  },
+                  "subtitle_index": {
+                    "type": "string"
+                  },
+                  "subtitle_hash": {
+                    "type": "string"
+                  },
+                  "subtitle_setting": {
+                    "type": "string"
+                  }
+                },
+                "other_field_count": 7
+              }
+            },
+            "other_field_count": 17
+          }
+        },
+        "other_field_count": 2
+      },
+      "elapsed_ms": 50
+    },
+    {
+      "path": "/zvideo/collection/info",
+      "label": "additional_history_read",
+      "method": "POST",
+      "parameter_keys": [
+        "classification_id",
+        "collection_id",
+        "get_type"
+      ],
+      "http_status": 200,
+      "business_code": "200",
+      "business_success": true,
+      "response_shape": {
+        "type": "object",
+        "fields": {
+          "code": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "fields": {
+              "classification_id": {
+                "type": "string"
+              },
+              "collection_id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "cover": {
+                "type": "string"
+              },
+              "regions": {
+                "type": "string"
+              },
+              "genres": {
+                "type": "string"
+              },
+              "storyline": {
+                "type": "string"
+              },
+              "release_year": {
+                "type": "number"
+              },
+              "score": {
+                "type": "number"
+              },
+              "episode": {
+                "type": "number"
+              },
+              "type": {
+                "type": "number"
+              },
+              "extend_type": {
+                "type": "number"
+              },
+              "is_fav": {
+                "type": "number"
+              },
+              "is_seen": {
+                "type": "number"
+              },
+              "history": {
+                "type": "object",
+                "fields": {
+                  "last_video_id": {
+                    "type": "string"
+                  },
+                  "play_chapter": {
+                    "type": "string"
+                  },
+                  "play_duration": {
+                    "type": "number"
+                  },
+                  "audio_index": {
+                    "type": "string"
+                  },
+                  "subtitle_index": {
+                    "type": "string"
+                  },
+                  "subtitle_hash": {
+                    "type": "string"
+                  },
+                  "subtitle_setting": {
+                    "type": "string"
+                  }
+                },
+                "other_field_count": 7
+              }
+            },
+            "other_field_count": 17
+          }
+        },
+        "other_field_count": 2
+      },
+      "elapsed_ms": 53
+    }
+  ],
+  "credential_state": "loaded",
+  "search_title_match": true,
+  "history_sample_from_playlist": true,
+  "history_has_video_id": true,
+  "history_has_positive_position": false,
+  "result": "completed_read_probe",
+  "history_follow_up": {
+    "observed_at": "2026-10-18T19:07:58.156278+00:00",
+    "samples": [
+      {
+        "history_present": true,
+        "has_video_id": true,
+        "position_kind": "zero"
+      },
+      {
+        "history_present": true,
+        "has_video_id": true,
+        "position_kind": "zero"
+      },
+      {
+        "history_present": true,
+        "has_video_id": true,
+        "position_kind": "zero"
+      },
+      {
+        "history_present": true,
+        "has_video_id": true,
+        "position_kind": "zero"
+      }
+    ]
+  }
+}

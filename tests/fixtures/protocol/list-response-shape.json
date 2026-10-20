@@ -1,0 +1,65 @@
+{
+  "fixture_version": 1,
+  "name": "list-response-shape",
+  "evidence": [
+    {
+      "level": "static",
+      "source": "reference/nas-video-api.md",
+      "scope": "分类列表到影视列表的静态调用参数"
+    },
+    {
+      "level": "real_nas",
+      "source": "AGENTS.md",
+      "scope": "当前真实 NAS 验证的 system=94 参数边界；不是完整响应 schema"
+    }
+  ],
+  "endpoints": [
+    { "method": "POST", "path": "/zvideo/video/v2/list", "purpose": "collection-page" }
+  ],
+  "variants": {
+    "success": {
+      "http_status_type": "integer",
+      "code_types": ["integer", "string"],
+      "request_fields": ["classification_id", "start", "limit", "system"],
+      "data": {
+        "presence": "required",
+        "type": "object",
+        "list_presence": "required",
+        "fields": {
+          "count": { "types": ["integer"], "value_omitted": true },
+          "collection_count": { "types": ["integer"], "value_omitted": true },
+          "classification_name": { "types": ["string", "null"], "value_omitted": true },
+          "list": { "types": ["array"], "value_omitted": true }
+        },
+        "item_fields": {
+          "collection_id": { "types": ["string"], "value_omitted": true },
+          "title": { "types": ["string"], "value_omitted": true },
+          "release_year": { "types": ["integer", "string"], "value_omitted": true },
+          "score": { "types": ["number", "string", "null"], "value_omitted": true },
+          "rating": { "types": ["number", "string", "null"], "value_omitted": true }
+        }
+      }
+    },
+    "missing_list": {
+      "http_status_type": "integer",
+      "code_types": ["integer", "string"],
+      "data": {
+        "presence": "required",
+        "type": "object",
+        "list_presence": "missing",
+        "outcome": "protocol_error"
+      }
+    },
+    "business_error": {
+      "http_status_type": "integer",
+      "code_types": ["integer", "string"],
+      "data": { "presence": "absent_or_null", "type": "null_or_absent" },
+      "outcome": "business_error_not_empty_page"
+    }
+  },
+  "safety": {
+    "values_omitted": true,
+    "raw_payload_included": false,
+    "note": "shape only; collection and media values are not stored"
+  }
+}
