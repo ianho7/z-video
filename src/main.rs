@@ -17,21 +17,28 @@ fn configure_windows_renderer() -> Result<(), Box<dyn std::error::Error>> {
     let transparency_disabled = environment_flag_enabled("Z_VIDEO_REDUCED_TRANSPARENCY")
         || environment_flag_enabled("Z_VIDEO_HIGH_CONTRAST");
 
-    if native_backdrop_requested && !transparency_disabled {
+    let use_native_backdrop = native_backdrop_requested && !transparency_disabled;
+    let renderer_name = if use_native_backdrop {
+        "skia-opengl"
+    } else {
+        "skia-wgpu"
+    };
+    let selector = slint::BackendSelector::new()
+        .backend_name("winit".into())
+        .renderer_name(renderer_name.into());
+
+    if use_native_backdrop {
         // DX12/WGPU commonly advertises only the Opaque composite alpha mode
         // for a Win32 swapchain. The native experiment therefore uses Skia's
         // OpenGL surface, whose WGL config can carry an alpha buffer, while
         // keeping the product default on the existing WGPU path.
-        std::env::set_var("SLINT_BACKEND", "winit-skia-opengl");
-        slint::BackendSelector::new()
-            .backend_name("winit".into())
-            .renderer_name("skia-opengl".into())
+        selector
             // Keep the client surface alpha-capable from window creation. The
             // product UI still decides which pixels are transparent.
             .with_winit_window_attributes_hook(|attributes| attributes.with_transparent(true))
             .select()?;
     } else {
-        std::env::set_var("SLINT_BACKEND", "winit-skia");
+        selector.select()?;
     }
 
     Ok(())
