@@ -1981,6 +1981,8 @@ pub struct MockNasClient {
     pub mock_collections: Vec<CollectionItem>,
     pub mock_collection_details: HashMap<String, CollectionDetail>,
     pub mock_playback_uri: Option<String>,
+    collection_detail_delay: Duration,
+    collection_requests: Arc<Mutex<Vec<(String, usize, usize)>>>,
     progress_receipts: Arc<Mutex<Vec<PlaybackProgressUpdate>>>,
 }
 
@@ -2167,6 +2169,8 @@ impl Default for MockNasClient {
             mock_collections: collections,
             mock_collection_details,
             mock_playback_uri: Some("/mock/playback/stream".to_string()),
+            collection_detail_delay: Duration::ZERO,
+            collection_requests: Arc::new(Mutex::new(Vec::new())),
             progress_receipts: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -2179,6 +2183,10 @@ impl MockNasClient {
 
     pub fn progress_receipts(&self) -> Vec<PlaybackProgressUpdate> {
         self.progress_receipts.lock().unwrap().clone()
+    }
+
+    pub fn collection_requests(&self) -> Vec<(String, usize, usize)> {
+        self.collection_requests.lock().unwrap().clone()
     }
 
     pub fn with_mfa(mut self, require_mfa: bool) -> Self {
@@ -2201,6 +2209,11 @@ impl MockNasClient {
     /// the retryable continue-watching error state independently.
     pub fn with_collection_detail_error(mut self, fail: bool) -> Self {
         self.collection_detail_error = fail;
+        self
+    }
+
+    pub fn with_collection_detail_delay(mut self, delay: Duration) -> Self {
+        self.collection_detail_delay = delay;
         self
     }
 
@@ -2417,6 +2430,12 @@ impl NasClient for MockNasClient {
             });
         }
 
+        self.collection_requests.lock().unwrap().push((
+            classification_id.to_string(),
+            start,
+            limit,
+        ));
+
         let total = self.mock_collections.len();
         let skip = if start > 0 {
             start.saturating_sub(1)
@@ -2446,6 +2465,9 @@ impl NasClient for MockNasClient {
     ) -> Result<CollectionDetail, NasError> {
         if self.network_error {
             return Err(NasError::Network("无法获取影视详情，网络断开".to_string()));
+        }
+        if !self.collection_detail_delay.is_zero() {
+            std::thread::sleep(self.collection_detail_delay);
         }
         if self.collection_detail_error {
             return Err(NasError::Network("无法获取影视详情，网络断开".to_string()));

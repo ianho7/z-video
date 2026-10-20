@@ -18,6 +18,62 @@ fn context(episode_id: &str) -> LastPlaybackContext {
         episode_id: episode_id.to_string(),
     }
 }
+
+fn saved_continue_watching_store() -> Arc<MemoryCredentialStore> {
+    let store = Arc::new(MemoryCredentialStore::new());
+    store
+        .save(&SavedCredentials {
+            server_url: "http://192.168.1.50:5055".to_string(),
+            username: "admin".to_string(),
+            password: None,
+            token: None,
+            nas_id: Some("fixture-nas".to_string()),
+            nas_sign: Some("fixture-sign".to_string()),
+            last_playback: Some(LastPlaybackContext {
+                collection_id: "c01".to_string(),
+                classification_id: "1".to_string(),
+                episode_id: "c01-video".to_string(),
+            }),
+        })
+        .expect("fixture playback context should be stored");
+    store
+}
+
+fn paged_continue_watching_client(detail_error: bool) -> Arc<MockNasClient> {
+    let mut client = MockNasClient::new()
+        .with_collection_detail_delay(Duration::from_millis(80))
+        .with_collection_detail_error(detail_error);
+    client
+        .mock_collection_details
+        .get_mut("c01")
+        .expect("movie fixture should exist")
+        .history = Some(PlaybackHistory {
+        last_video_id: Some("c01-video".to_string()),
+        play_duration: Some(42),
+        ..PlaybackHistory::default()
+    });
+    let template = client
+        .mock_collections
+        .first()
+        .cloned()
+        .expect("movie fixture should exist");
+    for index in 4..105 {
+        let mut item = template.clone();
+        item.collection_id = format!("page-{index:03}");
+        item.title = format!("分页影片 {index:03}");
+        client.mock_collections.push(item);
+    }
+    client.mock_classifications[0].count = client.mock_collections.len() as i64;
+    Arc::new(client)
+}
+
+fn pump_continue_watching_event_loop() {
+    Timer::single_shot(Duration::from_millis(300), || {
+        let _ = slint::quit_event_loop();
+    });
+    slint::run_event_loop_until_quit().expect("continue watching event loop should exit cleanly");
+}
+
 fn detail(history: Option<PlaybackHistory>, duration: Option<&str>) -> CollectionDetail {
     CollectionDetail {
         collection_id: "collection-fixture".to_string(),
@@ -189,4 +245,74 @@ fn continue_watching_ui_integration_suite() {
         .window()
         .get_continue_watching_error()
         .contains("重试"));
+
+    let nas_client = paged_continue_watching_client(false);
+    let coordinator = AppCoordinator::with_deps(
+        Arc::new(MockPlayer::new()),
+        false,
+        nas_client.clone(),
+        saved_continue_watching_store(),
+    )
+    .expect("coordinator should initialize");
+
+    coordinator
+        .perform_login(
+            "http://192.168.1.50:5055",
+            "admin",
+            "password123",
+            None,
+            false,
+        )
+        .expect("mock login should succeed");
+    coordinator.window().invoke_library_page_changed(2);
+    pump_continue_watching_event_loop();
+
+    assert_eq!(coordinator.window().get_library_page(), 2);
+    assert!(!coordinator.window().get_continue_watching_loading());
+    assert!(coordinator
+        .window()
+        .get_continue_watching_error()
+        .is_empty());
+    assert_eq!(
+        coordinator
+            .window()
+            .get_continue_watching_items()
+            .row_count(),
+        1
+    );
+
+    let nas_client = paged_continue_watching_client(true);
+    let coordinator = AppCoordinator::with_deps(
+        Arc::new(MockPlayer::new()),
+        false,
+        nas_client,
+        saved_continue_watching_store(),
+    )
+    .expect("coordinator should initialize");
+
+    coordinator
+        .perform_login(
+            "http://192.168.1.50:5055",
+            "admin",
+            "password123",
+            None,
+            false,
+        )
+        .expect("mock login should succeed");
+    coordinator.window().invoke_library_page_changed(2);
+    pump_continue_watching_event_loop();
+
+    assert_eq!(coordinator.window().get_library_page(), 2);
+    assert!(!coordinator.window().get_continue_watching_loading());
+    assert!(coordinator
+        .window()
+        .get_continue_watching_error()
+        .contains("重试"));
+    assert_eq!(
+        coordinator
+            .window()
+            .get_continue_watching_items()
+            .row_count(),
+        0
+    );
 }

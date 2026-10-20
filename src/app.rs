@@ -46,6 +46,7 @@ pub struct AppCoordinator {
     discovery_cancellation: Arc<Mutex<Option<DiscoveryCancellation>>>,
     image_cache: ImageCache,
     image_request_gate: ImageRequestGate,
+    continue_watching_image_request_gate: ImageRequestGate,
     last_poster_range: Arc<Mutex<PosterRangeRequestState>>,
     loaded_collections: Arc<Mutex<Vec<CollectionItem>>>,
     browse_context: Arc<Mutex<BrowseContext>>,
@@ -647,6 +648,7 @@ impl AppCoordinator {
             discovery_cancellation: Arc::new(Mutex::new(None)),
             image_cache,
             image_request_gate: ImageRequestGate::new(),
+            continue_watching_image_request_gate: ImageRequestGate::new(),
             last_poster_range: Arc::new(Mutex::new(PosterRangeRequestState::default())),
             loaded_collections,
             browse_context,
@@ -833,6 +835,7 @@ impl AppCoordinator {
         self.playback_request_generation
             .fetch_add(1, Ordering::SeqCst);
         self.image_request_gate.cancel();
+        self.continue_watching_image_request_gate.cancel();
         self.continue_watching_generation
             .fetch_add(1, Ordering::SeqCst);
         *self.startup_last_playback.lock().unwrap() = None;
@@ -1083,6 +1086,7 @@ impl AppCoordinator {
         let operation = diagnostics::start_event("ui", "library.collections");
         let request_id = self.image_request_gate.begin();
         self.last_poster_range.lock().unwrap().reset();
+        self.continue_watching_image_request_gate.cancel();
         self.continue_watching_generation
             .fetch_add(1, Ordering::SeqCst);
         Self::clear_continue_watching(&self.ui);
@@ -1152,9 +1156,8 @@ impl AppCoordinator {
                     Arc::clone(&self.nas_client),
                     Arc::clone(&self.session),
                     self.image_cache.clone(),
-                    self.image_request_gate.clone(),
+                    self.continue_watching_image_request_gate.clone(),
                     Arc::clone(&self.continue_watching_generation),
-                    request_id,
                     self.startup_last_playback.lock().unwrap().clone(),
                     classification_id.to_string(),
                 );
@@ -1410,10 +1413,10 @@ impl AppCoordinator {
         image_cache: ImageCache,
         image_request_gate: ImageRequestGate,
         continue_watching_generation: Arc<AtomicU64>,
-        image_request_id: u64,
         context: Option<LastPlaybackContext>,
         classification_id: String,
     ) {
+        let image_request_id = image_request_gate.begin();
         let request_generation = continue_watching_generation.fetch_add(1, Ordering::SeqCst) + 1;
         let Some(context) = context.filter(|context| {
             context.collection_id.trim() != ""
@@ -2521,6 +2524,8 @@ impl AppCoordinator {
         let session = Arc::clone(&self.session);
         let image_cache = self.image_cache.clone();
         let image_request_gate = self.image_request_gate.clone();
+        let continue_watching_image_request_gate =
+            self.continue_watching_image_request_gate.clone();
         let loaded_collections = Arc::clone(&self.loaded_collections);
         let browse_context = Arc::clone(&self.browse_context);
         let browse_restore_notice = Arc::clone(&self.browse_restore_notice);
@@ -2854,6 +2859,7 @@ impl AppCoordinator {
             ui.set_library_scroll_offset(0.0);
             ui.set_library_restore_scroll_offset(0.0);
             ui.set_library_focus_collection_id("".into());
+            continue_watching_image_request_gate.cancel();
             continue_watching_generation.fetch_add(1, Ordering::SeqCst);
             AppCoordinator::clear_continue_watching(&ui);
             ui.set_library_loading(true);
@@ -2874,6 +2880,8 @@ impl AppCoordinator {
             let startup_last_playback_for_thread = Arc::clone(&startup_last_playback);
             let continue_watching_generation_for_thread =
                 Arc::clone(&continue_watching_generation);
+            let continue_watching_image_request_gate_for_thread =
+                continue_watching_image_request_gate.clone();
             let browse_restore_notice_for_thread = Arc::clone(&browse_restore_notice);
             let operation = diagnostics::start_event("ui", "library.select_classification");
             let selected_id_for_log = target_id.clone();
@@ -2940,9 +2948,8 @@ impl AppCoordinator {
                                 Arc::clone(&nas_client_for_posters),
                                 Arc::clone(&session_for_posters),
                                 image_cache_for_thread.clone(),
-                                image_request_gate_for_thread.clone(),
+                                continue_watching_image_request_gate_for_thread.clone(),
                                 Arc::clone(&continue_watching_generation_for_thread),
-                                request_id,
                                 startup_last_playback_for_thread.lock().unwrap().clone(),
                                 target_id.clone(),
                             );
@@ -2986,6 +2993,8 @@ impl AppCoordinator {
         let startup_last_playback = Arc::clone(&self.startup_last_playback);
         let image_cache = self.image_cache.clone();
         let image_request_gate = self.image_request_gate.clone();
+        let continue_watching_image_request_gate =
+            self.continue_watching_image_request_gate.clone();
         let continue_watching_generation = Arc::clone(&self.continue_watching_generation);
         let loaded_collections = Arc::clone(&loaded_collections);
         let browse_context_for_refresh = Arc::clone(&browse_context);
@@ -2995,6 +3004,7 @@ impl AppCoordinator {
         self.ui.on_refresh_library_clicked(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
             let sel_id = ui.get_selected_classification_id().to_string();
+            continue_watching_image_request_gate.cancel();
             continue_watching_generation.fetch_add(1, Ordering::SeqCst);
             AppCoordinator::clear_continue_watching(&ui);
             search_generation.fetch_add(1, Ordering::SeqCst);
@@ -3043,6 +3053,8 @@ impl AppCoordinator {
             let startup_last_playback_for_thread = Arc::clone(&startup_last_playback);
             let continue_watching_generation_for_thread =
                 Arc::clone(&continue_watching_generation);
+            let continue_watching_image_request_gate_for_thread =
+                continue_watching_image_request_gate.clone();
             let startup_restore_pending_for_thread = Arc::clone(&startup_restore_pending);
             let operation = diagnostics::start_event("ui", "library.refresh");
 
@@ -3204,9 +3216,8 @@ impl AppCoordinator {
                                 Arc::clone(&client_for_thread),
                                 Arc::clone(&session_for_thread),
                                 image_cache_for_thread.clone(),
-                                image_request_gate_for_thread.clone(),
+                                continue_watching_image_request_gate_for_thread.clone(),
                                 Arc::clone(&continue_watching_generation_for_thread),
-                                request_id,
                                 startup_last_playback_for_thread.lock().unwrap().clone(),
                                 selected_id_for_ui.clone(),
                             );
@@ -3721,6 +3732,8 @@ impl AppCoordinator {
         let playback_request_generation = Arc::clone(&self.playback_request_generation);
         let playback_session = Arc::clone(&self.playback_session);
         let image_request_gate = self.image_request_gate.clone();
+        let continue_watching_image_request_gate =
+            self.continue_watching_image_request_gate.clone();
         let continue_watching_generation = Arc::clone(&self.continue_watching_generation);
         let startup_last_playback = Arc::clone(&self.startup_last_playback);
 
@@ -3737,6 +3750,7 @@ impl AppCoordinator {
             detail_request_generation.fetch_add(1, Ordering::SeqCst);
             playback_request_generation.fetch_add(1, Ordering::SeqCst);
             image_request_gate.cancel();
+            continue_watching_image_request_gate.cancel();
             continue_watching_generation.fetch_add(1, Ordering::SeqCst);
             *startup_last_playback.lock().unwrap() = None;
             *detail_state.lock().unwrap() = None;
@@ -3775,6 +3789,8 @@ impl AppCoordinator {
         let playback_request_generation = Arc::clone(&self.playback_request_generation);
         let playback_session = Arc::clone(&self.playback_session);
         let image_request_gate = self.image_request_gate.clone();
+        let continue_watching_image_request_gate =
+            self.continue_watching_image_request_gate.clone();
         let continue_watching_generation = Arc::clone(&self.continue_watching_generation);
         let startup_last_playback = Arc::clone(&self.startup_last_playback);
         self.ui.on_relogin_requested(move || {
@@ -3793,6 +3809,7 @@ impl AppCoordinator {
             detail_request_generation.fetch_add(1, Ordering::SeqCst);
             playback_request_generation.fetch_add(1, Ordering::SeqCst);
             image_request_gate.cancel();
+            continue_watching_image_request_gate.cancel();
             continue_watching_generation.fetch_add(1, Ordering::SeqCst);
             *startup_last_playback.lock().unwrap() = None;
             *detail_state.lock().unwrap() = None;
