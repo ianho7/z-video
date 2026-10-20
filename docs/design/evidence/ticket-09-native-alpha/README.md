@@ -1,7 +1,8 @@
 # Native client alpha probe
 
-This probe documents the Windows-only client-alpha change for the opt-in
-`Z_VIDEO_NATIVE_BACKDROP=1` path. It does not enable the seven-colour
+This probe documents the Windows-only client-alpha change. Windows attempts
+the native backdrop by default; `Z_VIDEO_NATIVE_BACKDROP=0` disables it. It
+does not enable the seven-colour
 `MaterialEvidenceBackdrop`, read credentials, or connect to a NAS.
 
 ## Why the renderer changes
@@ -10,14 +11,14 @@ The pinned Slint `0ade85b` winit backend creates its window with
 `WindowAttributes::transparent(true)`. Its Skia WGPU surface keeps alpha only
 when the WGPU surface advertises `PreMultiplied` or `PostMultiplied`; otherwise
 `set_transparent(true)` leaves the swapchain in its `Opaque` mode. The formal
-Windows build selects `renderer-skia`, which resolves to the WGPU path and can
-therefore leave the client fully opaque even when
+Windows build includes both Skia WGPU and OpenGL surfaces. The explicit WGPU
+fallback can therefore leave the client fully opaque even when
 `DwmExtendFrameIntoClientArea` succeeds.
 
-When the native experiment is explicitly enabled, the application now selects
-`skia-opengl` through `BackendSelector` and applies an explicit winit
-`transparent=true` hook before the Slint window is created. The normal path and
-the reduced-transparency/high-contrast path continue to use `winit-skia`.
+When the native path is enabled, the application selects `skia-opengl` through
+`BackendSelector` and applies an explicit winit `transparent=true` hook before
+the Slint window is created. Explicit opt-out, reduced-transparency/high-
+contrast policy, or an unavailable native renderer falls back to `skia-wgpu`.
 
 The product scene keeps the existing boundary: the left 220 logical-pixel
 Sidebar may expose the top-level DWM backdrop, while the main content underlay

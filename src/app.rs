@@ -92,6 +92,10 @@ fn environment_flag_value_enabled(value: Option<&str>) -> bool {
     matches!(value, Some("1" | "true" | "yes" | "on"))
 }
 
+fn environment_flag_value_enabled_by_default(value: Option<&str>) -> bool {
+    !matches!(value, Some("0" | "false" | "no" | "off"))
+}
+
 fn shell_transparency_disabled() -> bool {
     environment_flag_enabled("Z_VIDEO_REDUCED_TRANSPARENCY")
         || environment_flag_enabled("Z_VIDEO_HIGH_CONTRAST")
@@ -125,7 +129,9 @@ fn native_backdrop_workspace_active(
 }
 
 fn native_backdrop_requested() -> bool {
-    environment_flag_enabled("Z_VIDEO_NATIVE_BACKDROP")
+    environment_flag_value_enabled_by_default(
+        std::env::var("Z_VIDEO_NATIVE_BACKDROP").ok().as_deref(),
+    )
 }
 
 #[cfg(windows)]
@@ -5011,7 +5017,8 @@ pub fn find_sample_video_path() -> PathBuf {
 mod poster_loading_tests {
     use super::{
         collection_page_count, collection_page_start, environment_flag_value_enabled,
-        native_backdrop_mode, native_backdrop_workspace_active,
+        environment_flag_value_enabled_by_default, native_backdrop_mode,
+        native_backdrop_workspace_active,
         visible_poster_range, NativeBackdropMode, PosterLoadRange, PosterRangeRequestState,
     };
     use crate::media::image_cache::ImageRequestGate;
@@ -5140,6 +5147,10 @@ mod poster_loading_tests {
         assert!(!environment_flag_value_enabled(None));
         assert!(!environment_flag_value_enabled(Some("0")));
         assert!(environment_flag_value_enabled(Some("1")));
+        assert!(environment_flag_value_enabled_by_default(None));
+        assert!(environment_flag_value_enabled_by_default(Some("1")));
+        assert!(!environment_flag_value_enabled_by_default(Some("0")));
+        assert!(!environment_flag_value_enabled_by_default(Some("false")));
 
         assert_eq!(
             native_backdrop_mode(false, false),

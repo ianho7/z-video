@@ -12,8 +12,17 @@ fn environment_flag_enabled(name: &str) -> bool {
 }
 
 #[cfg(windows)]
+fn environment_flag_enabled_by_default(name: &str) -> bool {
+    !matches!(
+        std::env::var(name).ok().as_deref(),
+        Some("0" | "false" | "no" | "off")
+    )
+}
+
+#[cfg(windows)]
 fn configure_windows_renderer() -> Result<(), Box<dyn std::error::Error>> {
-    let native_backdrop_requested = environment_flag_enabled("Z_VIDEO_NATIVE_BACKDROP");
+    let native_backdrop_requested =
+        environment_flag_enabled_by_default("Z_VIDEO_NATIVE_BACKDROP");
     let transparency_disabled = environment_flag_enabled("Z_VIDEO_REDUCED_TRANSPARENCY")
         || environment_flag_enabled("Z_VIDEO_HIGH_CONTRAST");
 
@@ -32,11 +41,23 @@ fn configure_windows_renderer() -> Result<(), Box<dyn std::error::Error>> {
         // for a Win32 swapchain. The native experiment therefore uses Skia's
         // OpenGL surface, whose WGL config can carry an alpha buffer, while
         // keeping the product default on the existing WGPU path.
-        selector
+        match selector
             // Keep the client surface alpha-capable from window creation. The
             // product UI still decides which pixels are transparent.
             .with_winit_window_attributes_hook(|attributes| attributes.with_transparent(true))
-            .select()?;
+            .select()
+        {
+            Ok(_) => {}
+            Err(error) => {
+                eprintln!(
+                    "native backdrop renderer unavailable; falling back to skia-wgpu: {error}"
+                );
+                slint::BackendSelector::new()
+                    .backend_name("winit".into())
+                    .renderer_name("skia-wgpu".into())
+                    .select()?;
+            }
+        }
     } else {
         selector.select()?;
     }
@@ -48,8 +69,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Ticket #9 uses the Skia renderer for the Windows glass-layer candidate.
     // The dependency features keep this backend available in the formal build;
     // the selector makes the native window choice explicit at runtime. The
-    // opt-in native backdrop path selects the alpha-capable OpenGL surface;
-    // the default and reduced-transparency paths retain the WGPU selection.
+    // The Windows path attempts the alpha-capable OpenGL surface by default;
+    // reduced-transparency, high-contrast, explicit opt-out, and unavailable
+    // native rendering fall back to the WGPU selection.
     #[cfg(windows)]
     configure_windows_renderer()?;
 
