@@ -507,4 +507,3 @@ function cloneNavigation(context: NavigationContext): NavigationContext {
     ...(context.detail ? { detail: { ...context.detail } } : {}),
   };
 }
-

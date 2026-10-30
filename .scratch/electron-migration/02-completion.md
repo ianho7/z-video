@@ -76,4 +76,3 @@ npm run test:window
 
 本次修复提交后已合入最新 `codex/electron-integration` 文档 tip `77ced0c`；最终工作树
 HEAD 由合并提交记录，未改变 player-owned 文件或依赖。
-
