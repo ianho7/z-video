@@ -30,6 +30,20 @@
             <label class="check-row"><input id="remember" name="remember" type="checkbox" checked /> <span>记住登录会话</span></label>
             <button class="primary-button" id="login-button" type="submit">登录</button>
           </form>
+          <section id="discovery-panel" class="discovery-panel" aria-labelledby="discovery-title">
+            <div class="discovery-heading">
+              <div>
+                <p class="discovery-title" id="discovery-title">发现本机局域网 NAS</p>
+                <p class="muted">仅扫描本机私有 IPv4 网段，不会提交账号或密码。</p>
+              </div>
+              <div class="discovery-actions">
+                <button class="secondary-button" id="discover-button" type="button">扫描 NAS</button>
+                <button class="secondary-button" id="cancel-discovery-button" type="button" hidden>取消扫描</button>
+              </div>
+            </div>
+            <p id="discovery-status" class="discovery-status" role="status" aria-live="polite"></p>
+            <div id="discovery-results" class="discovery-results" role="list"></div>
+          </section>
           <div class="mfa-panel" id="mfa-panel" hidden>
             <p class="mfa-title">需要二次验证</p>
             <p id="mfa-hint" class="muted">请输入收到的 4 位或 6 位验证码。</p>

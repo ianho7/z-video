@@ -48,6 +48,20 @@ input::placeholder { color: #70727a; }
 .button-row { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 5px; }
 .status { min-height: 22px; margin: 18px 0 0; color: var(--secondary); font-size: 12px; line-height: 1.5; }
 .status.error { color: var(--danger); }
+.discovery-panel { display: grid; gap: 9px; margin-top: 22px; padding: 12px; border: 1px solid #344150; border-radius: 7px; background: #202731; }
+.discovery-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.discovery-title { margin: 0 0 4px; color: #cfd8dc; font-size: 12px; font-weight: 600; }
+.discovery-actions { display: flex; flex: 0 0 auto; gap: 6px; }
+.discovery-actions .secondary-button { padding: 7px 9px; font-size: 11px; white-space: nowrap; }
+.discovery-status { min-height: 0; margin: 0; color: var(--secondary); font-size: 11px; line-height: 1.5; }
+.discovery-status.error { color: #ffccbc; }
+.discovery-results { display: grid; gap: 6px; }
+.discovery-result { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 7px 8px; border: 1px solid #456a7d; border-radius: 5px; background: #263238; }
+.discovery-result-copy { min-width: 0; }
+.discovery-result-name, .discovery-result-address { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.discovery-result-name { color: #fff; font-size: 12px; }
+.discovery-result-address { margin-top: 2px; color: var(--secondary); font-size: 10px; }
+.discovery-result .secondary-button { padding: 6px 8px; font-size: 10px; }
 .mfa-panel { margin-top: 21px; padding-top: 21px; border-top: 1px solid var(--separator); }
 .mfa-title { margin: 0; font-weight: 650; }
 .muted { margin: 0 0 5px; color: var(--secondary); font-size: 12px; line-height: 1.5; }

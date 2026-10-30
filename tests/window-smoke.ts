@@ -49,6 +49,16 @@ async function run(): Promise<void> {
   ipcMain.handle("library:get-detail", async () => ({ state: authenticatedState, detail: fixtureDetail }));
   ipcMain.handle("library:list-continue-watching", async () => ({ state: authenticatedState, items: [] }));
   ipcMain.handle("library:load-image", async () => ({ state: authenticatedState, dataUrl: "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=", mimeType: "image/gif" }));
+  ipcMain.handle("discovery:start", async () => ({
+    status: "success",
+    requestId: 1,
+    report: {
+      results: [{ ip: "192.168.5.2", name: "Fixture NAS", available: true }],
+      candidateCount: 2,
+      truncated: false,
+    },
+  }));
+  ipcMain.handle("discovery:cancel", async () => ({ cancelled: true }));
 
   const window = new BrowserWindow({
     show: false,
@@ -68,20 +78,46 @@ async function run(): Promise<void> {
       bridge: typeof window.zVideo === "object",
       nodeRequire: typeof require,
       nodeProcess: typeof process,
+      discoveryApi: typeof window.zVideo.discovery === 'object',
       loginView: document.querySelector('[data-view="login"]')?.hidden === false,
       serverInput: Boolean(document.querySelector('#server-url')),
       playerBridge: typeof window.zVideo.player === 'object',
       playerControls: Boolean(document.querySelector('#player-seek') && document.querySelector('#player-audio-track') && document.querySelector('#player-subtitle-file-button'))
     })`,
     true,
-  )) as { bridge: boolean; nodeRequire: string; nodeProcess: string; loginView: boolean; serverInput: boolean; playerBridge: boolean; playerControls: boolean };
+  )) as { bridge: boolean; nodeRequire: string; nodeProcess: string; discoveryApi: boolean; loginView: boolean; serverInput: boolean; playerBridge: boolean; playerControls: boolean };
   assert.equal(initial.bridge, true);
   assert.equal(initial.nodeRequire, "undefined");
   assert.equal(initial.nodeProcess, "undefined");
+  assert.equal(initial.discoveryApi, true);
   assert.equal(initial.loginView, true);
   assert.equal(initial.serverInput, true);
   assert.equal(initial.playerBridge, true);
   assert.equal(initial.playerControls, true);
+
+  await window.webContents.executeJavaScript(
+    `document.querySelector('#discover-button').click()`,
+    true,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  const discovery = (await window.webContents.executeJavaScript(
+    `({
+      result: document.querySelector('[data-discovery-ip]')?.textContent || '',
+      status: document.querySelector('#discovery-status')?.textContent || ''
+    })`,
+    true,
+  )) as { result: string; status: string };
+  assert.match(discovery.result, /使用此地址/);
+  assert.match(discovery.status, /发现 1 台 NAS/);
+  await window.webContents.executeJavaScript(
+    `document.querySelector('[data-discovery-ip="192.168.5.2"]').click()`,
+    true,
+  );
+  const selectedAddress = await window.webContents.executeJavaScript(
+    `document.querySelector('#server-url').value`,
+    true,
+  ) as string;
+  assert.equal(selectedAddress, "http://192.168.5.2:5055");
 
   await window.webContents.executeJavaScript(
     `(() => {
@@ -137,6 +173,8 @@ async function run(): Promise<void> {
     "library:get-detail",
     "library:list-continue-watching",
     "library:load-image",
+    "discovery:start",
+    "discovery:cancel",
   ]) {
     ipcMain.removeHandler(channel);
   }

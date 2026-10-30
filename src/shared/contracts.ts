@@ -166,6 +166,29 @@ export interface OperationOutcome {
   state: PublicSessionState;
 }
 
+/** Renderer-safe LAN discovery result. Probe credentials and opaque signs stay in main. */
+export interface DiscoveryResult {
+  ip: string;
+  name: string;
+  available: boolean;
+}
+
+export interface DiscoveryReport {
+  results: DiscoveryResult[];
+  candidateCount: number;
+  truncated: boolean;
+}
+
+export type DiscoveryOutcome =
+  | { status: "success"; requestId: number; report: DiscoveryReport }
+  | { status: "cancelled"; requestId: number }
+  | { status: "stale"; requestId: number }
+  | { status: "error"; requestId: number; error: AppError };
+
+export interface DiscoveryCancelOutcome {
+  cancelled: boolean;
+}
+
 export type PlaybackCommand =
   | {
       type: "open";
@@ -207,6 +230,10 @@ export interface ElectronApi {
     loadImage(input: { collectionId: string; kind: "cover" | "background" }): Promise<LibraryImageResult>;
     getNavigation(): Promise<NavigationContext>;
     setNavigation(context: NavigationContext): Promise<NavigationContext>;
+  };
+  discovery: {
+    start(): Promise<DiscoveryOutcome>;
+    cancel(): Promise<DiscoveryCancelOutcome>;
   };
   player: {
     chooseLocalFile(): Promise<{ opened: boolean }>;

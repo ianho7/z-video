@@ -6,6 +6,7 @@ import { LibraryController, type LibraryDetailRequest, type LibraryImageRequest 
 import { NasApiClient } from "./nas-client";
 import type { PlaybackHost } from "./player-host";
 import { SessionController } from "./session-controller";
+import { DiscoveryController } from "./discovery";
 
 export { IPC_CHANNELS } from "../shared/ipc-channels";
 
@@ -13,6 +14,7 @@ export function registerIpcHandlers(
   controller: SessionController,
   library = new LibraryController(controller, new NasApiClient()),
   player?: PlaybackHost,
+  discovery = new DiscoveryController(),
 ): void {
   ipcMain.handle(IPC_CHANNELS.restore, () => controller.restore());
   ipcMain.handle(IPC_CHANNELS.login, (_event, value: unknown) => controller.login(parseLoginInput(value)));
@@ -32,6 +34,8 @@ export function registerIpcHandlers(
   ipcMain.handle(IPC_CHANNELS.loadImage, (_event, value: unknown) => library.loadImage(parseLibraryImage(value)));
   ipcMain.handle(IPC_CHANNELS.getNavigation, () => library.getNavigation());
   ipcMain.handle(IPC_CHANNELS.setNavigation, (_event, value: unknown) => library.setNavigation(parseNavigation(value)));
+  ipcMain.handle(IPC_CHANNELS.discoveryStart, () => discovery.start());
+  ipcMain.handle(IPC_CHANNELS.discoveryCancel, () => discovery.cancel());
 }
 
 function parsePlaybackCommand(value: unknown): PlaybackCommand {

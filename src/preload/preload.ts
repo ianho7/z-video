@@ -9,6 +9,8 @@ import type {
   PlaybackCommand,
   PlaybackEvent,
   PublicSessionState,
+  DiscoveryCancelOutcome,
+  DiscoveryOutcome,
 } from "../shared/contracts";
 
 // Sandboxed preloads may require Electron's built-ins, but not local CommonJS
@@ -30,6 +32,8 @@ const IPC_CHANNELS = {
   loadImage: "library:load-image",
   getNavigation: "library:get-navigation",
   setNavigation: "library:set-navigation",
+  discoveryStart: "discovery:start",
+  discoveryCancel: "discovery:cancel",
 } as const;
 
 const api: ElectronApi = {
@@ -59,6 +63,10 @@ const api: ElectronApi = {
       ipcRenderer.on(IPC_CHANNELS.playerEvent, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.playerEvent, handler);
     },
+  },
+  discovery: {
+    start: () => ipcRenderer.invoke(IPC_CHANNELS.discoveryStart) as Promise<DiscoveryOutcome>,
+    cancel: () => ipcRenderer.invoke(IPC_CHANNELS.discoveryCancel) as Promise<DiscoveryCancelOutcome>,
   },
 };
 

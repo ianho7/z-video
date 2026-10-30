@@ -1,4 +1,4 @@
-import type { PlaybackEvent, PublicSessionState } from "../shared/contracts";
+import type { DiscoveryOutcome, DiscoveryResult, PlaybackEvent, PublicSessionState } from "../shared/contracts";
 import { refreshLibrary, setLibrarySessionState } from "./library.js";
 
 const loginView = document.querySelector<HTMLElement>('[data-view="login"]');
@@ -32,6 +32,15 @@ let playerVisible = false;
 let playerDurationSec = 0;
 let playerState: "playing" | "paused" | "buffering" | "ended" = "paused";
 let playerFullscreen = false;
+const serverUrlInput = document.querySelector<HTMLInputElement>("#server-url");
+const discoverButton = document.querySelector<HTMLButtonElement>("#discover-button");
+const cancelDiscoveryButton = document.querySelector<HTMLButtonElement>("#cancel-discovery-button");
+const discoveryStatus = document.querySelector<HTMLElement>("#discovery-status");
+const discoveryResults = document.querySelector<HTMLElement>("#discovery-results");
+
+let appBusy = false;
+let discoveryLoading = false;
+let discoveryGeneration = 0;
 
 function requireElement<T extends Element>(element: T | null, name: string): T {
   if (!element) throw new Error(`renderer element missing: ${name}`);
@@ -39,11 +48,83 @@ function requireElement<T extends Element>(element: T | null, name: string): T {
 }
 
 function setBusy(busy: boolean): void {
+  appBusy = busy;
   if (loginButton) loginButton.disabled = busy;
   if (sendMfaButton) sendMfaButton.disabled = busy;
   if (verifyMfaButton) verifyMfaButton.disabled = busy;
   if (refreshButton) refreshButton.disabled = busy;
   if (openLocalButton) openLocalButton.disabled = busy;
+  updateDiscoveryButtons();
+}
+
+function updateDiscoveryButtons(): void {
+  if (discoverButton) discoverButton.disabled = appBusy || discoveryLoading;
+  if (cancelDiscoveryButton) cancelDiscoveryButton.disabled = !discoveryLoading;
+}
+
+function setDiscoveryLoading(loading: boolean): void {
+  discoveryLoading = loading;
+  if (cancelDiscoveryButton) cancelDiscoveryButton.hidden = !loading;
+  if (discoverButton) discoverButton.hidden = loading;
+  updateDiscoveryButtons();
+}
+
+function setDiscoveryMessage(message = "", error = false): void {
+  if (!discoveryStatus) return;
+  discoveryStatus.textContent = message;
+  discoveryStatus.classList.toggle("error", error);
+}
+
+function renderDiscoveryResults(results: DiscoveryResult[]): void {
+  if (!discoveryResults) return;
+  discoveryResults.replaceChildren(...results.map((result) => {
+    const row = document.createElement("div");
+    row.className = "discovery-result";
+    row.setAttribute("role", "listitem");
+
+    const copy = document.createElement("span");
+    copy.className = "discovery-result-copy";
+    const name = document.createElement("strong");
+    name.className = "discovery-result-name";
+    name.textContent = result.name || "未命名 NAS";
+    const address = document.createElement("span");
+    address.className = "discovery-result-address";
+    address.textContent = result.available ? `${result.ip}:5055 · 可用` : `${result.ip}:5055 · 不可用`;
+    copy.append(name, address);
+
+    const select = document.createElement("button");
+    select.className = "secondary-button";
+    select.type = "button";
+    select.dataset.discoveryIp = result.ip;
+    select.textContent = "使用此地址";
+    select.disabled = !result.available || appBusy;
+    row.append(copy, select);
+    return row;
+  }));
+}
+
+function renderDiscoveryOutcome(outcome: DiscoveryOutcome, generation: number): void {
+  if (generation !== discoveryGeneration || outcome.status === "stale") return;
+  setDiscoveryLoading(false);
+  if (outcome.status === "cancelled") {
+    setDiscoveryMessage("已取消 NAS 扫描。", false);
+    setLoginMessage("已取消 NAS 扫描。", false);
+    return;
+  }
+  if (outcome.status === "error") {
+    setDiscoveryMessage(outcome.error.message, true);
+    setLoginMessage("NAS 自动发现不可用，可手动输入局域网地址。", false);
+    return;
+  }
+  renderDiscoveryResults(outcome.report.results);
+  if (outcome.report.results.length === 0) {
+    const suffix = outcome.report.truncated ? "（网段过大，已达到扫描上限）" : "";
+    setDiscoveryMessage(`未发现可用 NAS${suffix}。可手动输入地址继续登录。`, true);
+    setLoginMessage(`已扫描 ${outcome.report.candidateCount} 个本机局域网地址，未发现 NAS。`, false);
+  } else {
+    setDiscoveryMessage(`发现 ${outcome.report.results.length} 台 NAS，请选择后登录。`);
+    setLoginMessage(`发现 ${outcome.report.results.length} 台 NAS，请选择后登录。`, false);
+  }
 }
 
 function setLoginMessage(message = "", error = false): void {
@@ -299,5 +380,47 @@ playerSubtitleFileButton?.addEventListener("click", async () => {
 });
 
 window.zVideo.player.onEvent(renderPlaybackEvent);
+discoverButton?.addEventListener("click", async () => {
+  const generation = ++discoveryGeneration;
+  setDiscoveryLoading(true);
+  renderDiscoveryResults([]);
+  setDiscoveryMessage("正在扫描本机私有局域网，请稍候…");
+  setLoginMessage("正在扫描本机私有局域网，仅验证 NAS 的 5055 端口响应…");
+  try {
+    const outcome = await window.zVideo.discovery.start();
+    renderDiscoveryOutcome(outcome, generation);
+  } catch {
+    if (generation !== discoveryGeneration) return;
+    setDiscoveryLoading(false);
+    setDiscoveryMessage("NAS 扫描失败，请确认电脑已连接局域网后重试。", true);
+    setLoginMessage("NAS 自动发现不可用，可手动输入局域网地址。", false);
+  }
+});
+
+cancelDiscoveryButton?.addEventListener("click", async () => {
+  if (!discoveryLoading) return;
+  discoveryGeneration += 1;
+  setDiscoveryLoading(false);
+  setDiscoveryMessage("正在取消 NAS 扫描…");
+  try {
+    await window.zVideo.discovery.cancel();
+  } catch {
+    setDiscoveryMessage("取消扫描失败，请稍后重试。", true);
+  }
+  if (!discoveryLoading) {
+    setDiscoveryMessage("已取消 NAS 扫描。", false);
+    setLoginMessage("已取消 NAS 扫描。", false);
+  }
+});
+
+discoveryResults?.addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-discovery-ip]");
+  const ip = button?.dataset.discoveryIp;
+  if (!button || !ip || button.disabled || !serverUrlInput) return;
+  serverUrlInput.value = `http://${ip}:5055`;
+  setDiscoveryMessage(`已选择 ${ip}:5055。`);
+  setLoginMessage("已填入发现的 NAS 地址，请输入账号密码后登录。", false);
+  serverUrlInput.focus();
+});
 
 void restore();
