@@ -42,15 +42,19 @@ async function run(): Promise<void> {
       nodeRequire: typeof require,
       nodeProcess: typeof process,
       loginView: document.querySelector('[data-view="login"]')?.hidden === false,
-      serverInput: Boolean(document.querySelector('#server-url'))
+      serverInput: Boolean(document.querySelector('#server-url')),
+      playerBridge: typeof window.zVideo.player === 'object',
+      playerControls: Boolean(document.querySelector('#player-seek') && document.querySelector('#player-audio-track'))
     })`,
     true,
-  )) as { bridge: boolean; nodeRequire: string; nodeProcess: string; loginView: boolean; serverInput: boolean };
+  )) as { bridge: boolean; nodeRequire: string; nodeProcess: string; loginView: boolean; serverInput: boolean; playerBridge: boolean; playerControls: boolean };
   assert.equal(initial.bridge, true);
   assert.equal(initial.nodeRequire, "undefined");
   assert.equal(initial.nodeProcess, "undefined");
   assert.equal(initial.loginView, true);
   assert.equal(initial.serverInput, true);
+  assert.equal(initial.playerBridge, true);
+  assert.equal(initial.playerControls, true);
 
   await window.webContents.executeJavaScript(
     `(() => {

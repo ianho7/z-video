@@ -129,4 +129,9 @@ export interface ElectronApi {
   library: {
     listClassifications(): Promise<{ classifications: Classification[]; state: PublicSessionState }>;
   };
+  player: {
+    chooseLocalFile(): Promise<{ opened: boolean }>;
+    command(command: PlaybackCommand): Promise<void>;
+    onEvent(listener: (event: PlaybackEvent) => void): () => void;
+  };
 }
