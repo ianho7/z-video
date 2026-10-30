@@ -1,6 +1,7 @@
 import { app } from "electron";
 
 import { registerIpcHandlers } from "./ipc";
+import { LibraryController } from "./library-controller";
 import { NasApiClient } from "./nas-client";
 import { createElectronSecureSessionStore } from "./secure-session-store";
 import { SessionController } from "./session-controller";
@@ -10,8 +11,9 @@ let mainWindow: ReturnType<typeof createMainWindow> | undefined;
 
 async function bootstrap(): Promise<void> {
   await app.whenReady();
-  const controller = new SessionController(new NasApiClient(), createElectronSecureSessionStore());
-  registerIpcHandlers(controller);
+  const nas = new NasApiClient();
+  const controller = new SessionController(nas, createElectronSecureSessionStore());
+  registerIpcHandlers(controller, new LibraryController(controller, nas));
   mainWindow = createMainWindow();
   app.on("activate", () => {
     if (!mainWindow || mainWindow.isDestroyed()) mainWindow = createMainWindow();

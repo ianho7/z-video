@@ -38,6 +38,9 @@ export interface Collection {
   rating?: string;
   episodeCount?: number;
   storyline?: string;
+  /** Main-process image key. The renderer never receives the NAS image path. */
+  imageKey?: string;
+  backgroundImageKey?: string;
 }
 
 /** Renderer-visible episode data. The main process resolves private media paths. */
@@ -49,18 +52,88 @@ export interface Episode {
   seasonNumber?: number;
 }
 
+export interface EpisodeSeason {
+  seasonNumber: number;
+  title: string;
+  episodes: Episode[];
+}
+
+export interface ResumeState {
+  episodeId: string;
+  positionSec: number;
+  audioIndex?: number;
+  subtitleIndex?: number;
+}
+
+export interface CollectionDetail extends Collection {
+  seasons: EpisodeSeason[];
+  resume?: ResumeState;
+}
+
+export interface ContinueWatchingItem {
+  collectionId: string;
+  classificationId: string;
+  episodeId: string;
+  title: string;
+  episodeTitle: string;
+  imageKey?: string;
+  watchedSeconds: number;
+  durationSeconds?: number;
+  progressPercent?: number;
+  progressLabel: string;
+  durationLabel: string;
+}
+
+export type LibraryFilter = "all" | "movie" | "tv" | "anime" | "show" | "diy";
+
+export type LibraryCoverage = "server-page" | "loaded-page";
+
 export interface LibraryQuery {
   classificationId: string;
   page: number;
   pageSize: number;
   query?: string;
+  filter?: LibraryFilter;
   sort?: "recent" | "title";
 }
 
 export interface NavigationContext {
   view: AppView;
   library: LibraryQuery & { scrollTop: number };
-  detail?: { collectionId: string; episodeId?: string };
+  detail?: { collectionId: string; episodeId?: string; focusCollectionId?: string };
+}
+
+export interface LibraryPage {
+  query: LibraryQuery;
+  page: number;
+  pageSize: number;
+  totalCount?: number;
+  totalPages?: number;
+  loadedCount: number;
+  coverage: LibraryCoverage;
+  scopeDescription: string;
+  collections: Collection[];
+}
+
+export interface LibraryPageResult {
+  state: PublicSessionState;
+  page?: LibraryPage;
+}
+
+export interface LibraryDetailResult {
+  state: PublicSessionState;
+  detail?: CollectionDetail;
+}
+
+export interface LibraryContinueWatchingResult {
+  state: PublicSessionState;
+  items: ContinueWatchingItem[];
+}
+
+export interface LibraryImageResult {
+  state: PublicSessionState;
+  dataUrl?: string;
+  mimeType?: string;
 }
 
 export interface SessionIdentity {
@@ -128,5 +201,15 @@ export interface ElectronApi {
   };
   library: {
     listClassifications(): Promise<{ classifications: Classification[]; state: PublicSessionState }>;
+    listCollections(query: LibraryQuery): Promise<LibraryPageResult>;
+    getDetail(input: { collectionId: string; classificationId: string }): Promise<LibraryDetailResult>;
+    listContinueWatching(): Promise<LibraryContinueWatchingResult>;
+    loadImage(input: { collectionId: string; kind: "cover" | "background" }): Promise<LibraryImageResult>;
+    getNavigation(): Promise<NavigationContext>;
+    setNavigation(context: NavigationContext): Promise<NavigationContext>;
+  };
+  /** Added by the native-player ticket; optional until its IPC owner lands. */
+  player?: {
+    send(command: PlaybackCommand): Promise<void>;
   };
 }
