@@ -37,7 +37,8 @@ class FixtureGateway implements NasGateway {
     const list = [
       { collectionId: "c01", title: "奥本海默", coverPath: "/private/c01.jpg", backgroundPath: "", releaseYear: "2023", videoType: "movie", score: "8.6" },
       { collectionId: "c02", title: "潮汐线之外", coverPath: "/private/c02.jpg", backgroundPath: "", releaseYear: "2024", videoType: "movie", score: "8.2" },
-      { collectionId: "c03", title: "回到光里", coverPath: "", backgroundPath: "", releaseYear: "2022", videoType: "tv", episodeCount: 3 },
+      { collectionId: "c03", title: "回到光里", coverPath: "", backgroundPath: "", releaseYear: "", videoType: "tv", episodeCount: 3 },
+      { collectionId: "c04", title: "半影", coverPath: "/private/c04.jpg", backgroundPath: "", releaseYear: "2024", videoType: "movie", score: "8.6" },
     ];
     return { count: list.length, list: list.slice(start - 1, start - 1 + limit) };
   }
@@ -74,12 +75,22 @@ test("library controller caches server pages, declares loaded-page search scope,
   const cached = await library.listCollections({ classificationId: "movie", page: 1, pageSize: 50, filter: "all", sort: "recent" });
   const searched = await library.listCollections({ classificationId: "movie", page: 1, pageSize: 50, query: "奥本", filter: "all", sort: "recent" });
 
-  assert.equal(first.page?.collections.length, 3);
-  assert.equal(cached.page?.collections.length, 3);
+  assert.equal(first.page?.collections.length, 4);
+  assert.equal(cached.page?.collections.length, 4);
   assert.equal(searched.page?.collections.length, 1);
   assert.equal(searched.page?.coverage, "loaded-page");
   assert.match(searched.page?.scopeDescription ?? "", /当前已加载范围/);
   assert.equal(gateway.listCalls.length, 1);
+
+  const sortCases = [
+    ["score_desc", ["半影", "奥本海默", "潮汐线之外", "回到光里"]],
+    ["release_year_desc", ["半影", "潮汐线之外", "奥本海默", "回到光里"]],
+  ] as const;
+  for (const [sort, expectedTitles] of sortCases) {
+    const sorted = await library.listCollections({ classificationId: "movie", page: 1, pageSize: 50, filter: "all", sort });
+    assert.deepEqual(sorted.page?.collections.map((collection) => collection.title), expectedTitles);
+    assert.equal(sorted.page?.coverage, "loaded-page");
+  }
 });
 
 test("library controller maps detail history to a real resume item and keeps private paths out of renderer DTOs", async () => {

@@ -58,9 +58,9 @@ episodes and an optional positive resume position; they do not contain token,
 `nas_sign`, private `file_path` values or media URIs. Images are fetched by the
 main process and returned as bounded, renderer-local data URLs.
 
-Search, type filtering and title sorting are declared as `loaded-page` scope
-when applied locally. The UI must show that scope instead of presenting a
-single paginated response as a full-library result. Continue-watching entries
+Search, type filtering and title/score/release-year sorting are declared as
+`loaded-page` scope when applied locally. The UI must show that scope instead
+of presenting a single paginated response as a full-library result. Continue-watching entries
 come only from cached detail responses with matching positive NAS history; the
 library controller does not poll every collection for progress.
 

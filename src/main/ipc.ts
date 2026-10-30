@@ -54,7 +54,7 @@ function parseLibraryQuery(value: unknown): LibraryQuery {
   const pageSize = parseInteger(record.pageSize, "分页大小");
   if (page < 1 || pageSize < 1 || pageSize > 100) throw new Error("片库分页参数无效");
   const filter = record.filter === undefined ? "all" : parseEnum(record.filter, ["all", "movie", "tv", "anime", "show", "diy"] as const, "类型筛选");
-  const sort = record.sort === undefined ? "recent" : parseEnum(record.sort, ["recent", "title"] as const, "排序");
+  const sort = record.sort === undefined ? "recent" : parseEnum(record.sort, ["recent", "title", "score_desc", "release_year_desc"] as const, "排序");
   return {
     classificationId: parseRequiredString(record.classificationId, "分类"),
     page,
@@ -90,7 +90,7 @@ function parseNavigation(value: unknown): NavigationContext {
       pageSize: parseInteger(library.pageSize, "分页大小"),
       ...(library.query === undefined ? {} : { query: parseOptionalString(library.query) }),
       filter: library.filter === undefined ? "all" : parseEnum(library.filter, ["all", "movie", "tv", "anime", "show", "diy"] as const, "类型筛选"),
-      sort: library.sort === undefined ? "recent" : parseEnum(library.sort, ["recent", "title"] as const, "排序"),
+      sort: library.sort === undefined ? "recent" : parseEnum(library.sort, ["recent", "title", "score_desc", "release_year_desc"] as const, "排序"),
       scrollTop: typeof library.scrollTop === "number" && Number.isFinite(library.scrollTop) && library.scrollTop >= 0 ? library.scrollTop : 0,
     },
     ...(record.detail && typeof record.detail === "object" && !Array.isArray(record.detail)

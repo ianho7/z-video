@@ -94,7 +94,7 @@ export interface LibraryQuery {
   pageSize: number;
   query?: string;
   filter?: LibraryFilter;
-  sort?: "recent" | "title";
+  sort?: "recent" | "title" | "score_desc" | "release_year_desc";
 }
 
 export interface NavigationContext {

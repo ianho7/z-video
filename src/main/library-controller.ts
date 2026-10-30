@@ -173,6 +173,57 @@ function matchesFilter(collection: Collection, filter: LibraryFilter): boolean {
   return type === "diy" || type === "自建合集";
 }
 
+function compareText(left: Collection, right: Collection): number {
+  const leftTitle = left.title.toLowerCase();
+  const rightTitle = right.title.toLowerCase();
+  if (leftTitle < rightTitle) return -1;
+  if (leftTitle > rightTitle) return 1;
+  if (left.collectionId < right.collectionId) return -1;
+  if (left.collectionId > right.collectionId) return 1;
+  return 0;
+}
+
+function numericValue(value?: string): number | undefined {
+  const normalized = value?.trim();
+  if (!normalized) return undefined;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function integerValue(value?: string): number | undefined {
+  const normalized = value?.trim();
+  if (!normalized || !/^[+-]?\d+$/.test(normalized)) return undefined;
+  const parsed = Number(normalized);
+  return Number.isInteger(parsed) && parsed >= -2147483648 && parsed <= 2147483647 ? parsed : undefined;
+}
+
+function effectiveScore(collection: Collection): string | undefined {
+  const score = collection.score;
+  if (score !== undefined && score !== "" && score !== "0" && score !== "0.0") return score;
+  const rating = collection.rating;
+  if (rating !== undefined && rating !== "" && rating !== "0" && rating !== "0.0") return rating;
+  return undefined;
+}
+
+function compareOptionalNumberDescending(left: number | undefined, right: number | undefined): number {
+  if (left !== undefined && right !== undefined) {
+    if (left > right) return -1;
+    if (left < right) return 1;
+    return 0;
+  }
+  if (left !== undefined) return -1;
+  if (right !== undefined) return 1;
+  return 0;
+}
+
+function compareScoreDescending(left: Collection, right: Collection): number {
+  return compareOptionalNumberDescending(numericValue(effectiveScore(left)), numericValue(effectiveScore(right))) || compareText(left, right);
+}
+
+function compareReleaseYearDescending(left: Collection, right: Collection): number {
+  return compareOptionalNumberDescending(integerValue(left.releaseYear), integerValue(right.releaseYear)) || compareText(left, right);
+}
+
 function formatWatchTime(seconds: number): string {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
@@ -346,7 +397,10 @@ export class LibraryController {
       const needle = query.query.toLocaleLowerCase();
       filtered.splice(0, filtered.length, ...filtered.filter((item) => [item.title, item.releaseYear, item.videoType, item.storyline ?? ""].join(" ").toLocaleLowerCase().includes(needle)));
     }
-    if (query.sort === "title") filtered.sort((left, right) => left.title.localeCompare(right.title, "zh-CN"));
+    if (query.sort === "title") filtered.sort(compareText);
+    if (query.sort === "score_desc") filtered.sort(compareScoreDescending);
+    if (query.sort === "release_year_desc") filtered.sort(compareReleaseYearDescending);
+    const localSort = query.sort === "title" || query.sort === "score_desc" || query.sort === "release_year_desc";
     const totalCount = raw.count;
     const totalPages = totalCount !== undefined ? Math.max(1, Math.ceil(totalCount / query.pageSize)) : undefined;
     const scopeDescription = totalCount === undefined
@@ -359,7 +413,7 @@ export class LibraryController {
       ...(totalCount !== undefined ? { totalCount } : {}),
       ...(totalPages !== undefined ? { totalPages } : {}),
       loadedCount: allCollections.length,
-      coverage: query.query || query.filter !== "all" || query.sort === "title" ? "loaded-page" : "server-page",
+      coverage: query.query || query.filter !== "all" || localSort ? "loaded-page" : "server-page",
       scopeDescription,
       collections: filtered,
     };

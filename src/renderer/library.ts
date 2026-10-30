@@ -92,6 +92,8 @@ function updateToolbar(): void {
   if (sortSelect) sortSelect.hidden = detailOpen;
   if (searchInput) searchInput.value = navigation.library.query ?? "";
   if (searchClear) searchClear.hidden = !Boolean(navigation.library.query);
+  if (filterSelect) filterSelect.value = navigation.library.filter ?? "all";
+  if (sortSelect) sortSelect.value = navigation.library.sort ?? "recent";
 }
 
 function classificationsName(id: string): string {
