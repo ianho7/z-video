@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "ES2022",
+    "outDir": "dist"
+  },
+  "include": ["src/renderer/renderer.ts", "src/renderer/window.d.ts", "src/shared/contracts.ts"],
+  "exclude": ["dist", "node_modules"]
+}

@@ -1,6 +1,8 @@
 /target
 .build-cache/
 .worktrees/
+node_modules/
+dist/
 .scratch/electron-migration/runs/
 **/*.rs.bk
 *.log
