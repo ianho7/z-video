@@ -7,4 +7,8 @@ const root = join(scriptDirectory, "..");
 const source = join(root, "src", "renderer");
 const target = join(root, "dist", "src", "renderer");
 await mkdir(target, { recursive: true });
-await Promise.all([cp(join(source, "index.html"), join(target, "index.html")), cp(join(source, "styles.css"), join(target, "styles.css"))]);
+await Promise.all([
+  cp(join(source, "index.html"), join(target, "index.html")),
+  cp(join(source, "styles.css"), join(target, "styles.css")),
+  cp(join(source, "library.css"), join(target, "library.css")),
+]);

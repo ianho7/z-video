@@ -58,6 +58,55 @@ export interface ClassificationResult {
   isEnabled: boolean;
 }
 
+/** Main-process collection shape. `coverPath` and episode file paths never cross IPC. */
+export interface NasCollection {
+  collectionId: string;
+  title: string;
+  coverPath: string;
+  backgroundPath: string;
+  releaseYear: string;
+  videoType: string;
+  score?: string;
+  rating?: string;
+  episodeCount?: number;
+  storyline?: string;
+}
+
+export interface NasCollectionPage {
+  count?: number;
+  classificationName?: string;
+  list: NasCollection[];
+}
+
+export interface NasEpisode {
+  episodeId: string;
+  episodeNumber: number;
+  title: string;
+  durationSec?: number;
+  seasonNumber: number;
+  /** Kept in main only for the player/image owner. */
+  filePath?: string;
+  versionId?: string;
+}
+
+export interface NasPlaybackHistory {
+  lastVideoId?: string;
+  playDurationSec?: number;
+  audioIndex?: number;
+  subtitleIndex?: number;
+}
+
+export interface NasCollectionDetail extends NasCollection {
+  seasons: Array<{ seasonNumber: number; title: string; episodes: NasEpisode[] }>;
+  history?: NasPlaybackHistory;
+}
+
+export interface NasImage {
+  dataUrl: string;
+  mimeType: string;
+  bytes: number;
+}
+
 export class MfaProof {
   private constructor(readonly value: string) {}
 
@@ -149,6 +198,136 @@ function boolish(value: unknown): boolean | undefined {
   if (value === 0 || value === "0") return false;
   if (value === 1 || value === "1") return true;
   return undefined;
+}
+
+function arrayValue(value: unknown): unknown[] | undefined {
+  return Array.isArray(value) ? value : undefined;
+}
+
+function parseDurationSeconds(value: unknown): number | undefined {
+  const raw = stringValue(value)?.trim();
+  if (!raw) return undefined;
+  if (/^\d+(?:\.\d+)?$/.test(raw)) {
+    const seconds = Number(raw);
+    return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds) : undefined;
+  }
+  if (raw.includes(":")) {
+    const parts = raw.split(":").map((part) => Number(part.trim()));
+    if ((parts.length !== 2 && parts.length !== 3) || parts.some((part) => !Number.isFinite(part) || part < 0)) return undefined;
+    if (parts.length === 2 && parts[1] >= 60) return undefined;
+    if (parts.length === 3 && (parts[1] >= 60 || parts[2] >= 60)) return undefined;
+    const seconds = parts.length === 3 ? parts[0] * 3600 + parts[1] * 60 + parts[2] : parts[0] * 60 + parts[1];
+    return seconds > 0 ? Math.round(seconds) : undefined;
+  }
+  const unitPattern = /^(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m)?(?:(\d+(?:\.\d+)?)s)?$/i.exec(raw);
+  if (!unitPattern || !unitPattern[0].replace(/[hms]/gi, "")) return undefined;
+  const hours = Number(unitPattern[1] ?? 0);
+  const minutes = Number(unitPattern[2] ?? 0);
+  const seconds = Number(unitPattern[3] ?? 0);
+  const total = hours * 3600 + minutes * 60 + seconds;
+  return Number.isFinite(total) && total > 0 ? Math.round(total) : undefined;
+}
+
+function parseObject(value: unknown, message: string): Record<string, unknown> {
+  return asObject(value, message);
+}
+
+function parseNasCollection(value: unknown, fallbackId = ""): NasCollection {
+  const item = parseObject(value, "影视条目格式无效");
+  const collectionId = stringValue(item.collection_id) ?? stringValue(item.collectionId) ?? stringValue(item.id) ?? fallbackId;
+  if (!collectionId) throw new NasError("malformed", "影视条目缺少 collection_id");
+  const title = stringValue(item.title) ?? stringValue(item.name) ?? "未命名影视";
+  const coverPath = stringValue(item.cover) ?? stringValue(item.poster) ?? stringValue(item.cover_url) ?? stringValue(item.cover_path) ?? "";
+  const backgroundPath = stringValue(item.background) ?? stringValue(item.backdrop) ?? stringValue(item.background_image) ?? stringValue(item.background_url) ?? stringValue(item.bg) ?? "";
+  const releaseYear = stringValue(item.release_year) ?? stringValue(item.year) ?? stringValue(item.pub_year) ?? "";
+  const videoType = stringValue(item.video_type) ?? stringValue(item.type) ?? stringValue(item.kind) ?? "";
+  const score = stringValue(item.score);
+  const rating = stringValue(item.rating);
+  const episodeCount = numberValue(item.episode_count) ?? numberValue(item.episodeCount);
+  const storyline = stringValue(item.storyline) ?? stringValue(item.plot) ?? stringValue(item.description) ?? stringValue(item.intro);
+  return { collectionId, title, coverPath, backgroundPath, releaseYear, videoType, score, rating, episodeCount, storyline };
+}
+
+function parseNasHistory(value: unknown): NasPlaybackHistory | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const object = value as Record<string, unknown>;
+  const lastVideoId = stringValue(object.last_video_id) ?? stringValue(object.video_id) ?? stringValue(object.episode_id);
+  const playDurationSec = numberValue(object.play_duration) ?? numberValue(object.play_duration_sec) ?? numberValue(object.position);
+  const audioIndex = numberValue(object.audio_index);
+  const subtitleIndex = numberValue(object.subtitle_index);
+  if (!lastVideoId && playDurationSec === undefined && audioIndex === undefined && subtitleIndex === undefined) return undefined;
+  return { lastVideoId, playDurationSec, audioIndex, subtitleIndex };
+}
+
+function parseNasEpisode(value: unknown, collectionId: string, seasonNumber: number): NasEpisode | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const item = value as Record<string, unknown>;
+  const videoId = stringValue(item.video_id) ?? stringValue(item.episode_id) ?? stringValue(item.id);
+  const filePath = stringValue(item.file_path) ?? stringValue(item.episode_path) ?? stringValue(item.path) ?? stringValue(item.url);
+  const versionId = stringValue(item.version_id);
+  const hasEpisodeData = Boolean(videoId || filePath || versionId || item.episode !== undefined || item.episode_number !== undefined || item.episode_num !== undefined);
+  if (!hasEpisodeData) return undefined;
+  const episodeNumber = Math.max(1, Math.round(numberValue(item.episode) ?? numberValue(item.episode_number) ?? numberValue(item.episode_num) ?? numberValue(item.number) ?? 1));
+  const title = stringValue(item.title) ?? stringValue(item.name) ?? stringValue(item.episode_title) ?? stringValue(item.episode_name) ?? stringValue(item.version_name) ?? `第${episodeNumber}集`;
+  const stableId = videoId ?? versionId ?? filePath ?? `${collectionId}-${seasonNumber}-${episodeNumber}`;
+  return {
+    episodeId: stableId,
+    episodeNumber,
+    title,
+    durationSec: parseDurationSeconds(item.video_duration ?? item.duration ?? item.duration_sec),
+    seasonNumber,
+    filePath,
+    versionId,
+  };
+}
+
+function parseNasDetail(value: unknown, requestedCollectionId: string): NasCollectionDetail {
+  const data = parseObject(value, "详情响应 data 必须是对象");
+  const nested = data.collection && typeof data.collection === "object" && !Array.isArray(data.collection)
+    ? { ...(data.collection as Record<string, unknown>), ...data }
+    : data;
+  const collection = parseNasCollection(nested, requestedCollectionId);
+  const history = parseNasHistory(nested.history);
+  const rawSeasons: Array<{ seasonNumber: number; title: string; episodes: NasEpisode[] }> = [];
+  const list = arrayValue(nested.list);
+  for (const entry of list ?? []) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const item = entry as Record<string, unknown>;
+    const seasonNumber = Math.max(1, Math.round(numberValue(item.season) ?? numberValue(item.season_number) ?? numberValue(item.season_num) ?? numberValue(item.season_index) ?? 1));
+    const seasonTitle = stringValue(item.season_name) ?? stringValue(item.season_title) ?? `第${seasonNumber}季`;
+    const nestedEpisodes = ["version_list", "episodes", "episode_list", "video_list"].flatMap((key) => arrayValue(item[key]) ?? []);
+    const entries = nestedEpisodes.length ? nestedEpisodes : [entry];
+    for (const episodeValue of entries) {
+      const episode = parseNasEpisode(episodeValue, collection.collectionId, seasonNumber);
+      if (!episode) continue;
+      let season = rawSeasons.find((candidate) => candidate.seasonNumber === seasonNumber);
+      if (!season) {
+        season = { seasonNumber, title: seasonTitle, episodes: [] };
+        rawSeasons.push(season);
+      }
+      if (!season.episodes.some((candidate) => candidate.episodeId === episode.episodeId || (candidate.filePath && candidate.filePath === episode.filePath))) {
+        season.episodes.push(episode);
+      }
+    }
+  }
+  for (const key of ["video_list", "episodes", "episode_list"]) {
+    for (const episodeValue of arrayValue(nested[key]) ?? []) {
+      const episode = parseNasEpisode(episodeValue, collection.collectionId, 1);
+      if (!episode) continue;
+      let season = rawSeasons.find((candidate) => candidate.seasonNumber === 1);
+      if (!season) {
+        season = { seasonNumber: 1, title: "第一季", episodes: [] };
+        rawSeasons.push(season);
+      }
+      if (!season.episodes.some((candidate) => candidate.episodeId === episode.episodeId || (candidate.filePath && candidate.filePath === episode.filePath))) season.episodes.push(episode);
+    }
+  }
+  for (const season of rawSeasons) season.episodes.sort((left, right) => left.episodeNumber - right.episodeNumber);
+  rawSeasons.sort((left, right) => left.seasonNumber - right.seasonNumber);
+  if (!rawSeasons.length && ["movie", "film", "100", "电影"].includes(collection.videoType.toLowerCase())) {
+    rawSeasons.push({ seasonNumber: 1, title: "正片", episodes: [{ episodeId: collection.collectionId, episodeNumber: 1, title: collection.title || "正片", seasonNumber: 1 }] });
+  }
+  return { ...collection, seasons: rawSeasons, history };
 }
 
 function encodeCookieValue(value: string): string {
@@ -314,6 +493,133 @@ export class NasApiClient {
     }
   }
 
+  async getCollections(
+    session: AuthenticatedSession,
+    classificationId: string,
+    start: number,
+    limit: number,
+  ): Promise<NasCollectionPage> {
+    const normalizedClassificationId = classificationId.trim();
+    if (!normalizedClassificationId) throw new NasError("malformed", "影视列表请求缺少 classification_id");
+    if (!session.token.trim()) throw new NasError("unauthorized", "当前会话未认证", undefined, 401);
+    await this.ensureNasId(session);
+    const safeStart = Math.max(1, Math.floor(start));
+    const safeLimit = Math.min(100, Math.max(1, Math.floor(limit)));
+    const primary = await this.getCollectionsForSystem(session, normalizedClassificationId, safeStart, safeLimit, 94);
+    if (primary.list.length > 0) return primary;
+    try {
+      const fallback = await this.getCollectionsForSystem(session, normalizedClassificationId, safeStart, safeLimit, 7);
+      return fallback.list.length > 0 ? fallback : primary;
+    } catch (error) {
+      if (error instanceof NasError && error.kind === "unauthorized") throw error;
+      return primary;
+    }
+  }
+
+  async getCollectionDetail(
+    session: AuthenticatedSession,
+    collectionIdInput: string,
+    classificationIdInput: string,
+  ): Promise<NasCollectionDetail> {
+    const collectionId = collectionIdInput.trim();
+    const classificationId = classificationIdInput.trim();
+    if (!collectionId || !classificationId) throw new NasError("malformed", "详情请求缺少 collection_id 或 classification_id");
+    if (!session.token.trim()) throw new NasError("unauthorized", "当前会话未认证", undefined, 401);
+    await this.ensureNasId(session);
+    const detail = await this.getCollectionDetailV2(session, collectionId, classificationId);
+    if (detail.history !== undefined) return detail;
+    try {
+      const history = await this.getCollectionHistory(session, collectionId, classificationId);
+      if (history !== undefined) detail.history = history;
+    } catch (error) {
+      if (error instanceof NasError && error.kind === "unauthorized") throw error;
+      void recordNasRequest("library.collection_history", "POST", "/zvideo/collection/info", "error", Date.now(), errorDetails(error));
+    }
+    return detail;
+  }
+
+  async fetchImage(session: AuthenticatedSession, imagePathInput: string): Promise<NasImage> {
+    const imagePath = imagePathInput.trim();
+    if (!imagePath) throw new NasError("malformed", "图片请求缺少 image path");
+    if (!session.token.trim()) throw new NasError("unauthorized", "当前会话未认证", undefined, 401);
+    await this.ensureNasId(session);
+    const url = new URL(imagePath.startsWith("http://") || imagePath.startsWith("https://") ? imagePath : `${session.baseUrl.replace(/\/+$/, "")}/${imagePath.replace(/^\/+/, "")}`);
+    url.searchParams.set("app", DEVICE.app);
+    url.searchParams.set("plat", DEVICE.platform);
+    const startedAt = Date.now();
+    try {
+      const response = await this.fetcher(url.toString(), {
+        method: "GET",
+        headers: { token: session.token, Cookie: buildCookie(session) },
+      });
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (response.status === 401 || response.status === 403) throw new NasError("unauthorized", "library.image 未认证", undefined, response.status);
+      if (response.status !== 200) throw new NasError("http", `library.image HTTP ${response.status}`, undefined, response.status);
+      const mimeType = (response.headers.get("content-type")?.split(";", 1)[0] || guessImageMimeType(imagePath)).toLowerCase();
+      await recordNasRequest("library.image", "GET", "/image", "success", startedAt, { httpStatus: response.status, parseResult: "binary_read" });
+      return { dataUrl: `data:${mimeType};base64,${bytes.toString("base64")}`, mimeType, bytes: bytes.length };
+    } catch (error) {
+      const normalized = error instanceof NasError ? error : new NasError("network", `library.image 请求失败: ${error instanceof Error ? error.message : "unknown"}`);
+      await recordNasRequest("library.image", "GET", "/image", "error", startedAt, errorDetails(normalized));
+      throw normalized;
+    }
+  }
+
+  private async ensureNasId(session: AuthenticatedSession): Promise<void> {
+    if (session.nasId) return;
+    const nasId = await this.fetchHelperState(session);
+    if (!nasId) throw new NasError("malformed", "/zhelper/state 缺少 nas_id");
+    session.nasId = nasId;
+  }
+
+  private async getCollectionsForSystem(
+    session: AuthenticatedSession,
+    classificationId: string,
+    start: number,
+    limit: number,
+    system: number,
+  ): Promise<NasCollectionPage> {
+    const form = contextForm(session);
+    form.set("classification_id", classificationId);
+    form.set("start", String(start));
+    form.set("limit", String(limit));
+    form.set("system", String(system));
+    const body = await this.postSessionForm(formUrl(session.baseUrl, "/zvideo/video/v2/list"), form, session, "library.collections");
+    if (!isSuccess(body)) throw new NasError("business", errorMessage(body), codeString(body.code));
+    const data = asObject(body.data, "影视列表响应缺少 data");
+    if (!Object.prototype.hasOwnProperty.call(data, "list")) throw new NasError("malformed", "影视列表响应缺少 data.list，未将其静默视为空片库");
+    const list = arrayValue(data.list);
+    if (!list) throw new NasError("malformed", "影视列表响应 data.list 格式无效");
+    const parsedList = list.map((value) => parseNasCollection(value));
+    const count = numberValue(data.count) ?? numberValue(data.collection_count) ?? numberValue(data.collectionCount);
+    return {
+      count,
+      classificationName: stringValue(data.classification_name) ?? stringValue(data.classificationName),
+      list: parsedList,
+    };
+  }
+
+  private async getCollectionDetailV2(session: AuthenticatedSession, collectionId: string, classificationId: string): Promise<NasCollectionDetail> {
+    const form = contextForm(session);
+    form.set("collection_id", collectionId);
+    form.set("classification_id", classificationId);
+    form.set("get_type", "all");
+    const body = await this.postSessionForm(formUrl(session.baseUrl, "/zvideo/collection/v2/info"), form, session, "library.collection_detail");
+    if (!isSuccess(body)) throw new NasError("business", errorMessage(body), codeString(body.code));
+    return parseNasDetail(body.data, collectionId);
+  }
+
+  private async getCollectionHistory(session: AuthenticatedSession, collectionId: string, classificationId: string): Promise<NasPlaybackHistory | undefined> {
+    const form = contextForm(session);
+    form.set("collection_id", collectionId);
+    form.set("classification_id", classificationId);
+    form.set("get_type", "all");
+    const body = await this.postSessionForm(formUrl(session.baseUrl, "/zvideo/collection/info"), form, session, "library.collection_history");
+    if (!isSuccess(body)) throw new NasError("business", errorMessage(body), codeString(body.code));
+    const data = asObject(body.data, "续播历史响应缺少 data");
+    return parseNasHistory(data.history);
+  }
+
   async sendMfaCode(baseUrlInput: string, username: string, challengeType?: string): Promise<void> {
     const nasSign = (await this.fetchPublicKey(baseUrlInput)).sign;
     if (!nasSign) throw new NasError("malformed", "NAS /key/pub 响应缺少用于短信验证的 sign");
@@ -428,6 +734,14 @@ function safeRoute(url: string): string {
   } catch {
     return "/";
   }
+}
+
+function guessImageMimeType(path: string): string {
+  const extension = path.split("?")[0].split(".").pop()?.toLowerCase();
+  if (extension === "png") return "image/png";
+  if (extension === "webp") return "image/webp";
+  if (extension === "gif") return "image/gif";
+  return "image/jpeg";
 }
 
 function errorDetails(error: unknown): { errorKind?: string; errorCode?: string; httpStatus?: number; parseResult?: string; businessResult?: string } {
