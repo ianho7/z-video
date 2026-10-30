@@ -6,6 +6,13 @@ export const IPC_CHANNELS = {
   logout: "session:logout",
   listClassifications: "library:list-classifications",
   playerChooseLocalFile: "player:choose-local-file",
+  playerChooseSubtitleFile: "player:choose-subtitle-file",
   playerCommand: "player:command",
   playerEvent: "player:event",
+  listCollections: "library:list-collections",
+  getCollectionDetail: "library:get-detail",
+  listContinueWatching: "library:list-continue-watching",
+  loadImage: "library:load-image",
+  getNavigation: "library:get-navigation",
+  setNavigation: "library:set-navigation",
 } as const;

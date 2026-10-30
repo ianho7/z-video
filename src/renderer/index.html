@@ -7,6 +7,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none';" />
     <title>z-video · 局域网片库</title>
     <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="library.css" />
   </head>
   <body>
     <div class="app-shell">
@@ -50,9 +51,55 @@
           <nav id="classification-list" class="classification-list" aria-label="影视分类"></nav>
           <div class="sidebar-footer"><span id="session-user"></span><button id="logout-button" class="text-button" type="button">退出</button></div>
         </aside>
-        <main class="library-main">
-          <header class="toolbar"><div><p class="eyebrow">LIBRARY</p><h2>片库</h2></div><div class="toolbar-actions"><button id="open-local-button" class="secondary-button" type="button">打开本地视频</button><button id="refresh-button" class="secondary-button" type="button">刷新分类</button></div></header>
+        <main class="library-main" id="main-panel" tabindex="-1">
+          <header class="toolbar" aria-label="片库工具栏">
+            <div class="toolbar-leading">
+              <button id="library-back-button" class="text-button" type="button" hidden aria-label="返回片库">返回片库</button>
+              <div><p class="eyebrow" id="toolbar-context">LIBRARY</p><h2 id="toolbar-title">片库</h2></div>
+            </div>
+            <div class="toolbar-actions">
+              <form id="library-search-form" class="library-search" role="search">
+                <label class="sr-only" for="library-search-input">搜索片名或类型</label>
+                <span aria-hidden="true">⌕</span>
+                <input id="library-search-input" type="search" autocomplete="off" placeholder="搜索片名或类型" />
+                <kbd>Ctrl K</kbd>
+                <button id="library-search-clear" class="text-button" type="button" hidden aria-label="清空搜索">清空</button>
+              </form>
+              <select id="library-filter" class="library-select" aria-label="类型筛选">
+                <option value="all">全部类型</option>
+                <option value="movie">电影</option>
+                <option value="tv">剧集</option>
+                <option value="anime">动漫</option>
+                <option value="show">综艺</option>
+                <option value="diy">自建合集</option>
+              </select>
+              <select id="library-sort" class="library-select" aria-label="排序">
+                <option value="recent">最近添加</option>
+                <option value="title">片名</option>
+                <option value="score_desc">评分高到低</option>
+                <option value="release_year_desc">上映年份新到旧</option>
+              </select>
+              <button id="open-local-button" class="secondary-button" type="button">打开本地视频</button>
+              <button id="refresh-button" class="secondary-button" type="button">刷新</button>
+            </div>
+          </header>
           <div id="library-message" class="library-message" role="status" aria-live="polite"></div>
+          <div id="library-scroll" class="library-scroll" tabindex="-1">
+            <section id="continue-section" class="continue-section" aria-labelledby="continue-title" hidden>
+              <div class="section-heading"><div><p class="eyebrow">RESUME</p><h3 id="continue-title">继续观看</h3></div><span id="continue-scope" class="scope-label"></span></div>
+              <div id="continue-row" class="continue-row"></div>
+            </section>
+            <section id="collection-section" aria-labelledby="collection-title">
+              <div class="section-heading"><div><p class="eyebrow">COLLECTIONS</p><h3 id="collection-title">片库内容</h3></div><span id="library-scope" class="scope-label"></span></div>
+              <div id="collection-grid" class="collection-grid" aria-live="polite"></div>
+              <div id="library-empty" class="library-empty" hidden>
+                <h3 id="library-empty-title">暂无内容</h3><p id="library-empty-message">当前分类没有可显示的影视。</p>
+              </div>
+              <div id="library-pagination" class="library-pagination" role="navigation" aria-label="片库分页"></div>
+            </section>
+            <section id="detail-section" class="detail-section" hidden aria-labelledby="detail-title"></section>
+          </div>
+          <div id="player-mount" data-player-mount hidden aria-label="播放器"></div>
         </main>
       </section>
 
@@ -72,6 +119,7 @@
             <div class="player-control-row player-secondary-row">
               <label for="player-audio-track">音轨</label><select id="player-audio-track" disabled><option value="">自动</option></select>
               <label for="player-subtitle-track">字幕</label><select id="player-subtitle-track" disabled><option value="">关闭</option></select>
+              <button id="player-subtitle-file-button" class="secondary-button" type="button" disabled>加载字幕文件</button>
               <span id="player-status" class="status" role="status" aria-live="polite"></span>
             </div>
           </div>

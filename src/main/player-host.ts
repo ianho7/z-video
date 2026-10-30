@@ -10,6 +10,7 @@ import { PlaybackCoordinator } from "./player";
 
 export interface PlaybackHost {
   chooseLocalFile(): Promise<{ opened: boolean }>;
+  chooseSubtitleFile(): Promise<{ loaded: boolean }>;
   handle(command: PlaybackCommand): Promise<void>;
   close(): Promise<void>;
 }
@@ -39,6 +40,17 @@ export class MainPlaybackHost implements PlaybackHost {
     if (result.canceled || result.filePaths.length === 0) return { opened: false };
     await this.coordinator.openLocal(result.filePaths[0], "local-file");
     return { opened: true };
+  }
+
+  async chooseSubtitleFile(): Promise<{ loaded: boolean }> {
+    if (this.window.isDestroyed()) return { loaded: false };
+    const result = await dialog.showOpenDialog(this.window, {
+      title: "加载外部字幕",
+      properties: ["openFile"],
+      filters: [{ name: "字幕文件", extensions: ["srt", "ass", "ssa", "vtt", "sub"] }],
+    });
+    if (result.canceled || result.filePaths.length === 0) return { loaded: false };
+    return { loaded: await this.coordinator.addExternalSubtitle(result.filePaths[0]) };
   }
 
   handle(command: PlaybackCommand): Promise<void> {

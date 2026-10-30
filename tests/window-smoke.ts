@@ -14,6 +14,27 @@ const authenticatedState = {
   classifications: [{ id: "movie", name: "电影", count: 2, isSystem: true, isEnabled: true }],
 };
 
+const fixturePage = {
+  query: { classificationId: "movie", page: 1, pageSize: 50, filter: "all", sort: "recent" },
+  page: 1,
+  pageSize: 50,
+  totalCount: 1,
+  totalPages: 1,
+  loadedCount: 1,
+  coverage: "server-page",
+  scopeDescription: "当前已加载范围：第 1 页 1/1 项；共 1 页",
+  collections: [{ collectionId: "fixture-collection", title: "窗口测试影片", cover: "", releaseYear: "2026", videoType: "movie", imageKey: "fixture-collection|cover" }],
+};
+
+const fixtureDetail = {
+  collectionId: "fixture-collection",
+  title: "窗口测试影片",
+  cover: "",
+  releaseYear: "2026",
+  videoType: "movie",
+  seasons: [{ seasonNumber: 1, title: "正片", episodes: [{ episodeId: "fixture-episode", episodeNumber: 1, title: "正片", durationSec: 90, seasonNumber: 1 }] }],
+};
+
 async function run(): Promise<void> {
   await app.whenReady();
   ipcMain.handle("session:restore", async () => loggedOutState);
@@ -22,6 +43,12 @@ async function run(): Promise<void> {
   ipcMain.handle("session:verify-mfa", async () => ({ state: authenticatedState }));
   ipcMain.handle("session:logout", async () => ({ state: loggedOutState }));
   ipcMain.handle("library:list-classifications", async () => ({ classifications: [], state: authenticatedState }));
+  ipcMain.handle("library:get-navigation", async () => ({ view: "library", library: { classificationId: "movie", page: 1, pageSize: 50, filter: "all", sort: "recent", scrollTop: 0 } }));
+  ipcMain.handle("library:set-navigation", async (_event, context) => context);
+  ipcMain.handle("library:list-collections", async () => ({ state: authenticatedState, page: fixturePage }));
+  ipcMain.handle("library:get-detail", async () => ({ state: authenticatedState, detail: fixtureDetail }));
+  ipcMain.handle("library:list-continue-watching", async () => ({ state: authenticatedState, items: [] }));
+  ipcMain.handle("library:load-image", async () => ({ state: authenticatedState, dataUrl: "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=", mimeType: "image/gif" }));
 
   const window = new BrowserWindow({
     show: false,
@@ -44,7 +71,7 @@ async function run(): Promise<void> {
       loginView: document.querySelector('[data-view="login"]')?.hidden === false,
       serverInput: Boolean(document.querySelector('#server-url')),
       playerBridge: typeof window.zVideo.player === 'object',
-      playerControls: Boolean(document.querySelector('#player-seek') && document.querySelector('#player-audio-track'))
+      playerControls: Boolean(document.querySelector('#player-seek') && document.querySelector('#player-audio-track') && document.querySelector('#player-subtitle-file-button'))
     })`,
     true,
   )) as { bridge: boolean; nodeRequire: string; nodeProcess: string; loginView: boolean; serverInput: boolean; playerBridge: boolean; playerControls: boolean };
@@ -71,13 +98,30 @@ async function run(): Promise<void> {
     `({
       loginHidden: document.querySelector('[data-view="login"]')?.hidden === true,
       libraryVisible: document.querySelector('[data-view="library"]')?.hidden === false,
-      category: document.querySelector('#classification-list')?.textContent || ''
+      category: document.querySelector('#classification-list')?.textContent || '',
+      card: document.querySelector('[data-collection-id]')?.textContent || '',
+      scope: document.querySelector('#library-scope')?.textContent || ''
     })`,
     true,
-  )) as { loginHidden: boolean; libraryVisible: boolean; category: string };
+  )) as { loginHidden: boolean; libraryVisible: boolean; category: string; card: string; scope: string };
   assert.equal(afterSubmit.loginHidden, true);
   assert.equal(afterSubmit.libraryVisible, true);
   assert.match(afterSubmit.category, /电影/);
+  assert.match(afterSubmit.card, /窗口测试影片/);
+  assert.match(afterSubmit.scope, /当前已加载范围/);
+
+  await window.webContents.executeJavaScript(
+    `document.querySelector('[data-collection-id="fixture-collection"]').click()`,
+    true,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  const detail = (await window.webContents.executeJavaScript(
+    `({ hidden: document.querySelector('#detail-section')?.hidden, title: document.querySelector('#detail-title')?.textContent || '', episode: document.querySelector('[data-episode-id]')?.textContent || '' })`,
+    true,
+  )) as { hidden: boolean; title: string; episode: string };
+  assert.equal(detail.hidden, false);
+  assert.match(detail.title, /窗口测试影片/);
+  assert.match(detail.episode, /正片/);
 
   window.close();
   for (const channel of [
@@ -87,6 +131,12 @@ async function run(): Promise<void> {
     "session:verify-mfa",
     "session:logout",
     "library:list-classifications",
+    "library:get-navigation",
+    "library:set-navigation",
+    "library:list-collections",
+    "library:get-detail",
+    "library:list-continue-watching",
+    "library:load-image",
   ]) {
     ipcMain.removeHandler(channel);
   }

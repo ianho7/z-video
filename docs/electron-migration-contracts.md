@@ -18,7 +18,7 @@ they do not claim that the later features already exist.
 | Preload bridge | `src/preload/preload.ts` | The only renderer capability surface. `contextIsolation`, `sandbox`, and `nodeIntegration: false` are required. |
 | Presentation | `src/renderer/renderer.ts` and `src/renderer/index.html` | DOM state, form inputs, focus and visual states. It owns no token, sign, password persistence, NAS URL fetch, or media URI. |
 
-The sandboxed preload keeps a literal copy of the six channel names because a
+The sandboxed preload keeps a literal copy of the channel names because a
 sandboxed preload cannot load local CommonJS modules. The canonical names are
 also recorded in `src/shared/ipc-channels.ts`; any channel change must update
 both files and `src/main/ipc.ts` in one change.
@@ -48,16 +48,35 @@ Ticket 03 owns the one native playback engine behind `PlaybackCommand` and
 `PlaybackEvent`. Main resolves the selected `episodeId` to a server-provided
 stream and keeps the private media address out of renderer DTOs and logs.
 
-Ticket 03 adds the `player:choose-local-file`, `player:command` and
-`player:event` channels. The preload exposes these as `window.zVideo.player`;
-the renderer can request a main-owned file picker, send validated playback
-intent, and subscribe to renderer-safe `PlaybackEvent` values. The selected
-file path remains in main and is consumed by the libmpv adapter only. The
+Ticket 03 adds the `player:choose-local-file`, `player:choose-subtitle-file`,
+`player:command` and `player:event` channels. The preload exposes these as
+`window.zVideo.player`; the renderer can request a main-owned media/subtitle
+file picker, send validated playback intent, and subscribe to renderer-safe
+`PlaybackEvent` values. The selected file paths remain in main and are
+consumed by the libmpv adapter only. The
 current local-sample route uses a Win32 child host (`wid`) inside the existing
 BrowserWindow, with a semantic HTML control strip immediately below the native
 surface. Controls are keyboard/accessibility usable, but HTML controls are not
-painted over the native child surface; that visual-parity gap is explicit until
-a Windows shared-texture compositor route has independent runtime proof.
+painted over the native child surface; that visual-parity gap is explicit while
+the feasibility note's Windows shared-texture compositor route remains only a
+candidate pending independent runtime proof. The main-owned subtitle picker
+also keeps external subtitle paths out of the renderer.
+
+## Ticket 02 additions
+
+Ticket 02 adds the following renderer-safe library operations through the
+preload bridge: `listCollections`, `getDetail`, `listContinueWatching`,
+`loadImage`, `getNavigation` and `setNavigation`. Collection and detail DTOs
+contain opaque collection/image keys, normalized numeric/string metadata,
+episodes and an optional positive resume position; they do not contain token,
+`nas_sign`, private `file_path` values or media URIs. Images are fetched by the
+main process and returned as bounded, renderer-local data URLs.
+
+Search, type filtering and title/score/release-year sorting are declared as
+`loaded-page` scope when applied locally. The UI must show that scope instead
+of presenting a single paginated response as a full-library result. Continue-watching entries
+come only from cached detail responses with matching positive NAS history; the
+library controller does not poll every collection for progress.
 
 ## Commands
 

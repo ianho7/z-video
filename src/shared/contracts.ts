@@ -38,6 +38,9 @@ export interface Collection {
   rating?: string;
   episodeCount?: number;
   storyline?: string;
+  /** Main-process image key. The renderer never receives the NAS image path. */
+  imageKey?: string;
+  backgroundImageKey?: string;
 }
 
 /** Renderer-visible episode data. The main process resolves private media paths. */
@@ -49,18 +52,88 @@ export interface Episode {
   seasonNumber?: number;
 }
 
+export interface EpisodeSeason {
+  seasonNumber: number;
+  title: string;
+  episodes: Episode[];
+}
+
+export interface ResumeState {
+  episodeId: string;
+  positionSec: number;
+  audioIndex?: number;
+  subtitleIndex?: number;
+}
+
+export interface CollectionDetail extends Collection {
+  seasons: EpisodeSeason[];
+  resume?: ResumeState;
+}
+
+export interface ContinueWatchingItem {
+  collectionId: string;
+  classificationId: string;
+  episodeId: string;
+  title: string;
+  episodeTitle: string;
+  imageKey?: string;
+  watchedSeconds: number;
+  durationSeconds?: number;
+  progressPercent?: number;
+  progressLabel: string;
+  durationLabel: string;
+}
+
+export type LibraryFilter = "all" | "movie" | "tv" | "anime" | "show" | "diy";
+
+export type LibraryCoverage = "server-page" | "loaded-page";
+
 export interface LibraryQuery {
   classificationId: string;
   page: number;
   pageSize: number;
   query?: string;
-  sort?: "recent" | "title";
+  filter?: LibraryFilter;
+  sort?: "recent" | "title" | "score_desc" | "release_year_desc";
 }
 
 export interface NavigationContext {
   view: AppView;
   library: LibraryQuery & { scrollTop: number };
-  detail?: { collectionId: string; episodeId?: string };
+  detail?: { collectionId: string; episodeId?: string; focusCollectionId?: string };
+}
+
+export interface LibraryPage {
+  query: LibraryQuery;
+  page: number;
+  pageSize: number;
+  totalCount?: number;
+  totalPages?: number;
+  loadedCount: number;
+  coverage: LibraryCoverage;
+  scopeDescription: string;
+  collections: Collection[];
+}
+
+export interface LibraryPageResult {
+  state: PublicSessionState;
+  page?: LibraryPage;
+}
+
+export interface LibraryDetailResult {
+  state: PublicSessionState;
+  detail?: CollectionDetail;
+}
+
+export interface LibraryContinueWatchingResult {
+  state: PublicSessionState;
+  items: ContinueWatchingItem[];
+}
+
+export interface LibraryImageResult {
+  state: PublicSessionState;
+  dataUrl?: string;
+  mimeType?: string;
 }
 
 export interface SessionIdentity {
@@ -114,7 +187,7 @@ export type PlaybackEvent =
   | { type: "ready"; episodeId: string; durationSec?: number }
   | { type: "state"; state: "playing" | "paused" | "buffering" | "ended" }
   | { type: "position"; episodeId: string; positionSec: number; durationSec?: number }
-  | { type: "tracks"; audio: Array<{ id: string; label: string }>; subtitles: Array<{ id: string; label: string }> }
+  | { type: "tracks"; audio: Array<{ id: string; label: string; selected?: boolean }>; subtitles: Array<{ id: string; label: string; selected?: boolean }> }
   | { type: "error"; episodeId?: string; message: string }
   | { type: "closed"; episodeId?: string };
 
@@ -128,10 +201,19 @@ export interface ElectronApi {
   };
   library: {
     listClassifications(): Promise<{ classifications: Classification[]; state: PublicSessionState }>;
+    listCollections(query: LibraryQuery): Promise<LibraryPageResult>;
+    getDetail(input: { collectionId: string; classificationId: string }): Promise<LibraryDetailResult>;
+    listContinueWatching(): Promise<LibraryContinueWatchingResult>;
+    loadImage(input: { collectionId: string; kind: "cover" | "background" }): Promise<LibraryImageResult>;
+    getNavigation(): Promise<NavigationContext>;
+    setNavigation(context: NavigationContext): Promise<NavigationContext>;
   };
   player: {
     chooseLocalFile(): Promise<{ opened: boolean }>;
+    chooseSubtitleFile(): Promise<{ loaded: boolean }>;
     command(command: PlaybackCommand): Promise<void>;
+    /** Compatibility alias used by the library detail renderer's open intent. */
+    send(command: PlaybackCommand): Promise<void>;
     onEvent(listener: (event: PlaybackEvent) => void): () => void;
   };
 }

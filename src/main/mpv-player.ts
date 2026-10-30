@@ -167,6 +167,21 @@ export class MpvNativePlayer implements PlayerEngine {
     this.setProperty("sid", trackId ?? "no");
   }
 
+  /** Runtime probe used by the native smoke test; it never crosses the renderer boundary. */
+  getSelectedSubtitleTrackId(): string | undefined {
+    return this.readProperty("sid");
+  }
+
+  addSubtitleFile(path: string): void {
+    if (!existsSync(path)) throw new Error("subtitle file is unavailable");
+    const extension = path.toLowerCase().slice(path.lastIndexOf("."));
+    if (![".srt", ".ass", ".ssa", ".vtt", ".sub"].includes(extension)) throw new Error("unsupported subtitle file");
+    const api = this.api;
+    const handle = this.handle;
+    if (!api || !handle) throw new Error("mpv is not initialized");
+    this.assertSuccess(api.command(handle, ["sub-add", path, "select", null]));
+  }
+
   private setOption(name: string, value: string): void {
     const api = this.api;
     const handle = this.handle;
@@ -247,16 +262,17 @@ export class MpvNativePlayer implements PlayerEngine {
   }
 
   private emitTracks(): void {
-    const audio: Array<{ id: string; label: string }> = [];
-    const subtitles: Array<{ id: string; label: string }> = [];
+    const audio: Array<{ id: string; label: string; selected?: boolean }> = [];
+    const subtitles: Array<{ id: string; label: string; selected?: boolean }> = [];
     const count = Math.floor(this.readNumber("track-list/count") ?? 0);
     for (let index = 0; index < count && index < 128; index += 1) {
       const type = this.readProperty(`track-list/${index}/type`);
       const id = this.readProperty(`track-list/${index}/id`);
       if (!type || !id) continue;
       const title = this.readProperty(`track-list/${index}/title`) ?? this.readProperty(`track-list/${index}/lang`) ?? `${type} ${id}`;
-      if (type === "audio") audio.push({ id, label: title });
-      if (type === "sub") subtitles.push({ id, label: title });
+      const selected = this.readProperty(`track-list/${index}/selected`) === "yes";
+      if (type === "audio") audio.push({ id, label: title, ...(selected ? { selected: true } : {}) });
+      if (type === "sub") subtitles.push({ id, label: title, ...(selected ? { selected: true } : {}) });
     }
     const signature = JSON.stringify({ audio, subtitles });
     if (signature === this.lastTrackSignature) return;

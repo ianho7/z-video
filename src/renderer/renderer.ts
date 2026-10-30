@@ -1,4 +1,5 @@
-import type { Classification, PlaybackEvent, PublicSessionState } from "../shared/contracts";
+import type { PlaybackEvent, PublicSessionState } from "../shared/contracts";
+import { refreshLibrary, setLibrarySessionState } from "./library.js";
 
 const loginView = document.querySelector<HTMLElement>('[data-view="login"]');
 const libraryView = document.querySelector<HTMLElement>('[data-view="library"]');
@@ -10,7 +11,6 @@ const mfaHint = document.querySelector<HTMLElement>("#mfa-hint");
 const mfaCode = document.querySelector<HTMLInputElement>("#mfa-code");
 const sendMfaButton = document.querySelector<HTMLButtonElement>("#send-mfa-button");
 const verifyMfaButton = document.querySelector<HTMLButtonElement>("#verify-mfa-button");
-const classificationList = document.querySelector<HTMLElement>("#classification-list");
 const sessionUser = document.querySelector<HTMLElement>("#session-user");
 const libraryMessage = document.querySelector<HTMLElement>("#library-message");
 const refreshButton = document.querySelector<HTMLButtonElement>("#refresh-button");
@@ -25,6 +25,7 @@ const playerTime = document.querySelector<HTMLElement>("#player-time");
 const playerFullscreenButton = document.querySelector<HTMLButtonElement>("#player-fullscreen-button");
 const playerAudioTrack = document.querySelector<HTMLSelectElement>("#player-audio-track");
 const playerSubtitleTrack = document.querySelector<HTMLSelectElement>("#player-subtitle-track");
+const playerSubtitleFileButton = document.querySelector<HTMLButtonElement>("#player-subtitle-file-button");
 const playerStatus = document.querySelector<HTMLElement>("#player-status");
 
 let playerVisible = false;
@@ -51,22 +52,6 @@ function setLoginMessage(message = "", error = false): void {
   loginStatus.classList.toggle("error", error);
 }
 
-function renderClassifications(classifications: Classification[]): void {
-  requireElement(classificationList, "classification-list").replaceChildren(
-    ...classifications.map((classification) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.dataset.classificationId = classification.id;
-      const name = document.createElement("span");
-      name.textContent = classification.name;
-      const count = document.createElement("span");
-      count.textContent = String(classification.count);
-      button.append(name, count);
-      return button;
-    }),
-  );
-}
-
 function renderState(state: PublicSessionState): void {
   const loggedIn = state.status === "authenticated";
   const mfaRequired = state.status === "mfa-required";
@@ -76,13 +61,15 @@ function renderState(state: PublicSessionState): void {
   if (mfaPanel) mfaPanel.hidden = !mfaRequired;
   if (mfaRequired && mfaHint) mfaHint.textContent = state.mfa?.message ?? "请输入验证码完成登录。";
   if (loggedIn) {
-    renderClassifications(state.classifications);
+    setLibrarySessionState(state);
     if (sessionUser) sessionUser.textContent = state.identity?.username ?? "已连接";
     if (libraryMessage) libraryMessage.textContent = state.error?.message ?? "选择一个分类开始浏览。";
     setLoginMessage();
   } else if (state.error) {
+    setLibrarySessionState(state);
     setLoginMessage(state.error.message, true);
   } else if (mfaRequired) {
+    setLibrarySessionState(state);
     setLoginMessage("账号需要二次验证。", false);
   }
 }
@@ -114,14 +101,19 @@ function setPlayerControlsEnabled(enabled: boolean): void {
   if (playerFullscreenButton) playerFullscreenButton.disabled = !enabled;
   if (playerAudioTrack) playerAudioTrack.disabled = !enabled;
   if (playerSubtitleTrack) playerSubtitleTrack.disabled = !enabled;
+  if (playerSubtitleFileButton) playerSubtitleFileButton.disabled = !enabled;
 }
 
-function renderTrackOptions(select: HTMLSelectElement | null, tracks: Array<{ id: string; label: string }>, emptyLabel: string): void {
+function renderTrackOptions(select: HTMLSelectElement | null, tracks: Array<{ id: string; label: string; selected?: boolean }>, emptyLabel: string): void {
   if (!select) return;
   const previous = select.value;
-  select.replaceChildren(new Option(emptyLabel, ""));
-  for (const track of tracks) select.append(new Option(track.label, track.id));
-  if (Array.from(select.options).some((option) => option.value === previous)) select.value = previous;
+  const options = [new Option(emptyLabel, ""), ...tracks.map((track) => {
+    const option = new Option(track.label, track.id);
+    option.selected = Boolean(track.selected);
+    return option;
+  })];
+  select.replaceChildren(...options);
+  if (!tracks.some((track) => track.selected) && Array.from(select.options).some((option) => option.value === previous)) select.value = previous;
 }
 
 function renderPlaybackEvent(event: PlaybackEvent): void {
@@ -180,6 +172,11 @@ async function sendPlayerCommand(command: Parameters<typeof window.zVideo.player
     setPlayerStatus("播放控制失败，请重试。", true);
   }
 }
+
+window.addEventListener("z-video:session-state", (event) => {
+  const state = (event as CustomEvent<PublicSessionState>).detail;
+  if (state) renderState(state);
+});
 
 async function restore(): Promise<void> {
   try {
@@ -245,6 +242,7 @@ refreshButton?.addEventListener("click", async () => {
   try {
     const result = await window.zVideo.library.listClassifications();
     renderState(result.state);
+    if (result.state.status === "authenticated") refreshLibrary();
   } catch {
     if (libraryMessage) libraryMessage.textContent = "分类刷新失败，请重试。";
   } finally {
@@ -290,6 +288,14 @@ playerAudioTrack?.addEventListener("change", () => {
 });
 playerSubtitleTrack?.addEventListener("change", () => {
   void sendPlayerCommand({ type: "set-subtitle-track", trackId: playerSubtitleTrack.value || null });
+});
+playerSubtitleFileButton?.addEventListener("click", async () => {
+  try {
+    const result = await window.zVideo.player.chooseSubtitleFile();
+    if (result.loaded) setPlayerStatus("外部字幕已加载并选中。 ");
+  } catch {
+    setPlayerStatus("无法加载外部字幕。", true);
+  }
 });
 
 window.zVideo.player.onEvent(renderPlaybackEvent);

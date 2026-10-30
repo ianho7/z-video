@@ -35,6 +35,10 @@ class FakePlayerEngine implements PlayerEngine {
   setSubtitleTrack(trackId: string | null): void {
     this.calls.push(`subtitle:${trackId ?? "off"}`);
   }
+
+  addSubtitleFile(path: string): void {
+    this.calls.push(`subtitle-file:${path}`);
+  }
 }
 
 function createCoordinator(engine: FakePlayerEngine, events: PlaybackEvent[]): PlaybackCoordinator {
@@ -94,4 +98,18 @@ test("close discards late native events and forwards track controls", async () =
     { type: "loading", episodeId: "episode" },
     { type: "closed", episodeId: "episode" },
   ]);
+});
+
+test("external subtitles stay main-owned and can be selected or turned off", async () => {
+  const engine = new FakePlayerEngine();
+  const events: PlaybackEvent[] = [];
+  const coordinator = createCoordinator(engine, events);
+
+  await coordinator.openLocal("sample.mp4", "episode");
+  assert.equal(await coordinator.addExternalSubtitle("private-subtitle.srt"), true);
+  await coordinator.handle({ type: "set-subtitle-track", trackId: "2" });
+  await coordinator.handle({ type: "set-subtitle-track", trackId: null });
+
+  assert.deepEqual(engine.calls, ["stop", "subtitle-file:private-subtitle.srt", "subtitle:2", "subtitle:off"]);
+  assert.equal(JSON.stringify(events).includes("private-subtitle.srt"), false);
 });

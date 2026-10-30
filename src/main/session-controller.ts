@@ -28,6 +28,7 @@ export interface NasGateway {
 export class SessionController {
   private session?: AuthenticatedSession;
   private pendingLogin?: LoginInput;
+  private classifications: ClassificationResult[] = [];
 
   constructor(private readonly nas: NasGateway | NasApiClient, private readonly store: SessionStore) {}
 
@@ -38,7 +39,10 @@ export class SessionController {
     } catch (error) {
       return this.loggedOutState(toAppError(error, "无法读取安全会话"));
     }
-    if (!saved) return this.loggedOutState();
+    if (!saved) {
+      this.classifications = [];
+      return this.loggedOutState();
+    }
 
     this.session = { ...saved };
     const state = await this.readClassifications();
@@ -119,6 +123,7 @@ export class SessionController {
   async logout(): Promise<PublicSessionState> {
     this.session = undefined;
     this.pendingLogin = undefined;
+    this.classifications = [];
     try {
       await this.store.clear();
       return this.loggedOutState();
@@ -132,8 +137,36 @@ export class SessionController {
     return { classifications: state.status === "authenticated" ? state.classifications : [], state };
   }
 
+  /** Main-process-only session accessor. It is never exposed through preload. */
+  getAuthenticatedSession(): AuthenticatedSession | undefined {
+    return this.session ? { ...this.session } : undefined;
+  }
+
+  getPublicState(error?: AppError): PublicSessionState {
+    if (!this.session) return this.loggedOutState(error);
+    return {
+      status: "authenticated",
+      identity: publicIdentity(this.session),
+      classifications: this.classifications.map((item) => ({ ...item })),
+      ...(error ? { error } : {}),
+    };
+  }
+
+  async invalidate(error: AppError): Promise<PublicSessionState> {
+    this.session = undefined;
+    this.pendingLogin = undefined;
+    this.classifications = [];
+    try {
+      await this.store.clear();
+    } catch {
+      // Returning to login is still safer than retrying an invalid session.
+    }
+    return this.loggedOutState(error);
+  }
+
   private async activate(session: AuthenticatedSession, remember: boolean): Promise<PublicSessionState> {
     this.session = session;
+    this.classifications = [];
     try {
       if (remember) await this.store.save(toPersistedSession(session));
       else await this.store.clear();
@@ -148,6 +181,7 @@ export class SessionController {
     if (!this.session) return this.loggedOutState();
     try {
       const classifications = await this.nas.getClassifications(this.session);
+      this.classifications = classifications.map((item) => ({ ...item }));
       return {
         status: "authenticated",
         identity: publicIdentity(this.session),
@@ -157,6 +191,7 @@ export class SessionController {
       const appError = toAppError(error, "无法读取片库分类");
       if (error instanceof NasError && error.kind === "unauthorized") {
         this.session = undefined;
+        this.classifications = [];
         try {
           await this.store.clear();
         } catch {
@@ -167,7 +202,7 @@ export class SessionController {
       return {
         status: "authenticated",
         identity: publicIdentity(this.session),
-        classifications: [],
+        classifications: this.classifications.map((item) => ({ ...item })),
         error: appError,
       };
     }

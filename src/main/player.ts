@@ -4,7 +4,7 @@ export type PlayerEngineEvent =
   | { type: "ready"; durationSec?: number }
   | { type: "state"; state: "playing" | "paused" | "buffering" | "ended" }
   | { type: "position"; positionSec: number; durationSec?: number }
-  | { type: "tracks"; audio: Array<{ id: string; label: string }>; subtitles: Array<{ id: string; label: string }> }
+  | { type: "tracks"; audio: Array<{ id: string; label: string; selected?: boolean }>; subtitles: Array<{ id: string; label: string; selected?: boolean }> }
   | { type: "error"; message: string }
   | { type: "closed" };
 
@@ -20,6 +20,7 @@ export interface PlayerEngine {
   seek(positionSec: number): void | Promise<void>;
   setAudioTrack(trackId: string): void | Promise<void>;
   setSubtitleTrack(trackId: string | null): void | Promise<void>;
+  addSubtitleFile(path: string): void | Promise<void>;
   destroy?(): void | Promise<void>;
 }
 
@@ -83,6 +84,18 @@ export class PlaybackCoordinator {
       case "set-subtitle-track":
         await this.engine.setSubtitleTrack(command.trackId);
         break;
+    }
+  }
+
+  async addExternalSubtitle(path: string): Promise<boolean> {
+    const episodeId = this.activeEpisodeId;
+    if (!episodeId) return false;
+    try {
+      await this.engine.addSubtitleFile(path);
+      return true;
+    } catch {
+      this.emit({ type: "error", episodeId, message: "外部字幕加载失败。" });
+      return false;
     }
   }
 

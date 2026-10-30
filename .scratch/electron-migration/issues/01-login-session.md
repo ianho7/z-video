@@ -9,6 +9,7 @@
 - [ ] Electron/TypeScript build and launch with a single window, isolated renderer and narrow validated IPC; no Rust build dependency.
 - [ ] NAS login/MFA and classification requests preserve current encoding and error behavior; token, nas_id and nas_sign stay distinct and helper-state completes NAS identity.
 - [ ] Secure persistence supports fresh-process recovery; unauthorized responses invalidate the saved Session. Secrets never appear in diagnostics or renderer data unnecessarily.
+- [ ] Existing manual LAN discovery, cancellation and NAS selection remain available; discovery uses the confirmed probe contract and does not substitute a public-key sign for device identity.
 - [ ] Shared typed Collection/Episode, navigation and native playback command/event contracts allow tickets 02 and 03 to implement independently. Document ownership and exact commands.
 - [ ] TDD at NAS public boundary covers independent request contracts and failure shapes; current build/type check passes. Record real-window/live-NAS evidence separately and truthfully.
 

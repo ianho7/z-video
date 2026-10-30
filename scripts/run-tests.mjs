@@ -3,3 +3,5 @@ await import("../dist/tests/session-controller.test.js");
 await import("../dist/tests/secure-session-store.test.js");
 await import("../dist/tests/diagnostics.test.js");
 await import("../dist/tests/player.test.js");
+await import("../dist/tests/library.test.js");
+await import("../dist/tests/library-controller.test.js");
