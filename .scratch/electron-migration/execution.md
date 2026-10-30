@@ -1,6 +1,7 @@
 # Migration execution
 
 Integration branch: `codex/electron-integration`.
+Draft PR: https://github.com/ianho7/z-video/pull/21 (user explicitly authorized code push and draft PR creation).
 Baseline: `1c0ab0b865abe80a47796f1de278374d85754b78`.
 Specification: `docs/electron-migration-spec.md`.
 Tickets: `issues/01-login-session.md` through `issues/05-cutover-package.md`.
