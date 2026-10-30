@@ -8,8 +8,9 @@ packaged deployment are outside this ticket or still unverified.
 ## Baseline and scope
 
 - Worktree branch: `codex/electron-03`.
-- Integration tip before the final discovery merge: `46f4fcf`; the current
-  branch also contains the later library/discovery integration commits.
+- Integration starting point: `46f4fcf`; latest integration `ebb631f` was
+  merged before final verification, preserving the library and discovery
+  additions.
 - Scope kept to local media selection, one main-process libmpv engine, the
   renderer-safe playback command/event bridge and the player view. No NAS
   stream lookup, credentials, progress writes or Rust builds were added.
@@ -63,9 +64,10 @@ permissions:
 | Command | Result | Evidence boundary |
 | --- | --- | --- |
 | `npm run typecheck` | exit 0 | Main/preload/shared/renderer TypeScript types. |
-| `npm test` | exit 0; 24/24 passed | Existing NAS/session/storage/library owner tests plus 4 coordinator tests. |
+| `npm test` | exit 0; 30/30 passed | Existing NAS/session/storage/discovery/library owner tests plus 4 coordinator tests. |
 | `npm run test:window` | exit 0 | Real Electron 45 BrowserWindow; isolation, preload bridge, player bridge and control DOM. |
 | `npm run test:player-window` | exit 0 | Real Windows BrowserWindow + root libmpv DLL + local fixture. The smoke exercised missing-file error, load/ready, pause, seek, track enumeration, main-owned `.srt` `sub-add`, subtitle selection/off via the native `sid` property, resize, fullscreen on/off and close. |
+| `Z_VIDEO_PLAYER_SMOKE_HOLD_MS=20000` screenshot run | CUA capture, 1087×794 | Real Electron window was forced to the reviewable player view for a bounded capture. The semantic control strip is visible below the surface; the Chromium capture did not display the Win32 native child pixels, so this screenshot is not visual decoded-frame proof. |
 | `git diff --check` | exit 0 | Changed-file whitespace check. |
 | `npm ls --depth=0` | Electron 45.1.0, Koffi 3.3.5, TypeScript 5.7.2 present | Local dependency tree. |
 

@@ -61,7 +61,21 @@ async function run(): Promise<void> {
     await coordinator.handle({ type: "fullscreen", enabled: true });
     await coordinator.handle({ type: "fullscreen", enabled: false });
     const holdMs = Number(process.env.Z_VIDEO_PLAYER_SMOKE_HOLD_MS ?? 0);
-    if (Number.isFinite(holdMs) && holdMs > 0) await new Promise((resolvePromise) => setTimeout(resolvePromise, holdMs));
+    if (Number.isFinite(holdMs) && holdMs > 0) {
+      await window.webContents.executeJavaScript(
+        `(() => {
+          document.querySelector('[data-view="login"]')?.setAttribute('hidden', '');
+          document.querySelector('[data-view="library"]')?.setAttribute('hidden', '');
+          document.querySelector('[data-view="player"]')?.removeAttribute('hidden');
+        })()`,
+        true,
+      );
+      const ready = events.find((event): event is Extract<PlaybackEvent, { type: "ready" }> => event.type === "ready");
+      if (ready) window.webContents.send(IPC_CHANNELS.playerEvent, ready);
+      window.webContents.send(IPC_CHANNELS.playerEvent, { type: "state", state: "paused" });
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 250));
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, holdMs));
+    }
     await coordinator.close();
     assert.equal(events.some((event) => event.type === "closed"), true);
   } finally {
