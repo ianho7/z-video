@@ -21,6 +21,8 @@ Implementers run in background. Tickets 02 and 03 start only after 01 is merged.
 
 Before ticket 05 claims parity, compare the integrated real window with the existing visual specification. In particular, preserve the original sidebar collapse action (`ui/app_window.slint` sidebar-toggled / `src/app.rs` apple_sidebar_visible) and actual Windows backdrop behavior (`src/platform/windows.rs` / `src/app.rs` native_backdrop_enabled), including high-contrast/reduced-transparency fallback. A CSS tint alone does not prove the old DWM effect. Verify these at the real-window seam; avoid adding source-text assertions. Native player adjacent-controls versus overlaid controls is already an explicit partial-acceptance item; obtain visible evidence and do not silently label it parity.
 
+Actual Windows safeStorage fresh-process recovery can be proved with synthetic credentials and a local HTTP fixture through the production main/preload/window, using two Electron processes and a test-owned temporary userData path. This covers the OS storage boundary missing from ticket 01's injected crypto test without reading user credentials or adding a production test-only flag. It still does not prove live NAS compatibility or real NAS progress persistence.
+
 ## Tracker and completion
 
 GitHub repository: `ianho7/z-video`, label `ready-for-agent`. Published specification: #15. Tickets 01-05: #16, #17, #18, #19, #20 respectively. Native sub-issue and blocked-by relationships are configured. Track implementation done, locally verified, and fully accepted separately. Missing real NAS evidence prevents full acceptance and PR-ready claims.
