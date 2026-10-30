@@ -30,6 +30,7 @@ Replace the desktop implementation with Electron and TypeScript while preserving
 16. As an Account holder, I want secret-free diagnostics and protected credentials, so that debugging does not expose my NAS.
 17. As a Windows user, I want a packaged runnable application, so that source-level success is not mistaken for delivery.
 18. As a user concerned about storage, I want separate measured development, package and installed sizes, so that tradeoffs are visible.
+19. As an Account holder, I want the existing LAN NAS discovery, cancellation and device selection controls, so that migration preserves the current connection workflow.
 
 ## Implementation Decisions
 
@@ -40,6 +41,7 @@ Replace the desktop implementation with Electron and TypeScript while preserving
 - Keep network and media work asynchronous. Bound poster disk/memory use, prevent stale navigation results, and avoid CPU copying every video frame.
 - Existing secure credentials need not be automatically imported; users may sign in once in the replacement. Subsequent restart recovery must work securely. Do not remove or modify the old credential entry as part of migration.
 - Preserve existing visual specifications, accessibility, query scope and product limitations. Migration does not turn unsupported NAS operations into simulated successes.
+- Preserve baseline library default/title/score/year sorting and the login screen's manual LAN discovery/cancel/select workflow. These are existing capabilities, not new product scope.
 - The old implementation remains a comparison/rollback point while tickets land. Final cutover makes Electron the default and removes Rust from the default build/run/package path. Git history retains the old implementation; deleting unrelated caches, toolchains or worktrees is outside this task.
 
 ## Testing Decisions
