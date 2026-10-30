@@ -11,4 +11,6 @@ export const IPC_CHANNELS = {
   loadImage: "library:load-image",
   getNavigation: "library:get-navigation",
   setNavigation: "library:set-navigation",
+  discoveryStart: "discovery:start",
+  discoveryCancel: "discovery:cancel",
 } as const;

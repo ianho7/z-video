@@ -7,6 +7,8 @@ import type {
   LoginInput,
   OperationOutcome,
   PublicSessionState,
+  DiscoveryCancelOutcome,
+  DiscoveryOutcome,
 } from "../shared/contracts";
 
 // Sandboxed preloads may require Electron's built-ins, but not local CommonJS
@@ -24,6 +26,8 @@ const IPC_CHANNELS = {
   loadImage: "library:load-image",
   getNavigation: "library:get-navigation",
   setNavigation: "library:set-navigation",
+  discoveryStart: "discovery:start",
+  discoveryCancel: "discovery:cancel",
 } as const;
 
 const api: ElectronApi = {
@@ -42,6 +46,10 @@ const api: ElectronApi = {
     loadImage: (input: { collectionId: string; kind: "cover" | "background" }) => ipcRenderer.invoke(IPC_CHANNELS.loadImage, input),
     getNavigation: () => ipcRenderer.invoke(IPC_CHANNELS.getNavigation) as Promise<NavigationContext>,
     setNavigation: (context: NavigationContext) => ipcRenderer.invoke(IPC_CHANNELS.setNavigation, context) as Promise<NavigationContext>,
+  },
+  discovery: {
+    start: () => ipcRenderer.invoke(IPC_CHANNELS.discoveryStart) as Promise<DiscoveryOutcome>,
+    cancel: () => ipcRenderer.invoke(IPC_CHANNELS.discoveryCancel) as Promise<DiscoveryCancelOutcome>,
   },
 };
 
