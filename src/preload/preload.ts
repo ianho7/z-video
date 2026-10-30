@@ -1,6 +1,13 @@
 import { contextBridge, ipcRenderer } from "electron";
 
-import type { ElectronApi, LoginInput, OperationOutcome, PublicSessionState } from "../shared/contracts";
+import type {
+  ElectronApi,
+  LibraryQuery,
+  NavigationContext,
+  LoginInput,
+  OperationOutcome,
+  PublicSessionState,
+} from "../shared/contracts";
 
 // Sandboxed preloads may require Electron's built-ins, but not local CommonJS
 // modules. Keep these names identical to shared/ipc-channels.ts.
@@ -11,6 +18,12 @@ const IPC_CHANNELS = {
   verifyMfa: "session:verify-mfa",
   logout: "session:logout",
   listClassifications: "library:list-classifications",
+  listCollections: "library:list-collections",
+  getCollectionDetail: "library:get-detail",
+  listContinueWatching: "library:list-continue-watching",
+  loadImage: "library:load-image",
+  getNavigation: "library:get-navigation",
+  setNavigation: "library:set-navigation",
 } as const;
 
 const api: ElectronApi = {
@@ -23,6 +36,12 @@ const api: ElectronApi = {
   },
   library: {
     listClassifications: () => ipcRenderer.invoke(IPC_CHANNELS.listClassifications) as Promise<{ classifications: PublicSessionState["classifications"]; state: PublicSessionState }>,
+    listCollections: (query: LibraryQuery) => ipcRenderer.invoke(IPC_CHANNELS.listCollections, query),
+    getDetail: (input: { collectionId: string; classificationId: string }) => ipcRenderer.invoke(IPC_CHANNELS.getCollectionDetail, input),
+    listContinueWatching: () => ipcRenderer.invoke(IPC_CHANNELS.listContinueWatching),
+    loadImage: (input: { collectionId: string; kind: "cover" | "background" }) => ipcRenderer.invoke(IPC_CHANNELS.loadImage, input),
+    getNavigation: () => ipcRenderer.invoke(IPC_CHANNELS.getNavigation) as Promise<NavigationContext>,
+    setNavigation: (context: NavigationContext) => ipcRenderer.invoke(IPC_CHANNELS.setNavigation, context) as Promise<NavigationContext>,
   },
 };
 

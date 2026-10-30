@@ -1,4 +1,5 @@
-import type { Classification, PublicSessionState } from "../shared/contracts";
+import type { PublicSessionState } from "../shared/contracts";
+import { refreshLibrary, setLibrarySessionState } from "./library.js";
 
 const loginView = document.querySelector<HTMLElement>('[data-view="login"]');
 const libraryView = document.querySelector<HTMLElement>('[data-view="library"]');
@@ -10,7 +11,6 @@ const mfaHint = document.querySelector<HTMLElement>("#mfa-hint");
 const mfaCode = document.querySelector<HTMLInputElement>("#mfa-code");
 const sendMfaButton = document.querySelector<HTMLButtonElement>("#send-mfa-button");
 const verifyMfaButton = document.querySelector<HTMLButtonElement>("#verify-mfa-button");
-const classificationList = document.querySelector<HTMLElement>("#classification-list");
 const sessionUser = document.querySelector<HTMLElement>("#session-user");
 const libraryMessage = document.querySelector<HTMLElement>("#library-message");
 const refreshButton = document.querySelector<HTMLButtonElement>("#refresh-button");
@@ -34,22 +34,6 @@ function setLoginMessage(message = "", error = false): void {
   loginStatus.classList.toggle("error", error);
 }
 
-function renderClassifications(classifications: Classification[]): void {
-  requireElement(classificationList, "classification-list").replaceChildren(
-    ...classifications.map((classification) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.dataset.classificationId = classification.id;
-      const name = document.createElement("span");
-      name.textContent = classification.name;
-      const count = document.createElement("span");
-      count.textContent = String(classification.count);
-      button.append(name, count);
-      return button;
-    }),
-  );
-}
-
 function renderState(state: PublicSessionState): void {
   const loggedIn = state.status === "authenticated";
   const mfaRequired = state.status === "mfa-required";
@@ -58,16 +42,23 @@ function renderState(state: PublicSessionState): void {
   if (mfaPanel) mfaPanel.hidden = !mfaRequired;
   if (mfaRequired && mfaHint) mfaHint.textContent = state.mfa?.message ?? "请输入验证码完成登录。";
   if (loggedIn) {
-    renderClassifications(state.classifications);
+    setLibrarySessionState(state);
     if (sessionUser) sessionUser.textContent = state.identity?.username ?? "已连接";
     if (libraryMessage) libraryMessage.textContent = state.error?.message ?? "选择一个分类开始浏览。";
     setLoginMessage();
   } else if (state.error) {
+    setLibrarySessionState(state);
     setLoginMessage(state.error.message, true);
   } else if (mfaRequired) {
+    setLibrarySessionState(state);
     setLoginMessage("账号需要二次验证。", false);
   }
 }
+
+window.addEventListener("z-video:session-state", (event) => {
+  const state = (event as CustomEvent<PublicSessionState>).detail;
+  if (state) renderState(state);
+});
 
 async function restore(): Promise<void> {
   try {
@@ -133,6 +124,7 @@ refreshButton?.addEventListener("click", async () => {
   try {
     const result = await window.zVideo.library.listClassifications();
     renderState(result.state);
+    if (result.state.status === "authenticated") refreshLibrary();
   } catch {
     if (libraryMessage) libraryMessage.textContent = "分类刷新失败，请重试。";
   } finally {
