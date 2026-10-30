@@ -2,6 +2,8 @@
 
 Status: implemented and locally verified; live LAN/NAS acceptance remains open.
 
+Integration tip `codex/electron-integration` at `76a9acb` was merged before final verification; the parallel library changes remain in the worktree.
+
 ## Scope
 
 - Ported the existing bounded manual LAN discovery owner to `src/main/discovery.ts`.
@@ -20,6 +22,8 @@ npm test                                  PASS (26/26; external permission used 
 npm run test:window                       PASS (isolated Electron window; synthetic discovery result and address selection)
 git diff --check                          PASS
 ```
+
+After the integration merge, `npm run typecheck`, the focused six-test discovery owner run and `npm run test:window` were rerun and passed. The full 26-test run was already green before that merge; the merge only removed three unrelated library-side lines.
 
 The discovery owner tests use injected synthetic network-interface/fetch fixtures. The window smoke handler returns a synthetic result and verifies that the login address becomes `http://192.168.5.2:5055`; no private LAN scan or real NAS request was issued during implementation or verification.
 
