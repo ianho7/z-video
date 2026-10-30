@@ -1,0 +1,19 @@
+{
+  "name": "z-video-electron",
+  "version": "0.1.0",
+  "private": true,
+  "description": "LAN-first Electron client for z-video",
+  "main": "dist/src/main/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.renderer.json && node scripts/copy-renderer-assets.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "test": "npm run build && node scripts/run-tests.mjs",
+    "test:window": "npm run build && electron dist/tests/window-smoke.js",
+    "start": "npm run build && electron ."
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "electron": "^36.0.0",
+    "typescript": "^5.7.2"
+  }
+}

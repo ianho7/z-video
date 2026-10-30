@@ -1,6 +1,8 @@
 /target
 .build-cache/
 .worktrees/
+node_modules/
+dist/
 **/*.rs.bk
 *.log
 .env
