@@ -8,7 +8,7 @@ Graph: 01 -> {02,03} -> 04 -> 05.
 
 ## Agent procedure
 
-Use Codex CLI `gpt-5.6-luna`, `model_reasoning_effort="max"`, one worktree and branch per ticket. Never substitute a different model. Coordinator remains in the original chat and integrates through dedicated merger agents.
+Use this chat's built-in subagents with model `gpt-5.6-luna`, effort `max`, and a fresh context, one worktree and branch per ticket. Exact model invocation through the built-in tool succeeded. Ticket 01 was already started via Codex CLI with that same model/effort; let it finish without duplicating writes. All subsequent implementation, merger and review agents run visibly in this chat. Never substitute a different model. Coordinator remains in the original chat.
 
 Read the ticket, specification, glossary and applicable repository instructions. ADR 0003 and the user-approved migration supersede the previous Rust/Slint stack and single-process constraints; product scope/protocol/safety constraints remain. Read the TDD and test-audit skills before implementing. Agreed seams are NAS transport, real Electron window and real NAS persistence, already approved by the user.
 
@@ -18,4 +18,4 @@ Implementers run in background. Tickets 02 and 03 start only after 01 is merged.
 
 ## Tracker and completion
 
-GitHub repository: `ianho7/z-video`, label `ready-for-agent`. GitHub access is checked before publication. Local files retain pending work when remote access is blocked. Never invent remote identifiers. Track implementation done, locally verified, and fully accepted separately. Missing real NAS evidence prevents full acceptance and PR-ready claims.
+GitHub repository: `ianho7/z-video`, label `ready-for-agent`. Published specification: #15. Tickets 01-05: #16, #17, #18, #19, #20 respectively. Native sub-issue and blocked-by relationships are configured. Track implementation done, locally verified, and fully accepted separately. Missing real NAS evidence prevents full acceptance and PR-ready claims.
