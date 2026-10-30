@@ -462,4 +462,3 @@ function numberToIpv4(value: number): string {
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
-

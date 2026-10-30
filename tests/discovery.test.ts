@@ -128,4 +128,3 @@ test("discovery controller rejects a stale result after a newer user action", as
     assert.deepEqual(secondResult.report.results, [{ ip: "192.168.5.2", name: "NAS 2", available: true }]);
   }
 });
-
