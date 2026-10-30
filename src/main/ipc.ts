@@ -5,10 +5,15 @@ import { IPC_CHANNELS } from "../shared/ipc-channels";
 import { LibraryController, type LibraryDetailRequest, type LibraryImageRequest } from "./library-controller";
 import { NasApiClient } from "./nas-client";
 import { SessionController } from "./session-controller";
+import { DiscoveryController } from "./discovery";
 
 export { IPC_CHANNELS } from "../shared/ipc-channels";
 
-export function registerIpcHandlers(controller: SessionController, library = new LibraryController(controller, new NasApiClient())): void {
+export function registerIpcHandlers(
+  controller: SessionController,
+  library = new LibraryController(controller, new NasApiClient()),
+  discovery = new DiscoveryController(),
+): void {
   ipcMain.handle(IPC_CHANNELS.restore, () => controller.restore());
   ipcMain.handle(IPC_CHANNELS.login, (_event, value: unknown) => controller.login(parseLoginInput(value)));
   ipcMain.handle(IPC_CHANNELS.sendMfa, (_event, value: unknown) => controller.sendMfaCode(parseOptionalString(value)));
@@ -21,6 +26,8 @@ export function registerIpcHandlers(controller: SessionController, library = new
   ipcMain.handle(IPC_CHANNELS.loadImage, (_event, value: unknown) => library.loadImage(parseLibraryImage(value)));
   ipcMain.handle(IPC_CHANNELS.getNavigation, () => library.getNavigation());
   ipcMain.handle(IPC_CHANNELS.setNavigation, (_event, value: unknown) => library.setNavigation(parseNavigation(value)));
+  ipcMain.handle(IPC_CHANNELS.discoveryStart, () => discovery.start());
+  ipcMain.handle(IPC_CHANNELS.discoveryCancel, () => discovery.cancel());
 }
 
 function parseLoginInput(value: unknown): LoginInput {
