@@ -55,6 +55,10 @@ packaged deployment are outside this ticket or still unverified.
   deterministic main-owned dialog fixture for the missing media, sample video
   and public SRT fixture. It then performs the visible DOM play/pause, seek,
   subtitle select/off, fullscreen and close actions.
+- Before Electron startup, the smoke sets `userData` and `sessionData` to
+  separate unique `mkdtemp` directories. The renderer's automatic
+  `session.restore` therefore cannot read a user's saved session or contact a
+  private NAS from synthetic test startup.
 - DOM assertions observe production event effects: pause changes the state label,
   seek reaches the one-second target in the renderer range's raw position value
   at media precision, subtitle selected/off values are refreshed from `tracks`

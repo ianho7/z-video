@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { app, BrowserWindow, ipcMain } from "electron";
@@ -35,6 +37,10 @@ async function run(): Promise<void> {
   assert.equal(existsSync(subtitlePath), true, "external subtitle fixture is required");
   assert.equal(existsSync(missingPath), false, "missing media fixture must remain absent");
 
+  const testUserDataPath = await mkdtemp(join(tmpdir(), "z-video-player-user-data-"));
+  const testSessionDataPath = await mkdtemp(join(tmpdir(), "z-video-player-session-data-"));
+  app.setPath("userData", testUserDataPath);
+  app.setPath("sessionData", testSessionDataPath);
   await app.whenReady();
   const window = new BrowserWindow({
     width: 1000,
