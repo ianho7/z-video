@@ -76,6 +76,8 @@ interface ActiveLocalPlayback {
   watched: boolean;
   observedPosition: boolean;
   trackPreferencesApplied: boolean;
+  lastPersistedFingerprint?: string;
+  queuedPersistFingerprint?: string;
 }
 
 /**
@@ -207,11 +209,24 @@ export class LocalPlaybackCoordinator {
       watched: active.watched,
       updatedAtMs: this.now(),
     };
+    const fingerprint = JSON.stringify({
+      mediaId: state.mediaId,
+      positionSec: state.positionSec,
+      durationSec: state.durationSec,
+      audioTrackId: state.audioTrackId,
+      subtitleTrackId: state.subtitleTrackId,
+      watched: state.watched,
+    });
+    if (active.lastPersistedFingerprint === fingerprint || active.queuedPersistFingerprint === fingerprint) return;
+    active.queuedPersistFingerprint = fingerprint;
     await this.enqueueFlush(async () => {
       try {
         await this.store.savePlayback(state);
+        active.lastPersistedFingerprint = fingerprint;
       } catch {
         if (generation === this.generation) this.emit({ type: "error", mediaId: active.mediaId, message: "播放进度保存失败。" });
+      } finally {
+        if (active.queuedPersistFingerprint === fingerprint) active.queuedPersistFingerprint = undefined;
       }
     });
   }
