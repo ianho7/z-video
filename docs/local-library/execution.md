@@ -9,3 +9,5 @@ Each implementer uses its own codex/local-* branch and .worktrees/local-* checko
 All GUI checks use isolated profiles, bounded owned-child lifetimes and regular-file logs (avoid prior EPIPE console pipe incident). Never run installed official client/NAS write operations or scan private shares. Use owned local fixtures; actual read-only personal/share validation remains a separately scoped acceptance task. Do not claim it passed from synthetic tests.
 
 Source paths in renderer remain opaque. No ZSpace login/session/API at default startup. Keep old encrypted sessions untouched. Default media access is read-only. No global Rust/cache/old-worktree cleanup. Windows first, no macOS or overlay parity claims. Package size/resource measurements must be factual.
+
+Ticket 01 handoff contract: `docs/local-library/contracts.md` and `src/shared/local-library-contracts.ts` are the source of truth for schema v1, `local-library:*` IPC, opaque `media_<UUID>` identity, and `LocalPlaybackState`/`LocalPlaybackTarget`. Ticket 02 and 03 must coordinate changes through integration rather than redefining these fields independently.

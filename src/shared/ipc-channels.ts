@@ -1,4 +1,9 @@
 export const IPC_CHANNELS = {
+  localLibraryState: "local-library:state",
+  localLibraryChooseFolder: "local-library:choose-folder",
+  localLibraryOpenVideo: "local-library:open-video",
+  localLibraryList: "local-library:list",
+  localLibraryGet: "local-library:get",
   restore: "session:restore",
   login: "session:login",
   sendMfa: "session:send-mfa",

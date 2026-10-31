@@ -1,4 +1,4 @@
-import { closeSync, openSync } from "node:fs";
+import { closeSync, existsSync, openSync } from "node:fs";
 import { once } from "node:events";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,7 +8,8 @@ import { spawn } from "node:child_process";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const root = resolve(scriptDirectory, "..");
-const electronPackage = join(root, "node_modules", "electron");
+const dependencyRoot = existsSync(join(root, "node_modules")) ? join(root, "node_modules") : resolve(root, "..", "..", "node_modules");
+const electronPackage = join(dependencyRoot, "electron");
 const electronBinaryName = (await readFile(join(electronPackage, "path.txt"), "utf8")).trim();
 const electronBinary = join(electronPackage, "dist", electronBinaryName);
 const entry = join(root, "dist", "tests", "window-smoke.js");
@@ -74,7 +75,7 @@ try {
       finish(() => reject(new Error(`window smoke failed: code=${code ?? "null"} signal=${signal ?? "none"}; log=${logPath}\n${tail}`)));
     });
   });
-  console.log(`PASS: Electron window login/discovery/library/detail/sidebar smoke (log=${logPath})`);
+  console.log(`PASS: Electron window local-library IPC/list/detail/search smoke (log=${logPath})`);
 } finally {
   await rm(profile, { recursive: true, force: true });
 }

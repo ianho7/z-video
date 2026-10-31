@@ -12,11 +12,17 @@ import type {
   DiscoveryCancelOutcome,
   DiscoveryOutcome,
   WindowAppearanceState,
+  LocalLibraryQuery,
 } from "../shared/contracts";
 
 // Sandboxed preloads may require Electron's built-ins, but not local CommonJS
 // modules. Keep these names identical to shared/ipc-channels.ts.
 const IPC_CHANNELS = {
+  localLibraryState: "local-library:state",
+  localLibraryChooseFolder: "local-library:choose-folder",
+  localLibraryOpenVideo: "local-library:open-video",
+  localLibraryList: "local-library:list",
+  localLibraryGet: "local-library:get",
   restore: "session:restore",
   login: "session:login",
   sendMfa: "session:send-mfa",
@@ -40,6 +46,18 @@ const IPC_CHANNELS = {
 } as const;
 
 const api: ElectronApi = {
+  localLibrary: {
+    getState: () => ipcRenderer.invoke(IPC_CHANNELS.localLibraryState),
+    chooseFolder: () => ipcRenderer.invoke(IPC_CHANNELS.localLibraryChooseFolder),
+    openVideo: () => ipcRenderer.invoke(IPC_CHANNELS.localLibraryOpenVideo),
+    list: (query?: Partial<LocalLibraryQuery>) => ipcRenderer.invoke(IPC_CHANNELS.localLibraryList, query),
+    get: (mediaId: string) => ipcRenderer.invoke(IPC_CHANNELS.localLibraryGet, mediaId),
+    onState: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, value: Parameters<typeof listener>[0]) => listener(value);
+      ipcRenderer.on(IPC_CHANNELS.localLibraryState, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.localLibraryState, handler);
+    },
+  },
   appearance: {
     onState: (listener: (state: WindowAppearanceState) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, value: WindowAppearanceState) => listener(value);

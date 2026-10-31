@@ -1,8 +1,27 @@
 # 架构与范围
 
+## 当前批准的本地片库默认路径（2026-10-31）
+
+默认启动是 account-free local library，不调用 Session、NAS discovery、ZSpace SDK、NAS HTTP API 或在线 metadata。Electron main 创建一个 utilityProcess 作为 scanner/SQLite owner；main 负责 OS picker、IPC 和未来 playback path resolve；sandboxed renderer 只收到 local-library state、opaque `mediaId` 和其他 renderer-safe DTO。
+
+```text
+Folder/File picker (main)
+        │ private path
+        ▼
+utilityProcess ── node:sqlite ── userData/local-library/library.sqlite
+        │ public LocalMediaItem / LocalLibraryState
+        ▼
+main ── narrow preload IPC ──> sandboxed renderer
+        │ mediaId only
+        ▼
+future local playback owner (ticket03)
+```
+
+SQLite capability is a runtime gate in the pinned Electron 45 utility process. If bundled `node:sqlite` is unavailable, startup fails with a visible storage error; no native SQLite addon is silently installed. Stable schema and IPC contracts are recorded in `docs/local-library/contracts.md`.
+
 ## 当前桌面实现（2026-10-31）
 
-Electron 45 + TypeScript 是当前默认的 Windows 运行、构建和打包路径。Electron main 持有 Session、NAS 请求、safeStorage、片库缓存和 Playback 协调；sandboxed renderer 只处理页面、键盘/ARIA 交互和 renderer-safe DTO；preload 通过窄 IPC bridge 连接两侧。native libmpv 与 Koffi 只在 main 播放边界加载，媒体 URI、NAS 凭证和私有文件路径不进入 renderer。
+Electron 45 + TypeScript 是当前默认的 Windows 运行、构建和打包路径。当前 local-library main 持有本地数据库协调、picker 和 diagnostics；历史 Session/NAS/safeStorage/native playback 模块仍保留作 rollback 或后续 ticket owner。sandboxed renderer 只处理页面、键盘/ARIA 交互和 renderer-safe DTO；preload 通过窄 IPC bridge 连接两侧，私有文件路径不进入 renderer。
 
 默认窗口沿用旧 AppWindow 的 preferred `1040x720`、minimum `900x640` 和可收起 `220px` 侧栏。Windows 11 22H2+ 优先使用 Electron `backgroundMaterial: "acrylic"`，对应旧 Windows DWM transient-window 材料；系统 high contrast/reduced-transparency、显式 `Z_VIDEO_REDUCED_TRANSPARENCY=1`、不支持的 OS build 或材料不可用时，回退为不透明 sidebar/toolbar。该回退已由真实 Electron 窗口验证；DWM 实际采样画面仍需在有权限的 Windows 设备上单独留证。
 
@@ -16,7 +35,7 @@ Electron 45 + TypeScript 是当前默认的 Windows 运行、构建和打包路�
 
 libmpv 是优先评估候选，不是已批准依赖。尚未决定版本、绑定库、图形后端、分发构建及许可证方案。原生播放器指原生媒体引擎与窗口交互，不要求必须使用系统解码器。
 
-## 首版范围（用户已确认）
+## 历史 NAS-first 范围（rollback reference）
 
 2026-10-16 用户确认以下五项，理由见 [首版范围决策](adr/0002-first-release-scope.md)：
 
@@ -26,7 +45,11 @@ libmpv 是优先评估候选，不是已批准依赖。尚未决定版本、绑�
 4. Windows 先交付，平台相关代码集中隔离；macOS 保持设计兼容，实际构建与播放验收后再宣称支持。首版不因缺少 macOS 环境而停工，也不提前完成第二平台专用实现。
 5. 先个人自用验证，记录依赖及构建来源；公开分发前确定开源/闭源、签名、更新和许可证方案。个人自用不是忽略第三方许可条件的理由。
 
-## 最小模块边界
+## 本地片库模块边界（Ticket 01）
+
+`LocalLibraryDatabase` is the main-side lifecycle owner for one bounded child utility process. It owns worker request correlation, storage errors, schema initialization, opaque ID reuse and main-only path resolution. The worker is the only code that opens SQLite. `local-library-ipc.ts` validates page/mediaId inputs and never returns root or relative paths. The renderer can browse and request detail, but cannot call `node:sqlite`, `fs`, or native playback directly.
+
+## 历史 NAS 模块边界（rollback reference）
 
 ```text
 Renderer ──窄 preload IPC──> Electron main

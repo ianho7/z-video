@@ -92,6 +92,7 @@ await assertFile(join(packageRoot, "z-video_wer.dll"), "renamed crash reporter")
 await assertFile(join(packageRoot, "vendor", "mpv", "libmpv-2.dll"), "packaged libmpv DLL");
 await assertFile(join(packageRoot, "resources", "app", "node_modules", "@koromix", "koffi-win32-x64", "win32_x64", "koffi.node"), "packaged Koffi prebuild");
 await assertFile(join(packageRoot, "resources", "app", "dist", "src", "main", "main.js"), "packaged main entry");
+await assertFile(join(packageRoot, "resources", "app", "dist", "src", "main", "local-library-worker.js"), "packaged local-library utility worker");
 
 try {
   const probeCode = [

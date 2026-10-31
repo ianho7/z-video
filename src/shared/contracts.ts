@@ -1,3 +1,29 @@
+import type {
+  LocalLibraryApi,
+  LocalLibraryDetailResult,
+  LocalLibraryListResult,
+  LocalLibraryQuery,
+  LocalLibraryState,
+  LocalImportOutcome,
+  LocalMediaItem,
+  LocalPlaybackState,
+  LocalPlaybackTarget,
+  LocalSourceSummary,
+} from "./local-library-contracts";
+
+export type {
+  LocalLibraryApi,
+  LocalLibraryDetailResult,
+  LocalLibraryListResult,
+  LocalLibraryQuery,
+  LocalLibraryState,
+  LocalImportOutcome,
+  LocalMediaItem,
+  LocalPlaybackState,
+  LocalPlaybackTarget,
+  LocalSourceSummary,
+} from "./local-library-contracts";
+
 /**
  * Renderer-safe contracts shared by the Electron main, preload and renderer.
  * Secrets, NAS tokens, opaque signs and private media paths intentionally do
@@ -221,6 +247,7 @@ export type PlaybackEvent =
   | { type: "closed"; episodeId?: string };
 
 export interface ElectronApi {
+  localLibrary: LocalLibraryApi;
   appearance: {
     onState(listener: (state: WindowAppearanceState) => void): () => void;
   };

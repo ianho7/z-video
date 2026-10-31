@@ -82,6 +82,7 @@ await assertFile(join(runtimeSource, "electron.exe"), "Electron runtime electron
 await assertFile(join(runtimeSource, "electron_wer.dll"), "Electron runtime electron_wer.dll");
 await assertFile(join(runtimeSource, "resources", "default_app.asar"), "Electron runtime default_app.asar");
 await assertFile(join(root, "dist", "src", "main", "main.js"), "compiled main entry");
+await assertFile(join(root, "dist", "src", "main", "local-library-worker.js"), "compiled local-library utility worker");
 await assertFile(join(koffiSource, "package.json"), "Koffi package metadata");
 await assertFile(join(koffiSource, "index.cjs"), "Koffi CommonJS entry");
 await assertFile(join(koffiSource, "src", "koffi", "index.cjs"), "Koffi runtime loader");

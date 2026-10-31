@@ -4,142 +4,56 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none';" />
-    <title>z-video · 局域网片库</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'" />
+    <title>z-video · 本地片库</title>
     <link rel="stylesheet" href="styles.css" />
-    <link rel="stylesheet" href="library.css" />
   </head>
   <body>
     <div class="app-shell">
-      <section class="login-view" data-view="login" aria-labelledby="login-title">
-        <div class="login-card">
-          <div class="brand-lockup" aria-label="z-video 局域网片库">
-            <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-            <span><strong>z-video</strong><small>局域网片库</small></span>
-          </div>
-          <p class="eyebrow">PRIVATE LIBRARY</p>
-          <h1 id="login-title">连接你的 NAS</h1>
-          <p class="intro">凭证只在本机提交给 NAS，登录会话使用 Windows 安全存储。</p>
-          <form id="login-form" novalidate>
-            <label for="server-url">NAS 地址</label>
-            <input id="server-url" name="serverUrl" type="text" autocomplete="url" placeholder="192.168.1.100 或 http://…" required />
-            <label for="username">账号</label>
-            <input id="username" name="username" type="text" autocomplete="username" required />
-            <label for="password">密码</label>
-            <input id="password" name="password" type="password" autocomplete="current-password" required />
-            <label class="check-row"><input id="remember" name="remember" type="checkbox" checked /> <span>记住登录会话</span></label>
-            <button class="primary-button" id="login-button" type="submit">登录</button>
-          </form>
-          <section id="discovery-panel" class="discovery-panel" aria-labelledby="discovery-title">
-            <div class="discovery-heading">
-              <div>
-                <p class="discovery-title" id="discovery-title">发现本机局域网 NAS</p>
-                <p class="muted">仅扫描本机私有 IPv4 网段，不会提交账号或密码。</p>
-              </div>
-              <div class="discovery-actions">
-                <button class="secondary-button" id="discover-button" type="button">扫描 NAS</button>
-                <button class="secondary-button" id="cancel-discovery-button" type="button" hidden>取消扫描</button>
-              </div>
-            </div>
-            <p id="discovery-status" class="discovery-status" role="status" aria-live="polite"></p>
-            <div id="discovery-results" class="discovery-results" role="list"></div>
-          </section>
-          <div class="mfa-panel" id="mfa-panel" hidden>
-            <p class="mfa-title">需要二次验证</p>
-            <p id="mfa-hint" class="muted">请输入收到的 4 位或 6 位验证码。</p>
-            <label for="mfa-code">验证码</label>
-            <input id="mfa-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" />
-            <div class="button-row">
-              <button class="secondary-button" id="send-mfa-button" type="button">发送验证码</button>
-              <button class="primary-button" id="verify-mfa-button" type="button">验证登录</button>
-            </div>
-          </div>
-          <p id="login-status" class="status" role="status" aria-live="polite"></p>
+      <header class="app-header">
+        <div class="brand-lockup" aria-label="z-video 本地片库">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span><strong>z-video</strong><small>本地片库</small></span>
         </div>
-      </section>
+        <div class="header-actions">
+          <button id="choose-folder-button" class="secondary-button" type="button">添加文件夹</button>
+          <button id="open-video-button" class="primary-button" type="button">打开视频</button>
+        </div>
+      </header>
 
-      <section class="library-view" data-view="library" hidden aria-label="片库">
-        <aside class="sidebar" id="classification-sidebar" aria-label="片库导航">
-          <div class="brand-lockup"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span><strong>z-video</strong><small>局域网片库</small></span></div>
-          <p class="nav-heading">片库</p>
-          <nav id="classification-list" class="classification-list" aria-label="影视分类"></nav>
-          <div class="sidebar-footer"><span id="session-user"></span><button id="logout-button" class="text-button" type="button">退出</button></div>
+      <main class="library-layout">
+        <aside class="source-sidebar" aria-label="本地片库来源">
+          <p class="eyebrow">SOURCES</p>
+          <h2>我的来源</h2>
+          <div id="source-list" class="source-list" role="list"></div>
+          <p class="muted source-note">媒体只读；应用数据保存在本机 userData。</p>
         </aside>
-        <main class="library-main" id="main-panel" tabindex="-1">
-          <header class="toolbar" aria-label="片库工具栏">
-            <div class="toolbar-leading">
-              <button id="sidebar-toggle-button" class="sidebar-toggle text-button" type="button" aria-controls="classification-sidebar" aria-expanded="true" aria-label="隐藏侧栏" title="隐藏侧栏">☰</button>
-              <button id="library-back-button" class="text-button" type="button" hidden aria-label="返回片库">返回片库</button>
-              <div><p class="eyebrow" id="toolbar-context">LIBRARY</p><h2 id="toolbar-title">片库</h2></div>
+        <section class="library-content" aria-labelledby="library-title">
+          <div class="content-heading">
+            <div>
+              <p class="eyebrow">LOCAL LIBRARY</p>
+              <h1 id="library-title">片库</h1>
             </div>
-            <div class="toolbar-actions">
-              <form id="library-search-form" class="library-search" role="search">
-                <label class="sr-only" for="library-search-input">搜索片名或类型</label>
-                <span aria-hidden="true">⌕</span>
-                <input id="library-search-input" type="search" autocomplete="off" placeholder="搜索片名或类型" />
-                <kbd>Ctrl K</kbd>
-                <button id="library-search-clear" class="text-button" type="button" hidden aria-label="清空搜索">清空</button>
-              </form>
-              <select id="library-filter" class="library-select" aria-label="类型筛选">
-                <option value="all">全部类型</option>
-                <option value="movie">电影</option>
-                <option value="tv">剧集</option>
-                <option value="anime">动漫</option>
-                <option value="show">综艺</option>
-                <option value="diy">自建合集</option>
-              </select>
-              <select id="library-sort" class="library-select" aria-label="排序">
-                <option value="recent">最近添加</option>
-                <option value="title">片名</option>
-                <option value="score_desc">评分高到低</option>
-                <option value="release_year_desc">上映年份新到旧</option>
-              </select>
-              <button id="open-local-button" class="secondary-button" type="button">打开本地视频</button>
-              <button id="refresh-button" class="secondary-button" type="button">刷新</button>
-            </div>
-          </header>
-          <div id="library-message" class="library-message" role="status" aria-live="polite"></div>
-          <div id="library-scroll" class="library-scroll" tabindex="-1">
-            <section id="continue-section" class="continue-section" aria-labelledby="continue-title" hidden>
-              <div class="section-heading"><div><p class="eyebrow">RESUME</p><h3 id="continue-title">继续观看</h3></div><span id="continue-scope" class="scope-label"></span></div>
-              <div id="continue-row" class="continue-row"></div>
-            </section>
-            <section id="collection-section" aria-labelledby="collection-title">
-              <div class="section-heading"><div><p class="eyebrow">COLLECTIONS</p><h3 id="collection-title">片库内容</h3></div><span id="library-scope" class="scope-label"></span></div>
-              <div id="collection-grid" class="collection-grid" aria-live="polite"></div>
-              <div id="library-empty" class="library-empty" hidden>
-                <h3 id="library-empty-title">暂无内容</h3><p id="library-empty-message">当前分类没有可显示的影视。</p>
-              </div>
-              <div id="library-pagination" class="library-pagination" role="navigation" aria-label="片库分页"></div>
-            </section>
-            <section id="detail-section" class="detail-section" hidden aria-labelledby="detail-title"></section>
+            <label class="search-box" for="library-search-input">
+              <span aria-hidden="true">⌕</span>
+              <input id="library-search-input" type="search" autocomplete="off" placeholder="搜索片名" />
+            </label>
           </div>
-          <div id="player-mount" data-player-mount hidden aria-label="播放器"></div>
-        </main>
-      </section>
-
-      <section class="player-view" data-view="player" hidden aria-label="播放器">
-        <main class="player-shell">
-          <div class="player-surface" aria-label="原生视频区域">
-            <p id="player-surface-message" class="player-surface-message">正在准备原生播放器…</p>
+          <div id="library-message" class="status" role="status" aria-live="polite"></div>
+          <div id="library-grid" class="library-grid" role="list" aria-live="polite"></div>
+          <div id="library-empty" class="empty-state" hidden>
+            <h2>还没有本地影片</h2>
+            <p>选择一个文件夹导入第一部电影，或直接打开一个视频文件。</p>
           </div>
-          <div class="player-controls" aria-label="播放控制">
-            <div class="player-control-row">
-              <button id="player-close-button" class="secondary-button" type="button">返回片库</button>
-              <button id="player-toggle-button" class="primary-button" type="button" disabled>播放</button>
-              <label class="seek-control" for="player-seek"><span class="sr-only">播放进度</span><input id="player-seek" type="range" min="0" max="0" value="0" step="0.1" disabled /></label>
-              <span id="player-time" class="player-time" aria-live="off">00:00 / 00:00</span>
-              <button id="player-fullscreen-button" class="secondary-button" type="button" disabled>全屏</button>
-            </div>
-            <div class="player-control-row player-secondary-row">
-              <label for="player-audio-track">音轨</label><select id="player-audio-track" disabled><option value="">自动</option></select>
-              <label for="player-subtitle-track">字幕</label><select id="player-subtitle-track" disabled><option value="">关闭</option></select>
-              <button id="player-subtitle-file-button" class="secondary-button" type="button" disabled>加载字幕文件</button>
-              <span id="player-status" class="status" role="status" aria-live="polite"></span>
-            </div>
-          </div>
-        </main>
-      </section>
+          <section id="media-detail" class="media-detail" hidden aria-labelledby="media-detail-title">
+            <button id="media-detail-back" class="text-button" type="button">返回片库</button>
+            <p class="eyebrow">MEDIA DETAIL</p>
+            <h2 id="media-detail-title"></h2>
+            <p id="media-detail-meta" class="muted"></p>
+            <button id="media-detail-open" class="primary-button" type="button">打开条目</button>
+          </section>
+        </section>
+      </main>
     </div>
     <script type="module" src="renderer.js"></script>
   </body>
