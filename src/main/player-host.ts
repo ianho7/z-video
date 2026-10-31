@@ -15,10 +15,12 @@ export interface PlaybackHost {
   close(): Promise<void>;
 }
 
+type PlaybackFileDialog = Pick<typeof dialog, "showOpenDialog">;
+
 export class MainPlaybackHost implements PlaybackHost {
   private readonly coordinator: PlaybackCoordinator;
 
-  constructor(private readonly window: BrowserWindow) {
+  constructor(private readonly window: BrowserWindow, private readonly fileDialog: PlaybackFileDialog = dialog) {
     const engine = new MpvNativePlayer(window);
     this.coordinator = new PlaybackCoordinator(
       engine,
@@ -31,7 +33,7 @@ export class MainPlaybackHost implements PlaybackHost {
 
   async chooseLocalFile(): Promise<{ opened: boolean }> {
     if (this.window.isDestroyed()) return { opened: false };
-    const result = await dialog.showOpenDialog(this.window, {
+    const result = await this.fileDialog.showOpenDialog(this.window, {
       title: "打开本地视频",
       defaultPath: findSamplePath(),
       properties: ["openFile"],
@@ -44,7 +46,7 @@ export class MainPlaybackHost implements PlaybackHost {
 
   async chooseSubtitleFile(): Promise<{ loaded: boolean }> {
     if (this.window.isDestroyed()) return { loaded: false };
-    const result = await dialog.showOpenDialog(this.window, {
+    const result = await this.fileDialog.showOpenDialog(this.window, {
       title: "加载外部字幕",
       properties: ["openFile"],
       filters: [{ name: "字幕文件", extensions: ["srt", "ass", "ssa", "vtt", "sub"] }],

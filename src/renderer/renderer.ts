@@ -187,14 +187,14 @@ function setPlayerControlsEnabled(enabled: boolean): void {
 
 function renderTrackOptions(select: HTMLSelectElement | null, tracks: Array<{ id: string; label: string; selected?: boolean }>, emptyLabel: string): void {
   if (!select) return;
-  const previous = select.value;
   const options = [new Option(emptyLabel, ""), ...tracks.map((track) => {
     const option = new Option(track.label, track.id);
     option.selected = Boolean(track.selected);
     return option;
   })];
   select.replaceChildren(...options);
-  if (!tracks.some((track) => track.selected) && Array.from(select.options).some((option) => option.value === previous)) select.value = previous;
+  const selectedTrack = tracks.find((track) => track.selected);
+  select.value = selectedTrack?.id ?? "";
 }
 
 function renderPlaybackEvent(event: PlaybackEvent): void {

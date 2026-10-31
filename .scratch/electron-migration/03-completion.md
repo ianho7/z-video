@@ -8,9 +8,9 @@ packaged deployment are outside this ticket or still unverified.
 ## Baseline and scope
 
 - Worktree branch: `codex/electron-03`.
-- Integration starting point: `46f4fcf`; latest integration `ebb631f` was
-  merged before final verification, preserving the library and discovery
-  additions.
+- The latest integration tip `a3b1110` (documentation-only beyond the prior
+  ticket tip) was merged as `57a108f` before final verification, preserving the
+  library, discovery and safe-storage evidence updates.
 - Scope kept to local media selection, one main-process libmpv engine, the
   renderer-safe playback command/event bridge and the player view. No NAS
   stream lookup, credentials, progress writes or Rust builds were added.
@@ -40,7 +40,27 @@ packaged deployment are outside this ticket or still unverified.
 - `src/renderer/index.html`, `renderer.ts` and `styles.css` add keyboard- and
   screen-reader-labelled controls for play/pause, seek, audio tracks, subtitle
   track/off, external subtitle picker, fullscreen and close. The controls are
-  immediately below the native child surface in the same BrowserWindow.
+  immediately below the native child surface in the same BrowserWindow. Track
+  selects now follow the selected/off state from production `tracks` events so
+  a native subtitle-off event is visible at the renderer boundary.
+
+## Proof boundary
+
+- The earlier direct-coordinator smoke was native API proof only: it called the
+  `PlaybackCoordinator` and inspected a test-only native subtitle getter. That
+  route did not prove that visible controls, the production preload or player
+  IPC drove the engine.
+- The repaired `test:player-window` smoke creates the production-sandboxed
+  preload and `MainPlaybackHost`, registers real player IPC handlers, and uses a
+  deterministic main-owned dialog fixture for the missing media, sample video
+  and public SRT fixture. It then performs the visible DOM play/pause, seek,
+  subtitle select/off, fullscreen and close actions.
+- DOM assertions observe production event effects: pause changes the state label,
+  seek reaches the one-second target in the renderer range's raw position value
+  at media precision, subtitle selected/off values are refreshed from `tracks`
+  events, fullscreen changes the real BrowserWindow state, and close hides the
+  player view after the main host shuts down. No test-only production getter
+  remains.
 
 ## Versions and native evidence
 
@@ -66,7 +86,7 @@ permissions:
 | `npm run typecheck` | exit 0 | Main/preload/shared/renderer TypeScript types. |
 | `npm test` | exit 0; 30/30 passed | Existing NAS/session/storage/discovery/library owner tests plus 4 coordinator tests. |
 | `npm run test:window` | exit 0 | Real Electron 45 BrowserWindow; isolation, preload bridge, player bridge and control DOM. |
-| `npm run test:player-window` | exit 0 | Real Windows BrowserWindow + root libmpv DLL + local fixture. The smoke exercised missing-file error, load/ready, pause, seek, track enumeration, main-owned `.srt` `sub-add`, subtitle selection/off via the native `sid` property, resize, fullscreen on/off and close. |
+| `npm run test:player-window` | exit 0 | Real Windows BrowserWindow + production preload/IPC + `MainPlaybackHost` + root libmpv DLL + local fixture. The smoke exercised missing-file error, load/ready, DOM pause, one-second seek observed through the renderer range's raw position value, track enumeration, main-owned `.srt` `sub-add`, DOM subtitle select/off observed from production `tracks` events, fullscreen on/off and close. |
 | `Z_VIDEO_PLAYER_SMOKE_HOLD_MS=20000` screenshot run | CUA capture, 1087×794 | Real Electron window was forced to the reviewable player view for a bounded capture. The semantic control strip is visible below the surface; the Chromium capture did not display the Win32 native child pixels, so this screenshot is not visual decoded-frame proof. |
 | `git diff --check` | exit 0 | Changed-file whitespace check. |
 | `npm ls --depth=0` | Electron 45.1.0, Koffi 3.3.5, TypeScript 5.7.2 present | Local dependency tree. |

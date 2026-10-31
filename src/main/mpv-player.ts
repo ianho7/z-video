@@ -167,11 +167,6 @@ export class MpvNativePlayer implements PlayerEngine {
     this.setProperty("sid", trackId ?? "no");
   }
 
-  /** Runtime probe used by the native smoke test; it never crosses the renderer boundary. */
-  getSelectedSubtitleTrackId(): string | undefined {
-    return this.readProperty("sid");
-  }
-
   addSubtitleFile(path: string): void {
     if (!existsSync(path)) throw new Error("subtitle file is unavailable");
     const extension = path.toLowerCase().slice(path.lastIndexOf("."));
