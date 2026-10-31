@@ -63,10 +63,13 @@ async function run(): Promise<void> {
 
   app.setPath("userData", join(profile, "user-data"));
   await app.whenReady();
+  const dbPath = join(profile, "user-data", "local-library", "library.sqlite");
+  const workerPath = join(__dirname, "..", "src", "main", "local-library-worker.js");
   const database = new LocalLibraryDatabase({
-    dbPath: join(profile, "user-data", "local-library", "library.sqlite"),
-    workerPath: join(__dirname, "..", "src", "main", "local-library-worker.js"),
+    dbPath,
+    workerPath,
   });
+  let invalidProfileDatabase: LocalLibraryDatabase | undefined;
   try {
     assert.equal((await database.start()).status, "ready");
     const first = await database.scanFolder(fixtureRoot);
@@ -87,8 +90,17 @@ async function run(): Promise<void> {
     assert.equal(cacheProbe.status, "completed");
     assert.equal(cacheProbe.scannedFiles, cacheProbeCount);
     assert.equal(cacheProbe.importedFiles, cacheProbeCount);
-    process.stdout.write(`SCAN_PROFILE_RESULT: ${JSON.stringify({ itemCount, firstStatus: first.status, repeatedStatus: repeated.status, repeatedUpdatedFiles: repeated.updatedFiles, cacheProbeCount })}\n`);
+    const invalidProfilePath = join(profile, "invalid-profile-output");
+    await mkdir(invalidProfilePath, { recursive: true });
+    await database.close();
+    process.env.Z_VIDEO_SCAN_PROFILE_PATH = invalidProfilePath;
+    invalidProfileDatabase = new LocalLibraryDatabase({ dbPath, workerPath });
+    assert.equal((await invalidProfileDatabase.start()).status, "ready");
+    const invalidProfileScan = await invalidProfileDatabase.scanFolder(fixtureRoot);
+    assert.equal(invalidProfileScan.status, "completed");
+    process.stdout.write(`SCAN_PROFILE_RESULT: ${JSON.stringify({ itemCount, firstStatus: first.status, repeatedStatus: repeated.status, repeatedUpdatedFiles: repeated.updatedFiles, cacheProbeCount, invalidProfileScanStatus: invalidProfileScan.status })}\n`);
   } finally {
+    await invalidProfileDatabase?.close();
     await database.close();
     if (app.isReady()) app.quit();
     await rm(profile, { recursive: true, force: true });

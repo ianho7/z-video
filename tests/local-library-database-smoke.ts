@@ -161,6 +161,26 @@ async function run(): Promise<void> {
 
     const episodeId = episodePage.items[0]?.mediaId;
     if (!episodeId) throw new Error("episode fixture did not produce a mediaId");
+    let concurrentPlayback: Promise<unknown> | undefined;
+    const unsubscribeConcurrentPlayback = database.onScanProgress((progress) => {
+      if (!concurrentPlayback && progress.status === "running" && progress.scannedFiles === 1) {
+        concurrentPlayback = database.savePlayback(episodeId, {
+          positionSec: 37,
+          durationSec: 180,
+          audioTrackId: "audio-concurrent",
+          subtitleTrackId: null,
+          watched: false,
+          updatedAtMs: Date.now(),
+        });
+      }
+    });
+    const concurrentScan = await database.scanFolder(metadataRoot);
+    unsubscribeConcurrentPlayback();
+    assert.equal(concurrentScan.status, "completed");
+    if (!concurrentPlayback) throw new Error("scan progress did not observe a concurrent playback write");
+    await concurrentPlayback;
+    assert.equal((await database.getPlayback(episodeId))?.positionSec, 37);
+    assert.equal((await database.getPlayback(episodeId))?.audioTrackId, "audio-concurrent");
     const detail = await database.getDetail(episodeId);
     assert.equal(detail?.collectionTitle, "Example Show");
     assert.equal(detail?.collectionKind, "show");
@@ -207,9 +227,11 @@ async function run(): Promise<void> {
     );
 
     const disconnectRoot = join(profile, "disconnect-fixture");
+    const disconnectFirst = join(disconnectRoot, "a-first");
     const disconnectNested = join(disconnectRoot, "z-nested");
+    await mkdir(disconnectFirst, { recursive: true });
     await mkdir(disconnectNested, { recursive: true });
-    await writeFile(join(disconnectRoot, "00-first.mkv"), Buffer.from("disconnect first"));
+    await writeFile(join(disconnectFirst, "00-first.mkv"), Buffer.from("disconnect first"));
     await writeFile(join(disconnectNested, "01-second.mkv"), Buffer.from("disconnect second"));
     let disconnected = false;
     const unsubscribeDisconnect = database.onScanProgress((progress) => {
@@ -222,6 +244,9 @@ async function run(): Promise<void> {
     unsubscribeDisconnect();
     assert.equal(partialDisconnect.status, "partial");
     assert.equal((await database.getState()).sources.find((source) => source.sourceId === partialDisconnect.sourceId)?.available, false);
+    const partialItems = await database.list({ page: 1, pageSize: 50, sourceId: partialDisconnect.sourceId });
+    assert.equal(partialItems.totalCount, 1);
+    assert.equal(partialItems.items[0]?.title, "00-first");
 
     await rm(metadataRoot, { recursive: true, force: true });
     const unavailable = await database.scanFolder(metadataRoot);

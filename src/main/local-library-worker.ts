@@ -151,8 +151,12 @@ function profileCount(name: string, amount = 1): void {
 
 function profileError(error: unknown): void {
   if (!scanProfiler) return;
+  recordProfilerError(scanProfiler, error);
+}
+
+function recordProfilerError(profiler: ScanProfiler, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
-  if (!scanProfiler.report.errors.includes(message)) scanProfiler.report.errors.push(message);
+  if (!profiler.report.errors.includes(message)) profiler.report.errors.push(message);
 }
 
 function rememberNfoMetadata(filePath: string, value: NfoCacheEntry): void {
@@ -190,19 +194,24 @@ async function profileAsync<T>(stage: ScanProfileStage, operation: () => Promise
 
 async function finishScanProfiler(profiler: ScanProfiler | undefined, status: ScanProfileReport["status"], counters: ScanCounters): Promise<void> {
   if (!profiler) return;
-  profiler.report.status = status;
-  profiler.report.totalMs = performance.now() - profiler.startedAt;
-  profiler.report.counts = {
-    directories: profiler.report.calls.directories ?? 0,
-    videoCandidates: profiler.report.calls.videoCandidates ?? 0,
-    scannedFiles: counters.scannedFiles,
-    importedFiles: counters.importedFiles,
-    updatedFiles: counters.updatedFiles,
-    warnings: counters.warnings.length,
-  };
-  profiler.report.calls.nfoCacheSize = nfoMetadataCache.size;
-  await mkdir(dirname(profiler.outputPath), { recursive: true });
-  await appendFile(profiler.outputPath, `${JSON.stringify(profiler.report)}\n`, "utf8");
+  try {
+    profiler.report.status = status;
+    profiler.report.totalMs = performance.now() - profiler.startedAt;
+    profiler.report.counts = {
+      directories: profiler.report.calls.directories ?? 0,
+      videoCandidates: profiler.report.calls.videoCandidates ?? 0,
+      scannedFiles: counters.scannedFiles,
+      importedFiles: counters.importedFiles,
+      updatedFiles: counters.updatedFiles,
+      warnings: counters.warnings.length,
+    };
+    profiler.report.calls.nfoCacheSize = nfoMetadataCache.size;
+    await mkdir(dirname(profiler.outputPath), { recursive: true });
+    await appendFile(profiler.outputPath, `${JSON.stringify(profiler.report)}\n`, "utf8");
+  } catch (error) {
+    // Profiling is diagnostic-only. An unwritable output path must not change scan outcome.
+    recordProfilerError(profiler, error);
+  }
 }
 
 function makeId(prefix: "media" | "source" | "collection" | "scan" | "artwork"): string {
@@ -756,42 +765,61 @@ function artworkFingerprint(sourceId: string, relativePath: string, sizeBytes: n
   return { sourceFingerprint, cacheKey };
 }
 
-async function upsertArtwork(
-  collectionId: string,
-  mediaId: string,
-  sourceId: string,
+interface PreparedArtwork {
+  kind: "poster" | "fanart";
+  relativePath: string;
+  sourceFingerprint: string;
+  cacheKey: string;
+}
+
+async function prepareArtwork(
   rootPath: string,
+  sourceId: string,
   artwork: Array<{ kind: "poster" | "fanart"; filePath: string }>,
-): Promise<void> {
-  if (!artwork.length) return;
-  const db = requireDatabase();
-  const timestamp = now();
+): Promise<PreparedArtwork[]> {
+  const prepared: PreparedArtwork[] = [];
   for (const candidate of artwork) {
     try {
       const info = await profileAsync("lstat", () => lstat(candidate.filePath), "lstat");
       const relativePath = makeRelative(rootPath, candidate.filePath);
       const fingerprint = artworkFingerprint(sourceId, relativePath, Number(info.size), Number(info.mtimeMs));
-      const existing = profileSync("database", () => db.prepare("SELECT relative_path AS relativePath, source_fingerprint AS sourceFingerprint FROM artwork WHERE collection_id = ? AND media_id = ? AND kind = ? ORDER BY updated_at DESC LIMIT 1").get(collectionId, mediaId, candidate.kind) as { relativePath?: string; sourceFingerprint?: string } | undefined);
-      if (existing?.relativePath === relativePath && existing.sourceFingerprint === fingerprint.sourceFingerprint) {
-        profileCount("artworkDatabaseCacheHits");
-        continue;
-      }
-      profileSync("database", () => db.prepare("DELETE FROM artwork WHERE collection_id = ? AND media_id = ? AND kind = ?").run(collectionId, mediaId, candidate.kind));
-      profileSync("database", () => db.prepare(`
-        INSERT INTO artwork (artwork_id, collection_id, media_id, source_id, relative_path, kind, source_fingerprint, cache_key, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(makeId("artwork"), collectionId, mediaId, sourceId, relativePath, candidate.kind, fingerprint.sourceFingerprint, fingerprint.cacheKey, timestamp));
+      prepared.push({ kind: candidate.kind, relativePath, ...fingerprint });
     } catch {
       // Artwork is optional. A missing or inaccessible image never removes a playable item.
     }
+  }
+  return prepared;
+}
+
+function upsertArtwork(
+  collectionId: string,
+  mediaId: string,
+  sourceId: string,
+  artwork: PreparedArtwork[],
+): void {
+  if (!artwork.length) return;
+  const db = requireDatabase();
+  const timestamp = now();
+  for (const candidate of artwork) {
+    const existing = profileSync("database", () => db.prepare("SELECT relative_path AS relativePath, source_fingerprint AS sourceFingerprint FROM artwork WHERE collection_id = ? AND media_id = ? AND kind = ? ORDER BY updated_at DESC LIMIT 1").get(collectionId, mediaId, candidate.kind) as { relativePath?: string; sourceFingerprint?: string } | undefined);
+    if (existing?.relativePath === candidate.relativePath && existing.sourceFingerprint === candidate.sourceFingerprint) {
+      profileCount("artworkDatabaseCacheHits");
+      continue;
+    }
+    profileSync("database", () => db.prepare("DELETE FROM artwork WHERE collection_id = ? AND media_id = ? AND kind = ?").run(collectionId, mediaId, candidate.kind));
+    profileSync("database", () => db.prepare(`
+      INSERT INTO artwork (artwork_id, collection_id, media_id, source_id, relative_path, kind, source_fingerprint, cache_key, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(makeId("artwork"), collectionId, mediaId, sourceId, candidate.relativePath, candidate.kind, candidate.sourceFingerprint, candidate.cacheKey, timestamp));
   }
 }
 
 async function upsertMedia(rootPath: string, discovered: DiscoveredMedia, includeItem = true): Promise<{ item?: LocalMediaItem; created: boolean }> {
   const db = requireDatabase();
   const timestamp = now();
-  profileSync("database", () => db.exec("BEGIN IMMEDIATE"));
+  const preparedArtwork = await prepareArtwork(rootPath, discovered.collection.sourceId, discovered.artwork);
   try {
+    profileSync("database", () => db.exec("BEGIN IMMEDIATE"));
     const existing = profileSync("database", () => db.prepare(`
       SELECT media_id AS mediaId, collection_id AS collectionId
       FROM media_files
@@ -815,7 +843,7 @@ async function upsertMedia(rootPath: string, discovered: DiscoveredMedia, includ
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
       `).run(mediaId, collectionId, discovered.collection.sourceId, discovered.relativePath, discovered.displayTitle, discovered.mediaKind, discovered.sizeBytes, discovered.modifiedAtMs, discovered.seasonNumber ?? null, discovered.episodeNumber ?? null, timestamp, timestamp));
     }
-    await upsertArtwork(collectionId, mediaId, discovered.collection.sourceId, rootPath, discovered.artwork);
+    upsertArtwork(collectionId, mediaId, discovered.collection.sourceId, preparedArtwork);
     const row = includeItem
       ? profileSync("database", () => db.prepare(`
         SELECT media_files.media_id AS mediaId, media_files.collection_id AS collectionId, media_files.source_id AS sourceId,
@@ -1217,22 +1245,26 @@ async function scanRoot(rootPath: string): Promise<LocalScanResult> {
   const profiler = beginScanProfiler();
   scanProfiler = profiler;
   scanCaches = { nfo: new Map(), artwork: new Map() };
-  const requestedRoot = resolve(rootPath);
-  const canonicalRoot = await profileAsync("realpath", () => realpath(requestedRoot), "realpath").catch(() => undefined);
-  const sourceRoot = canonicalRoot ?? requestedRoot;
-  await assertNoOverlappingSource(sourceRoot);
-  const source = ensureSource(sourceRoot);
-  const scanId = makeId("scan");
-  const cancellation = { requested: false };
-  scanCancellation.set(scanId, cancellation);
   const counters: ScanCounters = { scannedFiles: 0, importedFiles: 0, updatedFiles: 0, warnings: [], seenRelativePaths: new Set() };
-  addScanRun(source.sourceId, scanId);
   let profileStatus: ScanProfileReport["status"] = "error";
+  let source: ReturnType<typeof ensureSource> | undefined;
+  let scanId: string | undefined;
+  let cancellation: { requested: boolean } | undefined;
   try {
+    const requestedRoot = resolve(rootPath);
+    const canonicalRoot = await profileAsync("realpath", () => realpath(requestedRoot), "realpath").catch(() => undefined);
+    const sourceRoot = canonicalRoot ?? requestedRoot;
+    await assertNoOverlappingSource(sourceRoot);
+    const scanSource = ensureSource(sourceRoot);
+    source = scanSource;
+    scanId = makeId("scan");
+    cancellation = { requested: false };
+    scanCancellation.set(scanId, cancellation);
+    addScanRun(scanSource.sourceId, scanId);
     if (!canonicalRoot) {
       const db = requireDatabase();
-      profileSync("database", () => db.prepare("UPDATE sources SET available = 0, updated_at = ? WHERE source_id = ?").run(now(), source.sourceId));
-      const result: LocalScanResult = { ...progressFor(scanId, source.sourceId, "unavailable", counters), warnings: [], error: "来源不可用，已保留此前索引和播放历史" };
+      profileSync("database", () => db.prepare("UPDATE sources SET available = 0, updated_at = ? WHERE source_id = ?").run(now(), scanSource.sourceId));
+      const result: LocalScanResult = { ...progressFor(scanId, scanSource.sourceId, "unavailable", counters), warnings: [], error: "来源不可用，已保留此前索引和播放历史" };
       finishScan(scanId, false, result.error);
       emitProgress(result);
       profileStatus = "unavailable";
@@ -1241,32 +1273,32 @@ async function scanRoot(rootPath: string): Promise<LocalScanResult> {
     const rootStat = await profileAsync("lstat", () => lstat(canonicalRoot), "lstat");
     if (!rootStat.isDirectory()) throw new LocalWorkerError("invalid-input", "选择的片库目录不可用");
     const db = requireDatabase();
-    profileSync("database", () => db.prepare("UPDATE sources SET available = 1, updated_at = ? WHERE source_id = ?").run(now(), source.sourceId));
-    emitProgress(progressFor(scanId, source.sourceId, "running", counters));
-    const traversalComplete = await scanDirectory(canonicalRoot, canonicalRoot, source.sourceId, scanId, cancellation, counters, undefined);
+    profileSync("database", () => db.prepare("UPDATE sources SET available = 1, updated_at = ? WHERE source_id = ?").run(now(), scanSource.sourceId));
+    emitProgress(progressFor(scanId, scanSource.sourceId, "running", counters));
+    const traversalComplete = await scanDirectory(canonicalRoot, canonicalRoot, scanSource.sourceId, scanId, cancellation, counters, undefined);
     if (cancellation.requested) throw new LocalWorkerError("storage", "scan-cancelled");
     if (traversalComplete) {
       if (counters.seenRelativePaths.size === 0) {
-        profileSync("database", () => db.prepare("UPDATE media_files SET available = 0, updated_at = ? WHERE source_id = ?").run(now(), source.sourceId));
+        profileSync("database", () => db.prepare("UPDATE media_files SET available = 0, updated_at = ? WHERE source_id = ?").run(now(), scanSource.sourceId));
       } else {
         const placeholders = [...counters.seenRelativePaths].map(() => "?").join(",");
-        profileSync("database", () => db.prepare(`UPDATE media_files SET available = 0, updated_at = ? WHERE source_id = ? AND relative_path NOT IN (${placeholders})`).run(now(), source.sourceId, ...counters.seenRelativePaths));
+        profileSync("database", () => db.prepare(`UPDATE media_files SET available = 0, updated_at = ? WHERE source_id = ? AND relative_path NOT IN (${placeholders})`).run(now(), scanSource.sourceId, ...counters.seenRelativePaths));
       }
       finishScan(scanId, true);
-      const result: LocalScanResult = { ...progressFor(scanId, source.sourceId, "completed", counters), warnings: [...counters.warnings] };
+      const result: LocalScanResult = { ...progressFor(scanId, scanSource.sourceId, "completed", counters), warnings: [...counters.warnings] };
       emitProgress(result);
       profileStatus = "completed";
       return result;
     }
     const error = "部分目录无法读取，已保留此前索引和播放历史";
-    profileSync("database", () => db.prepare("UPDATE sources SET available = 0, updated_at = ? WHERE source_id = ?").run(now(), source.sourceId));
+    profileSync("database", () => db.prepare("UPDATE sources SET available = 0, updated_at = ? WHERE source_id = ?").run(now(), scanSource.sourceId));
     finishScan(scanId, false, error);
-    const result: LocalScanResult = { ...progressFor(scanId, source.sourceId, "partial", counters), warnings: [...counters.warnings], error };
+    const result: LocalScanResult = { ...progressFor(scanId, scanSource.sourceId, "partial", counters), warnings: [...counters.warnings], error };
     emitProgress(result);
     profileStatus = "partial";
     return result;
   } catch (error) {
-    if (error instanceof LocalWorkerError && error.message === "scan-cancelled") {
+    if (scanId && source && error instanceof LocalWorkerError && error.message === "scan-cancelled") {
       const result: LocalScanResult = { ...progressFor(scanId, source.sourceId, "cancelled", counters), warnings: [...counters.warnings], error: "扫描已取消，已保留此前索引和播放历史" };
       finishScan(scanId, false, result.error);
       emitProgress(result);
@@ -1275,10 +1307,10 @@ async function scanRoot(rootPath: string): Promise<LocalScanResult> {
     }
     const code = localLibraryErrorCode(error, "storage");
     const safeMessage = localLibraryErrorMessage(code, error instanceof Error ? error.message : undefined);
-    finishScan(scanId, false, safeMessage);
+    if (scanId) finishScan(scanId, false, safeMessage);
     throw new LocalWorkerError(code, safeMessage);
   } finally {
-    scanCancellation.delete(scanId);
+    if (scanId) scanCancellation.delete(scanId);
     await finishScanProfiler(profiler, profileStatus, counters);
     if (scanProfiler === profiler) scanProfiler = undefined;
     scanCaches = undefined;

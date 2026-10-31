@@ -32,14 +32,20 @@ The 2 ms rows in the before table are historical instrumented data only; the fin
 
 The same owned 2,000/20,000 scale smoke passed after the optimization: 1,990 ms / 20,017 ms versus the earlier 4,863 ms / 42,662 ms run. The scale run predates only this diagnostic cleanup and cache-capacity probe; those follow-up edits do not affect empty-video scan behavior. This fixture has empty synthetic video files and proves only local owner scaling/offline retention, not NAS performance or NFO compatibility.
 
+## Review follow-up evidence
+
+The final profile smoke at `.scratch/local-library/runs/scan-profile-1793457206191-16808/scan-profile-report.json` also restarted the worker with an existing directory as `Z_VIDEO_SCAN_PROFILE_PATH`. The scan still returned `completed`; the unwritable profile output was treated as diagnostic-only and did not replace the scan result. The owner smoke at `.scratch/local-library/db-1793457177722-17196/electron.log` observed a playback write from scan progress while another scan was active, and verified that a later partial directory failure retained the already committed first item.
+
 ## Changes
 
 - Reused the already canonical root for containment checks. Candidate paths still go through `realpath`, and the existing lstat-before-canonical check still rejects reparse/symbolic-link entries.
 - Reused the already validated video `lstat` metadata and removed the duplicate `stat` call for each video; missing entries still report a partial/unavailable traversal as before.
 - Reused the directory entries already read by traversal for conventional artwork lookup. Repeated artwork references are cached within a scan and the DB fingerprint check skips unchanged artwork rewrites.
 - Wrapped each media upsert in one `BEGIN IMMEDIATE`/`COMMIT` transaction. The transaction is per media item, so committed items remain progressively visible and cancellation/partial scans do not require a destructive rollback of prior entries.
+- Completed artwork `lstat` and fingerprint preparation before opening the media transaction. The `BEGIN IMMEDIATE` through `COMMIT` section is synchronous SQLite work with no filesystem `await`, so concurrent playback/source commands cannot interleave into a half-open media transaction.
 - Scan traversal no longer builds a renderer DTO for every item. The import path still builds and returns its item DTO.
 - Added a bounded 512-entry process-lifetime LRU NFO cache keyed by file path, size, and mtime. A changed NFO is read and parsed again; a worker restart naturally starts with an empty cache. No schema or renderer contract changed.
+- Put all scan setup under the cleanup guard and made profile directory/append failures non-fatal. The profiler and scan caches are cleared even when overlap/DB setup fails; profile output cannot change a completed, partial, cancelled, or unavailable scan result.
 
 ## Commands
 
@@ -58,5 +64,6 @@ The final typecheck/build/profile smoke and local DB owner smoke passed in the s
 
 - No private user directory, UNC share, or NAS was scanned. The historical per-IO delay is synthetic and does not establish network round-trip time; the final worker contains no such delay switch.
 - The bounded NFO cache is intentionally process-local; persistence across worker restarts would require a schema/contract decision and is not included here.
+- The concurrency proof uses the local-library owner seam and an owned fixture; it is not a claim about an actual NAS round trip or remote SQLite contention.
 - The existing real reparse-point, opaque-ID, read-only source, cancellation/partial, offline-history, and bounded cache behavior remains owned by the existing local-library smoke and was not removed or weakened.
 - No package, renderer, native playback, deployment, or cleanup work was performed.
