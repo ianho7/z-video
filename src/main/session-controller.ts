@@ -10,6 +10,13 @@ export interface PersistedSession {
   nasId?: string;
   nasSign?: string;
   nasName?: string;
+  lastPlayback?: LastPlaybackContext;
+}
+
+export interface LastPlaybackContext {
+  collectionId: string;
+  classificationId: string;
+  episodeId: string;
 }
 
 export interface SessionStore {
@@ -29,6 +36,8 @@ export class SessionController {
   private session?: AuthenticatedSession;
   private pendingLogin?: LoginInput;
   private classifications: ClassificationResult[] = [];
+  private lastPlayback?: LastPlaybackContext;
+  private rememberSession = false;
 
   constructor(private readonly nas: NasGateway | NasApiClient, private readonly store: SessionStore) {}
 
@@ -41,14 +50,18 @@ export class SessionController {
     }
     if (!saved) {
       this.classifications = [];
+      this.lastPlayback = undefined;
+      this.rememberSession = false;
       return this.loggedOutState();
     }
 
     this.session = { ...saved };
+    this.lastPlayback = saved.lastPlayback ? { ...saved.lastPlayback } : undefined;
+    this.rememberSession = true;
     const state = await this.readClassifications();
     if (state.status === "authenticated") {
       try {
-        await this.store.save(toPersistedSession(this.session));
+        await this.store.save(toPersistedSession(this.session, this.lastPlayback));
       } catch (error) {
         return { ...state, error: toAppError(error, "登录已恢复，但无法更新安全会话") };
       }
@@ -124,6 +137,8 @@ export class SessionController {
     this.session = undefined;
     this.pendingLogin = undefined;
     this.classifications = [];
+    this.lastPlayback = undefined;
+    this.rememberSession = false;
     try {
       await this.store.clear();
       return this.loggedOutState();
@@ -142,6 +157,20 @@ export class SessionController {
     return this.session ? { ...this.session } : undefined;
   }
 
+  /** Main-process-only playback context; it contains IDs, never position or URI. */
+  getLastPlayback(): LastPlaybackContext | undefined {
+    return this.lastPlayback ? { ...this.lastPlayback } : undefined;
+  }
+
+  async setLastPlayback(context: LastPlaybackContext): Promise<void> {
+    const collectionId = context.collectionId.trim();
+    const classificationId = context.classificationId.trim();
+    const episodeId = context.episodeId.trim();
+    if (!collectionId || !classificationId || !episodeId) throw new Error("播放上下文缺少 ID");
+    this.lastPlayback = { collectionId, classificationId, episodeId };
+    if (this.session && this.rememberSession) await this.store.save(toPersistedSession(this.session, this.lastPlayback));
+  }
+
   getPublicState(error?: AppError): PublicSessionState {
     if (!this.session) return this.loggedOutState(error);
     return {
@@ -156,6 +185,8 @@ export class SessionController {
     this.session = undefined;
     this.pendingLogin = undefined;
     this.classifications = [];
+    this.lastPlayback = undefined;
+    this.rememberSession = false;
     try {
       await this.store.clear();
     } catch {
@@ -167,8 +198,10 @@ export class SessionController {
   private async activate(session: AuthenticatedSession, remember: boolean): Promise<PublicSessionState> {
     this.session = session;
     this.classifications = [];
+    this.lastPlayback = undefined;
+    this.rememberSession = remember;
     try {
-      if (remember) await this.store.save(toPersistedSession(session));
+      if (remember) await this.store.save(toPersistedSession(session, undefined));
       else await this.store.clear();
     } catch (error) {
       const state = await this.readClassifications();
@@ -191,6 +224,8 @@ export class SessionController {
       const appError = toAppError(error, "无法读取片库分类");
       if (error instanceof NasError && error.kind === "unauthorized") {
         this.session = undefined;
+        this.lastPlayback = undefined;
+        this.rememberSession = false;
         this.classifications = [];
         try {
           await this.store.clear();
@@ -213,7 +248,7 @@ export class SessionController {
   }
 }
 
-function toPersistedSession(session: AuthenticatedSession): PersistedSession {
+function toPersistedSession(session: AuthenticatedSession, lastPlayback?: LastPlaybackContext): PersistedSession {
   return {
     baseUrl: session.baseUrl,
     username: session.username,
@@ -221,6 +256,7 @@ function toPersistedSession(session: AuthenticatedSession): PersistedSession {
     nasId: session.nasId,
     nasSign: session.nasSign,
     nasName: session.nasName,
+    ...(lastPlayback ? { lastPlayback: { ...lastPlayback } } : {}),
   };
 }
 

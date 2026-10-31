@@ -21,6 +21,7 @@ const IPC_CHANNELS = {
   sendMfa: "session:send-mfa",
   verifyMfa: "session:verify-mfa",
   logout: "session:logout",
+  sessionState: "session:state",
   listClassifications: "library:list-classifications",
   playerChooseLocalFile: "player:choose-local-file",
   playerChooseSubtitleFile: "player:choose-subtitle-file",
@@ -43,6 +44,11 @@ const api: ElectronApi = {
     sendMfaCode: (challengeType?: string) => ipcRenderer.invoke(IPC_CHANNELS.sendMfa, challengeType) as Promise<OperationOutcome>,
     verifyMfa: (code: string) => ipcRenderer.invoke(IPC_CHANNELS.verifyMfa, code) as Promise<{ state: PublicSessionState }>,
     logout: () => ipcRenderer.invoke(IPC_CHANNELS.logout) as Promise<OperationOutcome>,
+    onState: (listener: (state: PublicSessionState) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, value: PublicSessionState) => listener(value);
+      ipcRenderer.on(IPC_CHANNELS.sessionState, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.sessionState, handler);
+    },
   },
   library: {
     listClassifications: () => ipcRenderer.invoke(IPC_CHANNELS.listClassifications) as Promise<{ classifications: PublicSessionState["classifications"]; state: PublicSessionState }>,

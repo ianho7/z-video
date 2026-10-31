@@ -10,6 +10,7 @@
     "test": "npm run build && node scripts/run-tests.mjs",
     "test:window": "npm run build && electron dist/tests/window-smoke.js",
     "test:player-window": "npm run build && electron dist/tests/player-window-smoke.js",
+    "test:nas-player-window": "npm run build && electron dist/tests/nas-player-window-smoke.js",
     "start": "npm run build && electron ."
   },
   "devDependencies": {

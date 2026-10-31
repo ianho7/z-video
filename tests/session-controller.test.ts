@@ -109,3 +109,28 @@ test("unauthorized restore clears persisted session and returns to login", async
   assert.equal(state.error?.kind, "unauthorized");
   assert.equal(await store.load(), null);
 });
+
+test("remembered playback context persists only collection, classification and episode IDs", async (t) => {
+  const fixture = await startServer([
+    { body: classResponse() },
+    { body: classResponse() },
+  ]);
+  t.after(() => fixture.close());
+  const store = new MemorySessionStore();
+  await store.save({
+    baseUrl: fixture.baseUrl,
+    username: "fixture-user",
+    token: "fixture-session",
+    nasId: "fixture-nas",
+    nasSign: "fixture-sign",
+  });
+  const first = new SessionController(new NasApiClient(), store);
+  assert.equal((await first.restore()).status, "authenticated");
+  await first.setLastPlayback({ collectionId: "collection-01", classificationId: "movie", episodeId: "episode-01" });
+  assert.deepEqual(store.saved?.lastPlayback, { collectionId: "collection-01", classificationId: "movie", episodeId: "episode-01" });
+  assert.equal(JSON.stringify(store.saved).includes("position"), false);
+
+  const afterRestart = new SessionController(new NasApiClient(), store);
+  assert.equal((await afterRestart.restore()).status, "authenticated");
+  assert.deepEqual(afterRestart.getLastPlayback(), { collectionId: "collection-01", classificationId: "movie", episodeId: "episode-01" });
+});

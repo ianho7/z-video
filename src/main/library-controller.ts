@@ -341,6 +341,24 @@ export class LibraryController {
       return { state: { status: "logged-out", classifications: [], error: { kind: "unauthorized", message: "请先登录 NAS" } }, items: [] };
     }
     this.ensureSession(session);
+    const lastPlayback = this.sessions.getLastPlayback();
+    if (lastPlayback) {
+      const key = detailKey(lastPlayback.collectionId, lastPlayback.classificationId);
+      if (!this.detailCache.has(key)) {
+        try {
+          const detail = await this.nas.getCollectionDetail(session, lastPlayback.collectionId, lastPlayback.classificationId);
+          this.rememberDetail(key, { classificationId: lastPlayback.classificationId, detail });
+          this.rememberImagePath(lastPlayback.collectionId, "cover", detail.coverPath);
+          this.rememberImagePath(lastPlayback.collectionId, "background", detail.backgroundPath);
+        } catch (error) {
+          const mapped = appError(error, "继续观看历史加载失败");
+          if (mapped.kind === "unauthorized") {
+            this.clearCaches();
+            return { state: await this.sessions.invalidate(mapped), items: [] };
+          }
+        }
+      }
+    }
     const items: ContinueWatchingItem[] = [];
     for (const [key, entry] of this.detailCache) {
       const [classificationId, collectionId] = key.split("|", 2);
@@ -348,6 +366,14 @@ export class LibraryController {
       if (item) items.push(item);
     }
     return { state: this.sessions.getPublicState(), items };
+  }
+
+  /** Drop one cached detail after a main-owned progress write. */
+  invalidateDetail(collectionIdInput: string, classificationIdInput: string): void {
+    const collectionId = collectionIdInput.trim();
+    const classificationId = classificationIdInput.trim();
+    if (!collectionId || !classificationId) return;
+    this.detailCache.delete(detailKey(collectionId, classificationId));
   }
 
   async loadImage(input: LibraryImageRequest): Promise<LibraryImageResult> {

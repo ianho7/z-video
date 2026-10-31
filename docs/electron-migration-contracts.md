@@ -78,6 +78,22 @@ of presenting a single paginated response as a full-library result. Continue-wat
 come only from cached detail responses with matching positive NAS history; the
 library controller does not poll every collection for progress.
 
+## Ticket 04 additions
+
+`src/main/nas-client.ts` owns the main-only `getPlaybackStream` and
+`updatePlaybackProgress` boundaries. Stream lookup resolves the selected
+Episode's private path and keeps the returned URI inside main/native playback;
+the renderer receives only the existing Episode ID and playback-safe events.
+The primary `/transcode/play` (or decrypt variant) may fall back to its
+`playaddr` variant only for HTTP/business 404. Progress is accepted only after
+HTTP and business success and carries the current Collection/classification/
+Episode identity plus chapter, track, hash, duration and settings fields.
+
+`SessionController` persists an optional `lastPlayback` object containing only
+`collectionId`, `classificationId` and `episodeId` in the encrypted session.
+Position and media addresses are never local resume evidence; after restart,
+continue-watching is rebuilt from a fresh NAS detail/history response.
+
 ## Commands
 
 From the repository root:

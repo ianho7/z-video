@@ -23,7 +23,11 @@ async function bootstrap(): Promise<void> {
   };
   const library = new LibraryController(controller, nas);
   mainWindow = createMainWindow();
-  playbackHost = new MainPlaybackHost(mainWindow);
+  playbackHost = new MainPlaybackHost(mainWindow, undefined, {
+    sessions: controller,
+    nas,
+    onProgressSaved: (identity) => library.invalidateDetail(identity.collectionId, identity.classificationId),
+  });
   registerIpcHandlers(controller, library, playbackBridge);
   mainWindow.once("closed", () => {
     void playbackHost?.close();
@@ -33,7 +37,11 @@ async function bootstrap(): Promise<void> {
   app.on("activate", () => {
     if (!mainWindow || mainWindow.isDestroyed()) {
       mainWindow = createMainWindow();
-      playbackHost = new MainPlaybackHost(mainWindow);
+      playbackHost = new MainPlaybackHost(mainWindow, undefined, {
+        sessions: controller,
+        nas,
+        onProgressSaved: (identity) => library.invalidateDetail(identity.collectionId, identity.classificationId),
+      });
       mainWindow.once("closed", () => {
         void playbackHost?.close();
         playbackHost = undefined;

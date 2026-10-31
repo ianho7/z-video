@@ -211,7 +211,7 @@ function renderPlaybackEvent(event: PlaybackEvent): void {
   switch (event.type) {
     case "loading":
       setPlayerControlsEnabled(false);
-      setPlayerStatus("正在加载本地媒体…");
+      setPlayerStatus("正在加载媒体…");
       if (playerSurfaceMessage) playerSurfaceMessage.textContent = "正在加载原生媒体…";
       break;
     case "ready":
@@ -380,6 +380,7 @@ playerSubtitleFileButton?.addEventListener("click", async () => {
 });
 
 window.zVideo.player.onEvent(renderPlaybackEvent);
+window.zVideo.session.onState((state) => renderState(state));
 discoverButton?.addEventListener("click", async () => {
   const generation = ++discoveryGeneration;
   setDiscoveryLoading(true);
