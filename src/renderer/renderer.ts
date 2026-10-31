@@ -3,6 +3,7 @@ import type {
   LocalLibraryPage,
   LocalLibraryState,
 } from "../shared/local-library-contracts";
+import type { LocalPlaybackEvent } from "../shared/local-playback-contracts";
 
 const chooseFolderButton = document.querySelector<HTMLButtonElement>("#choose-folder-button");
 const openVideoButton = document.querySelector<HTMLButtonElement>("#open-video-button");
@@ -111,11 +112,20 @@ libraryGrid?.addEventListener("click", (event) => {
 });
 detailBack?.addEventListener("click", hideDetail);
 detailOpen?.addEventListener("click", () => {
-  if (activeMediaId) setMessage("播放入口已保留给本地 playback owner。", false);
+  if (!activeMediaId) return;
+  setMessage("正在打开本地媒体…", false);
+  void window.zVideo.localPlayback.open(activeMediaId).catch((error: unknown) => setMessage(error instanceof Error ? error.message : "本地播放请求失败。", true));
 });
 searchInput?.addEventListener("input", () => {
   if (searchTimer !== undefined) window.clearTimeout(searchTimer);
   searchTimer = window.setTimeout(() => void refresh(), 180);
 });
 window.zVideo.localLibrary.onState(renderState);
+window.zVideo.localPlayback.onEvent((event: LocalPlaybackEvent) => {
+  if (event.type === "loading") setMessage("正在加载本地媒体…", false);
+  if (event.type === "ready") setMessage("本地媒体已就绪。", false);
+  if (event.type === "state" && event.state === "paused") setMessage("本地媒体已暂停。", false);
+  if (event.type === "error") setMessage(event.message, true);
+  if (event.type === "closed") setMessage("本地播放已关闭。", false);
+});
 void refresh().catch((error: unknown) => setMessage(error instanceof Error ? error.message : "本地片库加载失败。", true));

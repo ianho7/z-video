@@ -13,6 +13,7 @@ import type {
   DiscoveryOutcome,
   WindowAppearanceState,
   LocalLibraryQuery,
+  LocalPlaybackControlCommand,
 } from "../shared/contracts";
 
 // Sandboxed preloads may require Electron's built-ins, but not local CommonJS
@@ -23,6 +24,9 @@ const IPC_CHANNELS = {
   localLibraryOpenVideo: "local-library:open-video",
   localLibraryList: "local-library:list",
   localLibraryGet: "local-library:get",
+  localPlaybackOpen: "local-playback:open",
+  localPlaybackCommand: "local-playback:command",
+  localPlaybackEvent: "local-playback:event",
   restore: "session:restore",
   login: "session:login",
   sendMfa: "session:send-mfa",
@@ -56,6 +60,15 @@ const api: ElectronApi = {
       const handler = (_event: Electron.IpcRendererEvent, value: Parameters<typeof listener>[0]) => listener(value);
       ipcRenderer.on(IPC_CHANNELS.localLibraryState, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.localLibraryState, handler);
+    },
+  },
+  localPlayback: {
+    open: (mediaId: string) => ipcRenderer.invoke(IPC_CHANNELS.localPlaybackOpen, mediaId),
+    command: (command: LocalPlaybackControlCommand) => ipcRenderer.invoke(IPC_CHANNELS.localPlaybackCommand, command) as Promise<void>,
+    onEvent: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, value: Parameters<typeof listener>[0]) => listener(value);
+      ipcRenderer.on(IPC_CHANNELS.localPlaybackEvent, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.localPlaybackEvent, handler);
     },
   },
   appearance: {

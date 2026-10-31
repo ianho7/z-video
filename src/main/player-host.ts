@@ -4,9 +4,16 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import type { PlaybackCommand, PlaybackEvent } from "../shared/contracts";
+import {
+  assertLocalPlaybackMediaId,
+  type LocalPlaybackControlCommand,
+  type LocalPlaybackEvent,
+  type LocalPlaybackOpenResult,
+  type LocalPlaybackStore,
+} from "../shared/local-playback-contracts";
 import { IPC_CHANNELS } from "../shared/ipc-channels";
 import { MpvNativePlayer } from "./mpv-player";
-import { PlaybackCoordinator, type PlaybackIdentity, type PlaybackProgressSnapshot, type PlaybackTarget } from "./player";
+import { LocalPlaybackCoordinator, PlaybackCoordinator, type PlaybackIdentity, type PlaybackProgressSnapshot, type PlaybackTarget } from "./player";
 import { NasError, type AuthenticatedSession, type NasCollectionDetail, type NasEpisode, type NasPlaybackProgress, type NasPlaybackStream } from "./nas-client";
 import type { SessionController } from "./session-controller";
 import { rendererEpisodeId } from "./episode-identity";
@@ -15,6 +22,12 @@ export interface PlaybackHost {
   chooseLocalFile(): Promise<{ opened: boolean }>;
   chooseSubtitleFile(): Promise<{ loaded: boolean }>;
   handle(command: PlaybackCommand): Promise<void>;
+  close(): Promise<void>;
+}
+
+export interface LocalPlaybackHost {
+  open(mediaId: string): Promise<LocalPlaybackOpenResult>;
+  handle(command: LocalPlaybackControlCommand): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -159,6 +172,50 @@ export class MainPlaybackHost implements PlaybackHost {
     if (!context) return;
     const state = await context.sessions.invalidate({ kind: "unauthorized", code: errorCode(error), message: "NAS 登录已失效，请重新登录。" }, expectedSessionKey);
     if (!this.window.isDestroyed() && !this.window.webContents.isDestroyed()) this.window.webContents.send(IPC_CHANNELS.sessionState, state);
+  }
+}
+
+/** Main-owned local player. It deliberately has no Session/NAS dependency. */
+export class MainLocalPlaybackHost implements LocalPlaybackHost {
+  private readonly coordinator: LocalPlaybackCoordinator;
+  private closed = false;
+
+  constructor(
+    private readonly window: BrowserWindow,
+    store: LocalPlaybackStore,
+  ) {
+    const engine = new MpvNativePlayer(window);
+    this.coordinator = new LocalPlaybackCoordinator(
+      engine,
+      (event) => this.send(event),
+      (enabled) => {
+        if (!window.isDestroyed()) window.setFullScreen(enabled);
+      },
+      store,
+    );
+  }
+
+  async open(mediaId: string): Promise<LocalPlaybackOpenResult> {
+    if (this.closed || this.window.isDestroyed()) return { opened: false };
+    assertLocalPlaybackMediaId(mediaId);
+    await this.coordinator.open(mediaId);
+    return { opened: true };
+  }
+
+  handle(command: LocalPlaybackControlCommand): Promise<void> {
+    return this.coordinator.handle(command);
+  }
+
+  async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    await this.coordinator.close();
+  }
+
+  private send(event: LocalPlaybackEvent): void {
+    if (!this.window.isDestroyed() && !this.window.webContents.isDestroyed()) {
+      this.window.webContents.send(IPC_CHANNELS.localPlaybackEvent, event);
+    }
   }
 }
 
