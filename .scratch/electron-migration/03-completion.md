@@ -119,4 +119,3 @@ the same command passed under normal Windows permissions.
    licenses; this ticket only proves the development/runtime path using the
    existing ignored root DLL. macOS and installed-package acceptance remain
    unverified.
-
