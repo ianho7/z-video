@@ -39,7 +39,7 @@ export interface LocalPlaybackApi {
 export interface LocalPlaybackStore {
   resolveMediaPath(mediaId: LocalPlaybackMediaId): Promise<string | undefined>;
   getPlayback(mediaId: LocalPlaybackMediaId): Promise<LocalPlaybackState | undefined>;
-  savePlayback(state: LocalPlaybackState): Promise<void>;
+  savePlayback(state: LocalPlaybackState): Promise<LocalPlaybackState>;
 }
 
 export function isLocalPlaybackControlCommand(value: unknown): value is LocalPlaybackControlCommand {

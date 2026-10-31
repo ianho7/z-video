@@ -41,10 +41,10 @@ class MemoryPlaybackStore implements LocalPlaybackStore {
     return Promise.resolve(state ? { ...state } : undefined);
   }
 
-  savePlayback(state: LocalPlaybackState): Promise<void> {
+  savePlayback(state: LocalPlaybackState): Promise<LocalPlaybackState> {
     this.saves.push({ ...state });
     this.states.set(state.mediaId, { ...state });
-    return Promise.resolve();
+    return Promise.resolve({ ...state });
   }
 }
 
