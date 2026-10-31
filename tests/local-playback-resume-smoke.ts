@@ -47,6 +47,24 @@ async function runFirstProcess(): Promise<void> {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       if (!events.some((event) => event.type === "ready")) throw new Error("libmpv did not report ready");
+      const playerLayout = (() => {
+        const view = document.querySelector('[data-view="player"]');
+        const surface = document.querySelector(".player-surface");
+        const controls = document.querySelector(".player-controls");
+        const surfaceRect = surface?.getBoundingClientRect();
+        const controlsRect = controls?.getBoundingClientRect();
+        return {
+          playerVisible: view?.hidden === false,
+          surfaceWidth: surfaceRect?.width ?? 0,
+          surfaceHeight: surfaceRect?.height ?? 0,
+          controlsHeight: controlsRect?.height ?? 0,
+          toggleEnabled: document.querySelector("#player-toggle-button")?.disabled === false,
+        };
+      })();
+      if (!playerLayout.playerVisible) throw new Error("production renderer did not expose the native player view after local open");
+      if (!(playerLayout.surfaceWidth > 0 && playerLayout.surfaceHeight > 0)) throw new Error("native player surface did not get a real layout rectangle");
+      if (!(playerLayout.controlsHeight >= 140)) throw new Error("native player controls did not reserve the native child height");
+      if (!playerLayout.toggleEnabled) throw new Error("native playback controls did not become enabled after ready");
       await window.zVideo.localPlayback.command({ type: "seek", positionSec: 7 });
       const positionDeadline = Date.now() + 12_000;
       while (Date.now() < positionDeadline && !events.some((event) => event.type === "position" && event.positionSec >= 6.5)) {
@@ -63,14 +81,17 @@ async function runFirstProcess(): Promise<void> {
       }
       await window.zVideo.localPlayback.command({ type: "close" });
       const closeDeadline = Date.now() + 5_000;
-      while (Date.now() < closeDeadline && !events.some((event) => event.type === "closed")) {
+      while (Date.now() < closeDeadline && (!events.some((event) => event.type === "closed") || document.querySelector('[data-view="player"]')?.hidden !== true)) {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       unsubscribe();
+      const closedLayout = document.querySelector('[data-view="player"]')?.hidden === true;
+      if (!closedLayout) throw new Error("production renderer did not return to the library after local close");
       return {
         mediaId: imported.item.mediaId,
         positionSec: observed.positionSec,
         durationSec: observed.durationSec,
+        playerLayout,
         events,
         fixturePathLeaked: JSON.stringify(events).includes(${JSON.stringify(fixturePath)}),
       };
@@ -78,6 +99,13 @@ async function runFirstProcess(): Promise<void> {
       mediaId: string;
       positionSec: number;
       durationSec?: number;
+      playerLayout: {
+        playerVisible: boolean;
+        surfaceWidth: number;
+        surfaceHeight: number;
+        controlsHeight: number;
+        toggleEnabled: boolean;
+      };
       events: LocalPlaybackEvent[];
       fixturePathLeaked: boolean;
     };

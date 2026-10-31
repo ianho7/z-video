@@ -6,7 +6,6 @@ const WS_CHILD = 0x40000000;
 const WS_VISIBLE = 0x10000000;
 const WS_CLIPSIBLINGS = 0x04000000;
 const WS_CLIPCHILDREN = 0x02000000;
-const SWP_NOZORDER = 0x0004;
 const SWP_NOACTIVATE = 0x0010;
 const SWP_SHOWWINDOW = 0x0040;
 const SW_HIDE = 0;
@@ -53,7 +52,7 @@ function getWin32Api(): Win32Api {
       "void *",
     ]),
     destroyWindow: user32.func("__stdcall", "DestroyWindow", "int", ["void *"]),
-    getClientRect: user32.func("__stdcall", "GetClientRect", "int", ["void *", koffi.pointer(RECT)]),
+    getClientRect: user32.func("__stdcall", "GetClientRect", "int", ["void *", koffi.out(koffi.pointer(RECT))]),
     getDpiForWindow: user32.func("__stdcall", "GetDpiForWindow", "uint32_t", ["void *"]),
     setWindowPos: user32.func("__stdcall", "SetWindowPos", "int", [
       "void *",
@@ -111,7 +110,7 @@ export class NativeVideoWindow {
     const controlsHeight = Math.round((152 * dpi) / 96);
     const width = Math.max(1, Number(rect.right) - Number(rect.left));
     const height = Math.max(1, Number(rect.bottom) - Number(rect.top) - controlsHeight);
-    this.api.setWindowPos(this.handle, 0n, 0, 0, width, height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    this.api.setWindowPos(this.handle, 0n, 0, 0, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
     this.api.showWindow(this.handle, SW_SHOW);
   }
 

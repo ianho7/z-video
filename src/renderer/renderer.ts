@@ -14,6 +14,7 @@ const PAGE_SIZE = 24;
 const ARTWORK_CONCURRENCY = 4;
 
 const chooseFolderButton = document.querySelector<HTMLButtonElement>("#choose-folder-button");
+const appShell = document.querySelector<HTMLElement>(".app-shell");
 const scanFolderButton = document.querySelector<HTMLButtonElement>("#scan-folder-button");
 const openVideoButton = document.querySelector<HTMLButtonElement>("#open-video-button");
 const allSourcesButton = document.querySelector<HTMLButtonElement>("#all-sources-button");
@@ -47,6 +48,16 @@ const detailOpen = document.querySelector<HTMLButtonElement>("#media-detail-open
 const detailAvailability = document.querySelector<HTMLElement>("#detail-availability");
 const detailEpisodesSection = document.querySelector<HTMLElement>("#detail-episodes-section");
 const detailEpisodes = document.querySelector<HTMLElement>("#detail-episodes");
+const playerView = document.querySelector<HTMLElement>('[data-view="player"]');
+const playerSurfaceMessage = document.querySelector<HTMLElement>("#player-surface-message");
+const playerCloseButton = document.querySelector<HTMLButtonElement>("#player-close-button");
+const playerToggleButton = document.querySelector<HTMLButtonElement>("#player-toggle-button");
+const playerSeek = document.querySelector<HTMLInputElement>("#player-seek");
+const playerTime = document.querySelector<HTMLElement>("#player-time");
+const playerFullscreenButton = document.querySelector<HTMLButtonElement>("#player-fullscreen-button");
+const playerAudioTrack = document.querySelector<HTMLSelectElement>("#player-audio-track");
+const playerSubtitleTrack = document.querySelector<HTMLSelectElement>("#player-subtitle-track");
+const playerStatus = document.querySelector<HTMLElement>("#player-status");
 
 let state: LocalLibraryState | undefined;
 let activePage: { items: LocalMediaItem[]; totalCount: number; page: number; pageSize: number } | undefined;
@@ -57,6 +68,9 @@ let continueEpoch = 0;
 let searchTimer: number | undefined;
 let scanId: string | undefined;
 let sourceBusy = false;
+let playerState: "playing" | "paused" | "buffering" | "ended" = "paused";
+let playerDurationSec = 0;
+let playerFullscreen = false;
 
 let currentQuery: LocalLibraryQuery = { page: 1, pageSize: PAGE_SIZE, filter: "all", sort: "recent" };
 
@@ -79,6 +93,108 @@ function setMessage(message: string, error = false): void {
   if (!libraryMessage) return;
   libraryMessage.textContent = message;
   libraryMessage.dataset.state = error ? "error" : "normal";
+}
+
+function formatTime(seconds: number): string {
+  const safe = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const remainder = safe % 60;
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`
+    : `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
+}
+
+function showPlayer(visible: boolean): void {
+  if (appShell) appShell.hidden = visible;
+  if (playerView) playerView.hidden = !visible;
+  if (visible) playerCloseButton?.focus();
+}
+
+function setPlayerStatus(message: string, error = false): void {
+  if (!playerStatus) return;
+  playerStatus.textContent = message;
+  playerStatus.dataset.state = error ? "error" : "normal";
+}
+
+function setPlayerControlsEnabled(enabled: boolean): void {
+  if (playerToggleButton) playerToggleButton.disabled = !enabled;
+  if (playerSeek) playerSeek.disabled = !enabled;
+  if (playerFullscreenButton) playerFullscreenButton.disabled = !enabled;
+  if (playerAudioTrack) playerAudioTrack.disabled = !enabled;
+  if (playerSubtitleTrack) playerSubtitleTrack.disabled = !enabled;
+}
+
+function renderTrackOptions(select: HTMLSelectElement | null, tracks: Array<{ id: string; label: string; selected?: boolean }>, emptyLabel: string): void {
+  if (!select) return;
+  const options = [new Option(emptyLabel, ""), ...tracks.map((track) => {
+    const option = new Option(track.label, track.id);
+    option.selected = Boolean(track.selected);
+    return option;
+  })];
+  select.replaceChildren(...options);
+  select.value = tracks.find((track) => track.selected)?.id ?? "";
+}
+
+function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
+  if (event.type === "closed") {
+    playerFullscreen = false;
+    if (playerFullscreenButton) playerFullscreenButton.textContent = "全屏";
+    showPlayer(false);
+    setPlayerControlsEnabled(false);
+    setPlayerStatus("");
+    if (playerSurfaceMessage) playerSurfaceMessage.textContent = "正在准备原生播放器…";
+    setMessage("本地播放已关闭。");
+    void loadLibrary();
+    void loadContinueWatching();
+    return;
+  }
+  showPlayer(true);
+  switch (event.type) {
+    case "loading":
+      playerState = "buffering";
+      setPlayerControlsEnabled(false);
+      setPlayerStatus("正在加载本地媒体…");
+      if (playerSurfaceMessage) playerSurfaceMessage.textContent = "正在加载原生媒体…";
+      break;
+    case "ready":
+      playerDurationSec = event.durationSec ?? 0;
+      setPlayerControlsEnabled(true);
+      setPlayerStatus("原生播放器已就绪。视频帧由 native surface 输出。");
+      if (playerSurfaceMessage) playerSurfaceMessage.textContent = "";
+      if (playerSeek) {
+        playerSeek.max = String(playerDurationSec);
+        playerSeek.value = "0";
+      }
+      break;
+    case "state":
+      playerState = event.state;
+      if (playerToggleButton) playerToggleButton.textContent = event.state === "playing" ? "暂停" : "播放";
+      if (event.state === "ended") setPlayerStatus("播放结束。");
+      break;
+    case "position":
+      playerDurationSec = event.durationSec ?? playerDurationSec;
+      if (playerSeek && document.activeElement !== playerSeek) playerSeek.value = String(event.positionSec);
+      if (playerTime) playerTime.textContent = `${formatTime(event.positionSec)} / ${formatTime(playerDurationSec)}`;
+      break;
+    case "tracks":
+      renderTrackOptions(playerAudioTrack, event.audio, "自动");
+      renderTrackOptions(playerSubtitleTrack, event.subtitles, "关闭");
+      break;
+    case "error":
+      setPlayerControlsEnabled(false);
+      setPlayerStatus(event.message, true);
+      if (playerSurfaceMessage) playerSurfaceMessage.textContent = event.message;
+      break;
+  }
+}
+
+async function sendLocalPlaybackCommand(command: Parameters<typeof window.zVideo.localPlayback.command>[0]): Promise<void> {
+  try {
+    await window.zVideo.localPlayback.command(command);
+  } catch {
+    setPlayerStatus("播放控制失败，请重试。", true);
+  }
 }
 
 function kindLabel(kind: LocalMediaItem["kind"]): string {
@@ -549,8 +665,30 @@ detailEpisodes?.addEventListener("click", (event) => {
 detailBack?.addEventListener("click", closeDetail);
 detailOpen?.addEventListener("click", () => {
   if (!selectedMediaId) return;
-  setMessage("正在打开本地媒体…");
-  void window.zVideo.localPlayback.open(selectedMediaId).then(() => setMessage("本地媒体已打开。"), (error: unknown) => setMessage(error instanceof Error ? error.message : "本地播放请求失败。", true));
+  showPlayer(true);
+  setPlayerStatus("正在打开本地媒体…");
+  void window.zVideo.localPlayback.open(selectedMediaId).catch((error: unknown) => {
+    showPlayer(false);
+    setMessage(error instanceof Error ? error.message : "本地播放请求失败。", true);
+  });
+});
+playerCloseButton?.addEventListener("click", () => void sendLocalPlaybackCommand({ type: "close" }));
+playerToggleButton?.addEventListener("click", () => {
+  void sendLocalPlaybackCommand({ type: playerState === "playing" ? "pause" : "play" });
+});
+playerSeek?.addEventListener("change", () => {
+  void sendLocalPlaybackCommand({ type: "seek", positionSec: Number(playerSeek.value) });
+});
+playerFullscreenButton?.addEventListener("click", () => {
+  playerFullscreen = !playerFullscreen;
+  playerFullscreenButton.textContent = playerFullscreen ? "退出全屏" : "全屏";
+  void sendLocalPlaybackCommand({ type: "fullscreen", enabled: playerFullscreen });
+});
+playerAudioTrack?.addEventListener("change", () => {
+  if (playerAudioTrack.value) void sendLocalPlaybackCommand({ type: "set-audio-track", trackId: playerAudioTrack.value });
+});
+playerSubtitleTrack?.addEventListener("change", () => {
+  void sendLocalPlaybackCommand({ type: "set-subtitle-track", trackId: playerSubtitleTrack.value || null });
 });
 searchForm?.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -583,13 +721,7 @@ libraryPagination?.addEventListener("click", (event) => {
 });
 window.zVideo.localLibrary.onState(renderState);
 window.zVideo.localLibrary.onScanProgress(renderScanProgress);
-window.zVideo.localPlayback.onEvent((event: LocalPlaybackEvent) => {
-  if (event.type === "loading") setMessage("正在加载本地媒体…");
-  if (event.type === "ready") setMessage("本地媒体已就绪。");
-  if (event.type === "state" && event.state === "paused") setMessage("本地媒体已暂停。");
-  if (event.type === "error") setMessage(event.message, true);
-  if (event.type === "closed") setMessage("本地播放已关闭。");
-});
+window.zVideo.localPlayback.onEvent(renderLocalPlaybackEvent);
 
 void window.zVideo.localLibrary.getState().then((next) => {
   renderState(next);
