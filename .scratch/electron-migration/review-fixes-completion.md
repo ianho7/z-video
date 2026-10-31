@@ -29,3 +29,9 @@ Dependency source for local evidence: read-only `D:\project\z-video\.worktrees\e
 ## Remaining acceptance boundaries
 
 Not proven here: real NAS login/detail/stream/history/progress, hardware decode, DWM/native overlay pixels, mixed-DPI behavior, macOS behavior, public license provenance, rebuilt production package contents, or restart read-back with a real safeStorage profile. The root coordinator must merge the latest integration branch, then run only the affected root-level package/verification checks with owned file logs and isolated profiles.
+
+## Spec follow-up residuals
+
+- **Continue Watching classification context** — `src/renderer/library.ts` now retains the card's `classificationId` for the active detail and uses it for playback instead of the current library tab. The window fixture uses a `tv` Continue Watching item while the visible library tab is `movie`, then asserts both detail lookup and player command classification.
+- **Search debounce versus immediate detail** — `openDetail` cancels the pending 250 ms timer before changing navigation. The window fixture types a query, opens the card immediately, waits 350 ms, and asserts that detail remains visible instead of being replaced by a late list refresh.
+- Follow-up evidence: main and renderer TypeScript compilation passed using `D:\project\z-video\node_modules`; the single bounded window smoke passed with owned regular-file logs and an isolated profile at `D:\project\z-video\.worktrees\electron-review-fixes\.scratch\electron-migration\runs\spec-followup-window-20261031-082146-6948`.

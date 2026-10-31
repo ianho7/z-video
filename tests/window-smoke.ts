@@ -38,6 +38,8 @@ const fixtureDetail = {
 async function run(): Promise<void> {
   await app.whenReady();
   const collectionQueries: Array<Record<string, unknown>> = [];
+  const detailQueries: Array<Record<string, unknown>> = [];
+  const playerCommands: Array<Record<string, unknown>> = [];
   ipcMain.handle("session:restore", async () => loggedOutState);
   ipcMain.handle("session:login", async () => ({ state: authenticatedState }));
   ipcMain.handle("session:send-mfa", async () => ({ state: { ...loggedOutState, status: "mfa-required" } }));
@@ -50,12 +52,18 @@ async function run(): Promise<void> {
     collectionQueries.push(query as Record<string, unknown>);
     return { state: authenticatedState, page: fixturePage };
   });
-  ipcMain.handle("library:get-detail", async () => ({ state: authenticatedState, detail: fixtureDetail }));
+  ipcMain.handle("library:get-detail", async (_event, input) => {
+    detailQueries.push(input as Record<string, unknown>);
+    return { state: authenticatedState, detail: fixtureDetail };
+  });
   ipcMain.handle("library:list-continue-watching", async () => ({
     state: authenticatedState,
-    items: [{ collectionId: "fixture-collection", classificationId: "movie", episodeId: "fixture-episode", title: "窗口测试影片", episodeTitle: "正片", watchedSeconds: 12, durationSeconds: 90, progressPercent: 13, progressLabel: "已看 13%", durationLabel: "01:30", imageKey: "fixture-collection|cover" }],
+    items: [{ collectionId: "fixture-collection", classificationId: "tv", episodeId: "fixture-episode", title: "窗口测试影片", episodeTitle: "正片", watchedSeconds: 12, durationSeconds: 90, progressPercent: 13, progressLabel: "已看 13%", durationLabel: "01:30", imageKey: "fixture-collection|cover" }],
   }));
   ipcMain.handle("library:load-image", async () => ({ state: authenticatedState, dataUrl: "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=", mimeType: "image/gif" }));
+  ipcMain.handle("player:command", async (_event, command) => {
+    playerCommands.push(command as Record<string, unknown>);
+  });
   ipcMain.handle("discovery:start", async () => ({
     status: "success",
     requestId: 1,
@@ -157,6 +165,39 @@ async function run(): Promise<void> {
   assert.equal(afterSubmit.continueEpisode, "fixture-episode");
   assert.ok(afterSubmit.paginationButtons <= 10);
 
+  await window.webContents.executeJavaScript(
+    `document.querySelector('[data-continue-collection-id="fixture-collection"]').click()`,
+    true,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  const continueDetail = (await window.webContents.executeJavaScript(
+    `({ hidden: document.querySelector('#detail-section')?.hidden, selected: document.querySelector('[data-episode-id="fixture-episode"]')?.getAttribute('aria-selected') || '' })`,
+    true,
+  )) as { hidden: boolean; selected: string };
+  assert.equal(continueDetail.hidden, false);
+  assert.equal(continueDetail.selected, "true");
+  assert.equal(detailQueries.at(-1)?.classificationId, "tv");
+  await window.webContents.executeJavaScript(`document.querySelector('[data-detail-action="play"]').click()`, true);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(playerCommands.at(-1)?.classificationId, "tv");
+  assert.equal(playerCommands.at(-1)?.episodeId, "fixture-episode");
+  await window.webContents.executeJavaScript(`document.querySelector('[data-detail-action="back"]').click()`, true);
+  await new Promise((resolve) => setTimeout(resolve, 150));
+
+  await window.webContents.executeJavaScript(
+    `(() => { const input = document.querySelector('#library-search-input'); input.value = '窗口'; input.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('[data-collection-id="fixture-collection"]').click(); return true; })()`,
+    true,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  const immediateDetail = (await window.webContents.executeJavaScript(
+    `({ hidden: document.querySelector('#detail-section')?.hidden, title: document.querySelector('#detail-title')?.textContent || '' })`,
+    true,
+  )) as { hidden: boolean; title: string };
+  assert.equal(immediateDetail.hidden, false);
+  assert.match(immediateDetail.title, /窗口测试影片/);
+  await window.webContents.executeJavaScript(`document.querySelector('[data-detail-action="back"]').click()`, true);
+  await new Promise((resolve) => setTimeout(resolve, 150));
+
   const queriesBeforeSearch = collectionQueries.length;
   await window.webContents.executeJavaScript(
     `(() => { const input = document.querySelector('#library-search-input'); input.value = '窗口'; input.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`,
@@ -218,6 +259,7 @@ async function run(): Promise<void> {
     "library:get-detail",
     "library:list-continue-watching",
     "library:load-image",
+    "player:command",
     "discovery:start",
     "discovery:cancel",
   ]) {
