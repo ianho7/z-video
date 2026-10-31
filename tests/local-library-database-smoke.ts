@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdtemp, mkdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { rmSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 import { app } from "electron";
 
@@ -52,7 +53,7 @@ async function run(): Promise<void> {
   <season>1</season>
   <episode>2</episode>
 </episodedetails>`);
-  await writeFile(join(brokenDirectory, "Broken Movie.nfo"), `<movie><title>broken`);
+  await writeFile(join(brokenDirectory, "Broken Movie.nfo"), `<unsupported />`);
   for (let index = 0; index < 40; index += 1) await writeFile(join(cancelledRoot, `cancel-${index}.mkv`), Buffer.from(`cancel ${index}`));
 
   try {
@@ -101,6 +102,46 @@ async function run(): Promise<void> {
     assert.equal(scanned.items[0]?.rating, 8.4);
     assert.equal(scanned.items[0]?.artwork?.[0]?.kind, "poster");
     assert.equal(JSON.stringify(scanned.items[0]).includes(movieDirectory), false);
+
+    const reparseRoot = join(profile, "reparse-fixture");
+    const reparseMovieDirectory = join(reparseRoot, "Reparse Movie");
+    const reparseOutsideDirectory = join(profile, "reparse-outside");
+    await mkdir(reparseMovieDirectory, { recursive: true });
+    await mkdir(reparseOutsideDirectory, { recursive: true });
+    const reparseMovie = join(reparseMovieDirectory, "Reparse Movie.mkv");
+    await writeFile(reparseMovie, Buffer.from("reparse indexed media"));
+    await writeFile(join(reparseMovieDirectory, "movie.nfo"), "<movie><title>Reparse Movie</title><thumb>poster.jpg</thumb></movie>");
+    await writeFile(join(reparseMovieDirectory, "poster.jpg"), Buffer.from("reparse indexed artwork"));
+    const outsideMovie = join(reparseOutsideDirectory, "Reparse Movie.mkv");
+    const outsideArtwork = join(reparseOutsideDirectory, "poster.jpg");
+    await writeFile(outsideMovie, Buffer.from("outside media must never resolve"));
+    await writeFile(outsideArtwork, Buffer.from("outside artwork must never resolve"));
+    const reparseScan = await database.scanFolder(reparseRoot);
+    assert.equal(reparseScan.status, "completed");
+    const reparsePage = await database.list({ page: 1, pageSize: 50, query: "Reparse Movie" });
+    const reparseItem = reparsePage.items[0];
+    assert(reparseItem?.artwork?.length, "reparse fixture artwork was not indexed");
+    let reparseProofAvailable = false;
+    if (process.platform === "win32") {
+      await rm(reparseMovieDirectory, { recursive: true, force: true });
+      try {
+        await symlink(reparseOutsideDirectory, reparseMovieDirectory, "junction");
+        reparseProofAvailable = true;
+      } catch {
+        reparseProofAvailable = false;
+      }
+    }
+    const reparseEvidencePath = process.env.Z_VIDEO_REPARSE_EVIDENCE_PATH ?? join(process.cwd(), ".scratch", "local-library", "reparse-proof-latest.json");
+    await mkdir(dirname(reparseEvidencePath), { recursive: true });
+    if (reparseProofAvailable && reparseItem) {
+      assert.equal(await database.resolveMediaPath(reparseItem.mediaId), undefined);
+      assert.equal(await database.resolveArtwork(reparseItem.mediaId, "poster"), undefined);
+      await writeFile(reparseEvidencePath, JSON.stringify({ proof: "real-directory-junction-replacement", mediaResolved: false, artworkResolved: false }));
+      process.stderr.write("PASS: real Windows junction replacement stayed outside local playback/artwork resolution\n");
+    } else {
+      await writeFile(reparseEvidencePath, JSON.stringify({ proof: "skipped", reason: "junction-permission" }));
+      process.stderr.write("SKIP: real reparse-point boundary proof requires Windows junction permission\n");
+    }
     const episodePage = await database.list({ page: 1, pageSize: 50, query: "Second Episode" });
     assert.equal(episodePage.totalCount, 1);
     assert.equal(episodePage.items[0]?.kind, "episode");
@@ -146,6 +187,42 @@ async function run(): Promise<void> {
     const continueWatching = await database.listContinueWatching();
     assert.equal(continueWatching.some((entry) => entry.item.mediaId === episodeId && entry.playback.positionSec === 42), true);
 
+    const sourceCountBeforeNestedImport = (await database.getState()).sources.length;
+    const nestedImport = await database.importVideo(episodePath, showDirectory);
+    assert.equal(nestedImport.status, "imported");
+    if (nestedImport.status !== "imported") throw new Error("nested file import was not accepted");
+    assert.equal(nestedImport.item.sourceId, scanned.items[0]?.sourceId);
+    assert.equal((await database.getState()).sources.length, sourceCountBeforeNestedImport);
+
+    const overlapContainer = join(profile, "overlap-container");
+    const overlapSource = join(overlapContainer, "indexed");
+    await mkdir(overlapSource, { recursive: true });
+    await writeFile(join(overlapSource, "indexed.mkv"), Buffer.from("overlap source fixture"));
+    await database.scanFolder(overlapSource);
+    const siblingVideo = join(overlapContainer, "sibling.mkv");
+    await writeFile(siblingVideo, Buffer.from("sibling fixture"));
+    await assert.rejects(
+      () => database.importVideo(siblingVideo, overlapContainer),
+      (error: unknown) => error instanceof Error && error.message === "新的片库目录与已有来源重叠" && !error.message.includes(overlapContainer),
+    );
+
+    const disconnectRoot = join(profile, "disconnect-fixture");
+    const disconnectNested = join(disconnectRoot, "z-nested");
+    await mkdir(disconnectNested, { recursive: true });
+    await writeFile(join(disconnectRoot, "00-first.mkv"), Buffer.from("disconnect first"));
+    await writeFile(join(disconnectNested, "01-second.mkv"), Buffer.from("disconnect second"));
+    let disconnected = false;
+    const unsubscribeDisconnect = database.onScanProgress((progress) => {
+      if (!disconnected && progress.status === "running" && progress.scannedFiles === 1) {
+        disconnected = true;
+        rmSync(disconnectNested, { recursive: true, force: true });
+      }
+    });
+    const partialDisconnect = await database.scanFolder(disconnectRoot);
+    unsubscribeDisconnect();
+    assert.equal(partialDisconnect.status, "partial");
+    assert.equal((await database.getState()).sources.find((source) => source.sourceId === partialDisconnect.sourceId)?.available, false);
+
     await rm(metadataRoot, { recursive: true, force: true });
     const unavailable = await database.scanFolder(metadataRoot);
     assert.equal(unavailable.status, "unavailable");
@@ -163,7 +240,8 @@ async function run(): Promise<void> {
     const cancelled = await database.cancelScan(scan.scanId);
     assert.equal(cancelled, false);
 
-    assert.equal(await database.removeSource(imported.item.sourceId), true);
+    const removedState = await database.removeSource(imported.item.sourceId);
+    assert.equal(removedState.sources.some((source) => source.sourceId === imported.item.sourceId), false);
     assert.equal((await database.list({ page: 1, pageSize: 50, query: "Owned Movie 2026" })).totalCount, 0);
     assert.equal((await stat(moviePath)).isFile(), true);
 
@@ -176,12 +254,14 @@ async function run(): Promise<void> {
     await reopened.close();
     process.stdout.write("PASS: local DB owner imported one fixture, reused stable opaque mediaId, listed without paths, and resolved only in main owner\n");
   } finally {
-    if (app.isReady()) app.quit();
-    await rm(profile, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
-void run().catch((error: unknown) => {
-  process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
-  app.exit(1);
-});
+void run().then(
+  () => app.exit(0),
+  (error: unknown) => {
+    process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
+    app.exit(1);
+  },
+);

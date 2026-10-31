@@ -18,6 +18,7 @@ import {
   type LocalScanProgress,
   type LocalScanResult,
 } from "../shared/local-library-contracts";
+import { localLibraryErrorMessage } from "./local-library-errors";
 
 type WorkerCommand =
   | { command: "initialize"; dbPath: string }
@@ -109,7 +110,9 @@ export class LocalLibraryDatabase {
     });
     this.worker.on("exit", (code) => this.handleWorkerExit(code));
     this.worker.on("error", (type, location) => {
-      this.failPending(new LocalLibraryDatabaseError("sqlite-unavailable", `本地片库 worker 异常：${type} ${location}`));
+      void type;
+      void location;
+      this.failPending(new LocalLibraryDatabaseError("sqlite-unavailable", localLibraryErrorMessage("sqlite-unavailable")));
     });
     try {
       const result = await this.call<{ schemaVersion: typeof LOCAL_LIBRARY_SCHEMA_VERSION; sqliteAvailable: true; sources: LocalLibraryState["sources"] }>({ command: "initialize", dbPath: this.dbPath });
@@ -124,7 +127,7 @@ export class LocalLibraryDatabase {
         sources: [],
         error: {
           code: error instanceof LocalLibraryDatabaseError && error.code === "sqlite-unavailable" ? "sqlite-unavailable" : "storage",
-          message: error instanceof Error ? error.message : String(error),
+          message: localLibraryErrorMessage(error instanceof LocalLibraryDatabaseError ? error.code : "storage", error instanceof Error ? error.message : undefined),
         },
       };
       this.emitState();
@@ -272,12 +275,12 @@ export class LocalLibraryDatabase {
     if (!pending) return;
     this.pending.delete(message.id);
     if (message.ok) pending.resolve(message.result);
-    else pending.reject(new LocalLibraryDatabaseError(message.error.code, message.error.message));
+    else pending.reject(new LocalLibraryDatabaseError(message.error.code, localLibraryErrorMessage(message.error.code, message.error.message)));
   }
 
   private handleWorkerExit(code: number): void {
     this.worker = undefined;
-    if (!this.closing && code !== 0) this.failPending(new LocalLibraryDatabaseError("sqlite-unavailable", `本地片库 worker 已退出（code=${code}）`));
+    if (!this.closing && code !== 0) this.failPending(new LocalLibraryDatabaseError("sqlite-unavailable", localLibraryErrorMessage("sqlite-unavailable")));
   }
 
   private failPending(error: Error): void {

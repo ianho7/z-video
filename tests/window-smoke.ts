@@ -27,13 +27,23 @@ async function run(): Promise<void> {
   await app.whenReady();
   const queries: Array<Record<string, unknown>> = [];
   ipcMain.handle("local-library:state", async () => state);
-  ipcMain.handle("local-library:choose-folder", async () => ({ status: "imported", item, state }));
+  ipcMain.handle("local-library:choose-folder", async () => ({
+    status: "completed",
+    scanId: "scan_123e4567-e89b-12d3-a456-426614174000",
+    sourceId: item.sourceId,
+    scannedFiles: 1,
+    importedFiles: 1,
+    updatedFiles: 0,
+    warningCount: 0,
+    warnings: [],
+  }));
   ipcMain.handle("local-library:open-video", async () => ({ status: "imported", item, state }));
   ipcMain.handle("local-library:list", async (_event, query) => {
     queries.push((query ?? {}) as Record<string, unknown>);
     return { state, page: { query: query ?? { page: 1, pageSize: 50 }, page: 1, pageSize: 50, totalCount: 1, items: [item] } };
   });
   ipcMain.handle("local-library:get", async () => ({ state, item }));
+  ipcMain.handle("local-library:continue-watching", async () => ({ state, items: [] }));
 
   const window = new BrowserWindow({
     show: false,
@@ -68,6 +78,11 @@ async function run(): Promise<void> {
   assert.equal(initial.openButton, true);
   assert.match(initial.card, /窗口测试影片/);
 
+  await window.webContents.executeJavaScript("document.querySelector('#choose-folder-button').click()", true);
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  const folderScan = await window.webContents.executeJavaScript("document.querySelector('#scan-status')?.textContent || ''", true) as string;
+  assert.match(folderScan, /扫描完成/);
+
   await window.webContents.executeJavaScript("document.querySelector('[data-media-id]').click()", true);
   const detail = await window.webContents.executeJavaScript(`({ hidden: document.querySelector('#media-detail')?.hidden, title: document.querySelector('#media-detail-title')?.textContent || '' })`, true) as { hidden: boolean; title: string };
   assert.equal(detail.hidden, false);
@@ -79,7 +94,7 @@ async function run(): Promise<void> {
   assert.equal(queries.at(-1)?.query, "窗口");
 
   window.close();
-  for (const channel of ["local-library:state", "local-library:choose-folder", "local-library:open-video", "local-library:list", "local-library:get"]) ipcMain.removeHandler(channel);
+  for (const channel of ["local-library:state", "local-library:choose-folder", "local-library:open-video", "local-library:list", "local-library:get", "local-library:continue-watching"]) ipcMain.removeHandler(channel);
 }
 
 run().then(() => app.quit()).catch((error: unknown) => {

@@ -154,7 +154,7 @@ export type LocalImportOutcome =
 
 export interface LocalLibraryApi {
   getState(): Promise<LocalLibraryState>;
-  chooseFolder(): Promise<LocalImportOutcome>;
+  chooseFolder(): Promise<LocalScanResult>;
   openVideo(): Promise<LocalImportOutcome>;
   list(query?: Partial<LocalLibraryQuery>): Promise<LocalLibraryListResult>;
   get(mediaId: string): Promise<LocalLibraryDetailResult>;

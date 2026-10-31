@@ -419,7 +419,7 @@ function closeDetail(): void {
   void loadContinueWatching();
 }
 
-async function handleImport(operation: () => Promise<Awaited<ReturnType<typeof window.zVideo.localLibrary.chooseFolder>>>): Promise<void> {
+async function handleImport(operation: () => Promise<Awaited<ReturnType<typeof window.zVideo.localLibrary.openVideo>>>): Promise<void> {
   if (sourceBusy) return;
   sourceBusy = true;
   chooseFolderButton?.setAttribute("disabled", "true");
@@ -449,6 +449,7 @@ async function runScan(operation: () => Promise<LocalScanResult>): Promise<void>
   sourceBusy = true;
   scanFolderButton?.setAttribute("disabled", "true");
   chooseFolderButton?.setAttribute("disabled", "true");
+  openVideoButton?.setAttribute("disabled", "true");
   scanId = undefined;
   cancelScanButton?.setAttribute("hidden", "true");
   setMessage("正在扫描本地来源…");
@@ -465,6 +466,7 @@ async function runScan(operation: () => Promise<LocalScanResult>): Promise<void>
     cancelScanButton?.setAttribute("hidden", "true");
     scanFolderButton?.removeAttribute("disabled");
     chooseFolderButton?.removeAttribute("disabled");
+    openVideoButton?.removeAttribute("disabled");
   }
 }
 
@@ -486,7 +488,7 @@ function renderScanResult(result: LocalScanResult): void {
   else setMessage(result.error ?? "扫描部分完成，部分条目保留此前索引。", true);
 }
 
-chooseFolderButton?.addEventListener("click", () => void handleImport(() => window.zVideo.localLibrary.chooseFolder()));
+chooseFolderButton?.addEventListener("click", () => void runScan(() => window.zVideo.localLibrary.chooseFolder()));
 openVideoButton?.addEventListener("click", () => void handleImport(() => window.zVideo.localLibrary.openVideo()));
 scanFolderButton?.addEventListener("click", () => void runScan(() => window.zVideo.localLibrary.scanFolder()));
 cancelScanButton?.addEventListener("click", () => {

@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readdirSync, statSync } from "node:fs";
-import { lstat, readFile, readdir, stat } from "node:fs/promises";
+import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { setImmediate as yieldImmediate } from "node:timers/promises";
 
@@ -19,6 +18,8 @@ import {
   type LocalSourceSummary,
 } from "../shared/local-library-contracts";
 import { parseEpisodeNumbers, parseNfo, type ParsedNfo } from "./local-library-metadata";
+import { localLibraryErrorCode, localLibraryErrorMessage } from "./local-library-errors";
+import { safeSourceLabel } from "./local-library-label";
 
 type WorkerRequest =
   | { id: number; command: "initialize"; dbPath: string }
@@ -96,12 +97,12 @@ function openDatabase(dbPath: string): void {
   try {
     const sqlite = require("node:sqlite") as { DatabaseSync?: new (path: string) => DatabaseSyncType };
     if (typeof sqlite.DatabaseSync !== "function") {
-      throw new LocalWorkerError("sqlite-unavailable", "当前 Electron utilityProcess 未提供 node:sqlite DatabaseSync");
+      throw new LocalWorkerError("sqlite-unavailable", localLibraryErrorMessage("sqlite-unavailable"));
     }
     database = new sqlite.DatabaseSync(dbPath);
   } catch (error) {
     if (error instanceof LocalWorkerError) throw error;
-    throw new LocalWorkerError("sqlite-unavailable", `当前 Electron utilityProcess 无法打开 node:sqlite：${error instanceof Error ? error.message : String(error)}`);
+    throw new LocalWorkerError("sqlite-unavailable", localLibraryErrorMessage("sqlite-unavailable"));
   }
   const db = requireDatabase();
   try {
@@ -205,7 +206,7 @@ function openDatabase(dbPath: string): void {
     db.exec("CREATE INDEX IF NOT EXISTS artwork_collection_kind ON artwork(collection_id, media_id, kind);");
     if (existingVersion === 0) db.exec(`PRAGMA user_version = ${LOCAL_LIBRARY_SCHEMA_VERSION};`);
   } catch (error) {
-    throw new LocalWorkerError("storage", `本地片库数据库初始化失败：${error instanceof Error ? error.message : String(error)}`);
+    throw new LocalWorkerError("storage", localLibraryErrorMessage("storage"));
   }
 }
 
@@ -215,9 +216,43 @@ function ensureColumn(table: string, column: string, definition: string): void {
   if (!columns.some((candidate) => candidate.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
 }
 
-function assertRootAndFile(rootPath: string, filePath: string): { root: string; file: string; relativePath: string } {
+function pathContained(rootPath: string, candidatePath: string, allowEqual = true): boolean {
   const root = resolve(rootPath);
-  const file = resolve(filePath);
+  const candidate = resolve(candidatePath);
+  const candidateRelative = relative(root, candidate);
+  if (allowEqual && candidateRelative === "") return true;
+  return Boolean(candidateRelative) && !isAbsolute(candidateRelative) && candidateRelative !== ".." && !candidateRelative.startsWith(`..${sep}`);
+}
+
+function pathWithin(rootPath: string, candidatePath: string): boolean {
+  return pathContained(rootPath, candidatePath, false);
+}
+
+async function canonicalDirectory(rootPath: string): Promise<string> {
+  const candidate = await realpath(resolve(rootPath)).catch(() => undefined);
+  if (!candidate) throw new LocalWorkerError("invalid-input", "选择的片库目录不可用");
+  const metadata = await lstat(candidate).catch(() => undefined);
+  if (!metadata?.isDirectory()) throw new LocalWorkerError("invalid-input", "选择的片库目录不可用");
+  return candidate;
+}
+
+async function canonicalPathWithin(rootPath: string, candidatePath: string): Promise<string | undefined> {
+  const [root, candidate] = await Promise.all([
+    realpath(resolve(rootPath)).catch(() => undefined),
+    realpath(resolve(candidatePath)).catch(() => undefined),
+  ]);
+  return root && candidate && pathContained(root, candidate) ? candidate : undefined;
+}
+
+async function assertRootAndFile(rootPath: string, filePath: string): Promise<{ root: string; file: string; relativePath: string }> {
+  const root = await canonicalDirectory(rootPath);
+  const requestedFile = resolve(filePath);
+  const fileMetadata = await lstat(requestedFile).catch(() => undefined);
+  if (!fileMetadata?.isFile() || fileMetadata.isSymbolicLink()) {
+    throw new LocalWorkerError("invalid-input", "选择的本地视频文件不可用");
+  }
+  const file = await canonicalPathWithin(root, requestedFile);
+  if (!file) throw new LocalWorkerError("invalid-input", "媒体文件必须位于已选择的本地片库目录内");
   const relativePath = relative(root, file);
   if (!relativePath || isAbsolute(relativePath) || relativePath === ".." || relativePath.startsWith(`..${sep}`)) {
     throw new LocalWorkerError("invalid-input", "媒体文件必须位于已选择的本地片库目录内");
@@ -231,59 +266,73 @@ function assertSupportedVideo(filePath: string): void {
   }
 }
 
-function findFirstVideo(rootPath: string): string | undefined {
-  const root = resolve(rootPath);
-  const rootStat = statSync(root, { throwIfNoEntry: false });
-  if (!rootStat?.isDirectory()) throw new LocalWorkerError("invalid-input", "选择的片库目录不可用");
+async function findFirstVideo(rootPath: string): Promise<string | undefined> {
+  const root = await canonicalDirectory(rootPath);
   const pending = [root];
   while (pending.length > 0) {
     const current = pending.shift();
     if (!current) continue;
-    const entries = readdirSync(current, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name));
+    const entries = (await readdir(current, { withFileTypes: true })).sort((left, right) => left.name.localeCompare(right.name));
     for (const entry of entries) {
       if (entry.isSymbolicLink()) continue;
       const child = join(current, entry.name);
       if (entry.isDirectory()) {
-        pending.push(child);
+        const safeChild = await canonicalPathWithin(root, child);
+        if (safeChild) pending.push(safeChild);
       } else if (entry.isFile() && supportedVideoExtensions.has(extname(entry.name).toLowerCase())) {
-        return child;
+        const safeChild = await canonicalPathWithin(root, child);
+        if (safeChild) return safeChild;
       }
     }
   }
   return undefined;
 }
 
-function pathWithin(rootPath: string, candidatePath: string): boolean {
-  const root = resolve(rootPath);
-  const candidate = resolve(candidatePath);
-  const candidateRelative = relative(root, candidate);
-  return Boolean(candidateRelative) && !isAbsolute(candidateRelative) && candidateRelative !== ".." && !candidateRelative.startsWith(`..${sep}`);
-}
-
 function ensureSource(rootPath: string): { sourceId: string; label: string; rootPath: string; available: boolean } {
   const db = requireDatabase();
   const root = resolve(rootPath);
+  const label = safeSourceLabel(root);
   const existing = db.prepare("SELECT source_id AS sourceId, label, available FROM sources WHERE root_path = ?").get(root) as { sourceId?: string; label?: string; available?: number } | undefined;
   const timestamp = now();
   if (existing?.sourceId) {
-    return { sourceId: existing.sourceId, label: existing.label ?? basename(root), rootPath: root, available: Number(existing.available) === 1 };
+    if (existing.label !== label) db.prepare("UPDATE sources SET label = ?, updated_at = ? WHERE source_id = ?").run(label, timestamp, existing.sourceId);
+    return { sourceId: existing.sourceId, label, rootPath: root, available: Number(existing.available) === 1 };
   }
   const sourceId = makeId("source");
-  const label = basename(root) || root;
   db.prepare("INSERT INTO sources (source_id, root_path, label, available, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)").run(sourceId, root, label, timestamp, timestamp);
   return { sourceId, label, rootPath: root, available: false };
 }
 
-function assertNoOverlappingSource(rootPath: string, sourceId?: string): void {
+async function assertNoOverlappingSource(rootPath: string, sourceId?: string): Promise<void> {
   const db = requireDatabase();
+  const candidateRoot = resolve(rootPath);
   const rows = (sourceId
     ? db.prepare("SELECT source_id AS sourceId, root_path AS rootPath FROM sources WHERE source_id <> ?").all(sourceId)
     : db.prepare("SELECT source_id AS sourceId, root_path AS rootPath FROM sources").all()) as Array<{ sourceId?: string; rootPath?: string }>;
   for (const row of rows) {
-    if (row.rootPath && (pathWithin(row.rootPath, rootPath) || pathWithin(rootPath, row.rootPath))) {
+    if (!row.rootPath) continue;
+    const otherRoot = resolve(row.rootPath);
+    if (relative(otherRoot, candidateRoot) === "") continue;
+    if (pathWithin(otherRoot, candidateRoot) || pathWithin(candidateRoot, otherRoot)) {
       throw new LocalWorkerError("invalid-input", "新的片库目录与已有来源重叠");
     }
   }
+}
+
+async function containingSource(filePath: string): Promise<{ sourceId: string; rootPath: string; label: string; available: boolean } | undefined> {
+  const db = requireDatabase();
+  const canonicalFile = await realpath(resolve(filePath)).catch(() => undefined);
+  if (!canonicalFile) return undefined;
+  const rows = db.prepare("SELECT source_id AS sourceId, root_path AS rootPath, label, available FROM sources").all() as Array<Record<string, unknown>>;
+  const matches = rows
+    .filter((row) => typeof row.sourceId === "string" && typeof row.rootPath === "string" && pathWithin(String(row.rootPath), canonicalFile))
+    .sort((left, right) => String(right.rootPath).length - String(left.rootPath).length);
+  const match = matches[0];
+  if (!match) return undefined;
+  const rootPath = String(match.rootPath);
+  const label = safeSourceLabel(rootPath);
+  if (match.label !== label) db.prepare("UPDATE sources SET label = ?, updated_at = ? WHERE source_id = ?").run(label, now(), String(match.sourceId));
+  return { sourceId: String(match.sourceId), rootPath, label, available: Number(match.available) === 1 };
 }
 
 function toGenreList(value: unknown): string[] | undefined {
@@ -413,10 +462,10 @@ async function artworkPath(rootPath: string, nfoDirectory: string, candidate: st
   const trimmed = candidate.trim();
   if (!trimmed || isAbsolute(trimmed) || /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) return undefined;
   const filePath = resolve(nfoDirectory, trimmed);
-  if (!pathWithin(rootPath, filePath)) return undefined;
   try {
     const metadata = await lstat(filePath);
-    return metadata.isFile() && !metadata.isSymbolicLink() && supportedArtworkExtensions.has(extname(filePath).toLowerCase()) ? filePath : undefined;
+    if (!metadata.isFile() || metadata.isSymbolicLink() || !supportedArtworkExtensions.has(extname(filePath).toLowerCase())) return undefined;
+    return await canonicalPathWithin(rootPath, filePath);
   } catch {
     return undefined;
   }
@@ -603,7 +652,7 @@ async function upsertMedia(rootPath: string, discovered: DiscoveredMedia): Promi
 function sourceSummaries(): LocalSourceSummary[] {
   const db = requireDatabase();
   const rows = db.prepare(`
-    SELECT sources.source_id AS sourceId, sources.label, sources.available,
+    SELECT sources.source_id AS sourceId, sources.root_path AS rootPath, sources.label, sources.available,
       COUNT(CASE WHEN media_files.available = 1 THEN 1 END) AS itemCount
     FROM sources
     LEFT JOIN media_files ON media_files.source_id = sources.source_id
@@ -612,7 +661,7 @@ function sourceSummaries(): LocalSourceSummary[] {
   `).all() as Array<Record<string, unknown>>;
   return rows.map((row) => ({
     sourceId: String(row.sourceId),
-    label: String(row.label),
+    label: typeof row.rootPath === "string" ? safeSourceLabel(row.rootPath) : safeSourceLabel(String(row.label ?? "")),
     available: Number(row.available) === 1,
     itemCount: Number(row.itemCount),
   }));
@@ -770,7 +819,7 @@ function removeSource(sourceId: string): boolean {
   }
 }
 
-function resolveArtwork(mediaId: string, kind?: "poster" | "fanart"): { path: string; cacheKey: string; kind: "poster" | "fanart" } | undefined {
+async function resolveArtwork(mediaId: string, kind?: "poster" | "fanart"): Promise<{ path: string; cacheKey: string; kind: "poster" | "fanart" } | undefined> {
   const db = requireDatabase();
   const row = db.prepare(`
     SELECT sources.root_path AS rootPath, artwork.relative_path AS relativePath,
@@ -782,12 +831,15 @@ function resolveArtwork(mediaId: string, kind?: "poster" | "fanart"): { path: st
     LIMIT 1
   `).get(mediaId, kind ?? null, kind ?? null) as { rootPath?: string; relativePath?: string; cacheKey?: string; kind?: string } | undefined;
   if (!row?.rootPath || !row.relativePath || !row.cacheKey || (row.kind !== "poster" && row.kind !== "fanart")) return undefined;
-  const path = resolve(row.rootPath, ...row.relativePath.split("/"));
-  if (!pathWithin(row.rootPath, path)) throw new LocalWorkerError("storage", "本地 artwork 路径越过已选择的片库目录");
+  const requestedPath = resolve(row.rootPath, ...row.relativePath.split("/"));
+  const path = await canonicalPathWithin(row.rootPath, requestedPath);
+  if (!path) return undefined;
+  const metadata = await lstat(requestedPath).catch(() => undefined);
+  if (!metadata?.isFile() || metadata.isSymbolicLink()) return undefined;
   return { path, cacheKey: row.cacheKey, kind: row.kind };
 }
 
-function resolvePath(mediaId: string): string | undefined {
+async function resolvePath(mediaId: string): Promise<string | undefined> {
   const db = requireDatabase();
   const row = db.prepare(`
     SELECT sources.root_path AS rootPath, media_files.relative_path AS relativePath
@@ -795,8 +847,11 @@ function resolvePath(mediaId: string): string | undefined {
     WHERE media_files.media_id = ?
   `).get(mediaId) as { rootPath?: string; relativePath?: string } | undefined;
   if (!row?.rootPath || !row.relativePath) return undefined;
-  const path = resolve(row.rootPath, ...row.relativePath.split("/"));
-  if (!pathWithin(row.rootPath, path)) throw new LocalWorkerError("storage", "本地媒体路径越过已选择的片库目录");
+  const requestedPath = resolve(row.rootPath, ...row.relativePath.split("/"));
+  const path = await canonicalPathWithin(row.rootPath, requestedPath);
+  if (!path) return undefined;
+  const metadata = await lstat(requestedPath).catch(() => undefined);
+  if (!metadata?.isFile() || metadata.isSymbolicLink()) return undefined;
   return path;
 }
 
@@ -885,38 +940,68 @@ async function scanDirectory(
   showContext: { directory: string; metadata?: ParsedNfo; artwork: Array<{ kind: "poster" | "fanart"; filePath: string }> } | undefined,
 ): Promise<boolean> {
   if (cancellation.requested) throw new LocalWorkerError("storage", "scan-cancelled");
+  const safeCurrentDirectory = await canonicalPathWithin(rootPath, currentDirectory);
+  if (!safeCurrentDirectory) {
+    counters.warnings.push("来源目录已不可用，已保留此前索引");
+    return false;
+  }
   let entries;
   try {
-    entries = (await readdir(currentDirectory, { withFileTypes: true })).sort((left, right) => left.name.localeCompare(right.name));
+    entries = (await readdir(safeCurrentDirectory, { withFileTypes: true })).sort((left, right) => left.name.localeCompare(right.name));
   } catch {
     counters.warnings.push("部分目录无法读取，已保留此前索引");
+    return false;
+  }
+  if (!(await canonicalPathWithin(rootPath, safeCurrentDirectory))) {
+    counters.warnings.push("来源目录已不可用，已保留此前索引");
     return false;
   }
   let localShowContext = showContext;
   const tvshow = entries.find((entry) => entry.isFile() && !entry.isSymbolicLink() && entry.name.toLowerCase() === "tvshow.nfo");
   if (tvshow) {
-    const metadata = await readNfoFile(join(currentDirectory, tvshow.name), counters.warnings);
+    const metadata = await readNfoFile(join(safeCurrentDirectory, tvshow.name), counters.warnings);
     const artworkFiles: Array<{ kind: "poster" | "fanart"; filePath: string }> = [];
     for (const candidate of metadata?.artwork ?? []) {
-      const artworkFile = await artworkPath(rootPath, currentDirectory, candidate.path);
+      const artworkFile = await artworkPath(rootPath, safeCurrentDirectory, candidate.path);
       if (artworkFile) artworkFiles.push({ kind: candidate.kind, filePath: artworkFile });
     }
-    if (!artworkFiles.length) artworkFiles.push(...await conventionalArtwork(rootPath, currentDirectory, basename(currentDirectory)));
-    localShowContext = { directory: currentDirectory, metadata, artwork: artworkFiles };
+    if (!artworkFiles.length) artworkFiles.push(...await conventionalArtwork(rootPath, safeCurrentDirectory, basename(safeCurrentDirectory)));
+    localShowContext = { directory: safeCurrentDirectory, metadata, artwork: artworkFiles };
   }
   for (const entry of entries) {
     if (cancellation.requested) throw new LocalWorkerError("storage", "scan-cancelled");
-    const child = join(currentDirectory, entry.name);
+    const child = join(safeCurrentDirectory, entry.name);
     if (entry.isSymbolicLink()) continue;
     if (entry.isDirectory()) {
-      const complete = await scanDirectory(rootPath, child, sourceId, scanId, cancellation, counters, localShowContext);
+      const directoryMetadata = await lstat(child).catch(() => undefined);
+      if (!directoryMetadata) {
+        counters.warnings.push("来源目录已不可用，已保留此前索引");
+        return false;
+      }
+      const safeChild = await canonicalPathWithin(rootPath, child);
+      if (!safeChild) {
+        counters.warnings.push("已跳过越过片库目录边界的链接");
+        continue;
+      }
+      const complete = await scanDirectory(rootPath, safeChild, sourceId, scanId, cancellation, counters, localShowContext);
       if (!complete) return false;
       continue;
     }
     if (!entry.isFile() || !supportedVideoExtensions.has(extname(entry.name).toLowerCase())) continue;
+    const fileMetadata = await lstat(child).catch(() => undefined);
+    if (!fileMetadata) {
+      counters.warnings.push("来源文件已不可用，已保留此前索引");
+      return false;
+    }
+    if (!fileMetadata.isFile() || fileMetadata.isSymbolicLink()) continue;
+    const safeChild = await canonicalPathWithin(rootPath, child);
+    if (!safeChild) {
+      counters.warnings.push("已跳过越过片库目录边界的链接");
+      continue;
+    }
     counters.scannedFiles += 1;
     try {
-      const discovered = await discoverMedia(rootPath, sourceId, child, entries, localShowContext, counters.warnings);
+      const discovered = await discoverMedia(rootPath, sourceId, safeChild, entries, localShowContext, counters.warnings);
       const result = await upsertMedia(rootPath, discovered);
       if (result.created) counters.importedFiles += 1;
       else counters.updatedFiles += 1;
@@ -932,19 +1017,18 @@ async function scanDirectory(
 
 async function scanRoot(rootPath: string): Promise<LocalScanResult> {
   if (activeScan) throw new LocalWorkerError("invalid-input", "已有本地片库扫描正在进行");
-  const root = resolve(rootPath);
-  assertNoOverlappingSource(root);
-  const source = ensureSource(root);
+  const requestedRoot = resolve(rootPath);
+  const canonicalRoot = await realpath(requestedRoot).catch(() => undefined);
+  const sourceRoot = canonicalRoot ?? requestedRoot;
+  await assertNoOverlappingSource(sourceRoot);
+  const source = ensureSource(sourceRoot);
   const scanId = makeId("scan");
   const cancellation = { requested: false };
   scanCancellation.set(scanId, cancellation);
   const counters: ScanCounters = { scannedFiles: 0, importedFiles: 0, updatedFiles: 0, warnings: [], seenRelativePaths: new Set() };
   addScanRun(source.sourceId, scanId);
   try {
-    let rootStat;
-    try {
-      rootStat = await stat(root);
-    } catch {
+    if (!canonicalRoot) {
       const db = requireDatabase();
       db.prepare("UPDATE sources SET available = 0, updated_at = ? WHERE source_id = ?").run(now(), source.sourceId);
       const result: LocalScanResult = { ...progressFor(scanId, source.sourceId, "unavailable", counters), warnings: [], error: "来源不可用，已保留此前索引和播放历史" };
@@ -952,11 +1036,12 @@ async function scanRoot(rootPath: string): Promise<LocalScanResult> {
       emitProgress(result);
       return result;
     }
+    const rootStat = await lstat(canonicalRoot);
     if (!rootStat.isDirectory()) throw new LocalWorkerError("invalid-input", "选择的片库目录不可用");
     const db = requireDatabase();
     db.prepare("UPDATE sources SET available = 1, updated_at = ? WHERE source_id = ?").run(now(), source.sourceId);
     emitProgress(progressFor(scanId, source.sourceId, "running", counters));
-    const traversalComplete = await scanDirectory(root, root, source.sourceId, scanId, cancellation, counters, undefined);
+    const traversalComplete = await scanDirectory(canonicalRoot, canonicalRoot, source.sourceId, scanId, cancellation, counters, undefined);
     if (cancellation.requested) throw new LocalWorkerError("storage", "scan-cancelled");
     if (traversalComplete) {
       if (counters.seenRelativePaths.size === 0) {
@@ -971,6 +1056,7 @@ async function scanRoot(rootPath: string): Promise<LocalScanResult> {
       return result;
     }
     const error = "部分目录无法读取，已保留此前索引和播放历史";
+    db.prepare("UPDATE sources SET available = 0, updated_at = ? WHERE source_id = ?").run(now(), source.sourceId);
     finishScan(scanId, false, error);
     const result: LocalScanResult = { ...progressFor(scanId, source.sourceId, "partial", counters), warnings: [...counters.warnings], error };
     emitProgress(result);
@@ -982,8 +1068,10 @@ async function scanRoot(rootPath: string): Promise<LocalScanResult> {
       emitProgress(result);
       return result;
     }
-    finishScan(scanId, false, error instanceof Error ? error.message : String(error));
-    throw error;
+    const code = localLibraryErrorCode(error, "storage");
+    const safeMessage = localLibraryErrorMessage(code, error instanceof Error ? error.message : undefined);
+    finishScan(scanId, false, safeMessage);
+    throw new LocalWorkerError(code, safeMessage);
   } finally {
     scanCancellation.delete(scanId);
   }
@@ -992,9 +1080,10 @@ async function scanRoot(rootPath: string): Promise<LocalScanResult> {
 async function importVideo(filePath: string, rootPath: string): Promise<LocalMediaItem> {
   const db = requireDatabase();
   assertSupportedVideo(filePath);
-  const paths = assertRootAndFile(rootPath, filePath);
-  const fileStat = statSync(paths.file, { throwIfNoEntry: false });
-  if (!fileStat?.isFile()) throw new LocalWorkerError("invalid-input", "选择的本地视频文件不可用");
+  const existingSource = await containingSource(filePath);
+  const paths = await assertRootAndFile(existingSource?.rootPath ?? rootPath, filePath);
+  if (!existingSource) await assertNoOverlappingSource(paths.root);
+  const fileStat = await stat(paths.file);
   const source = ensureSource(paths.root);
   const discovered: DiscoveredMedia = {
     relativePath: paths.relativePath,
@@ -1031,7 +1120,7 @@ async function handle(request: WorkerRequest): Promise<unknown> {
   }
   if (request.command === "state") return state();
   if (request.command === "import-first-movie") {
-    const filePath = findFirstVideo(request.rootPath);
+    const filePath = await findFirstVideo(request.rootPath);
     return filePath ? { status: "imported", item: await importVideo(filePath, request.rootPath) } : { status: "empty" };
   }
   if (request.command === "import-video") return { status: "imported", item: await importVideo(request.filePath, request.rootPath) };
@@ -1074,8 +1163,8 @@ workerPort.on("message", (event) => {
         id: request.id,
         ok: false,
         error: error instanceof LocalWorkerError
-          ? { code: error.code, message: error.message }
-          : { code: "unknown", message: error instanceof Error ? error.message : String(error) },
+          ? { code: error.code, message: localLibraryErrorMessage(error.code, error.message) }
+          : { code: "unknown", message: localLibraryErrorMessage("unknown") },
       };
       workerPort.postMessage(response);
     },

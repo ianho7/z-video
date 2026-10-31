@@ -7,6 +7,7 @@ import {
 } from "../shared/local-library-contracts";
 import { IPC_CHANNELS } from "../shared/ipc-channels";
 import { recordUiOperation } from "./diagnostics";
+import { localLibraryErrorCode, localLibraryErrorMessage } from "./local-library-errors";
 import { LocalLibraryDatabase } from "./local-library-database";
 import { LocalArtworkCache } from "./local-artwork-cache";
 
@@ -20,8 +21,18 @@ export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, 
   ipcMain.handle(IPC_CHANNELS.localLibraryState, () => database.getState());
   ipcMain.handle(IPC_CHANNELS.localLibraryChooseFolder, () => withUiOperation("local-library.choose-folder", async () => {
     const selection = await dialog.showOpenDialog(window, { properties: ["openDirectory", "createDirectory"] });
-    if (selection.canceled || !selection.filePaths[0]) return { status: "cancelled", state: database.getState() } as const;
-    return database.importFirstMovieInFolder(selection.filePaths[0]);
+    if (selection.canceled || !selection.filePaths[0]) return {
+      status: "cancelled",
+      scanId: "scan_00000000-0000-4000-8000-000000000000",
+      sourceId: "",
+      scannedFiles: 0,
+      importedFiles: 0,
+      updatedFiles: 0,
+      warningCount: 0,
+      warnings: [],
+      error: "已取消选择片库目录",
+    } as const;
+    return database.scanFolder(selection.filePaths[0]);
   }));
   ipcMain.handle(IPC_CHANNELS.localLibraryOpenVideo, () => withUiOperation("local-library.open-video", async () => {
     const selection = await dialog.showOpenDialog(window, {
@@ -148,6 +159,7 @@ async function withUiOperation<T>(operation: string, action: () => Promise<T> | 
     return result;
   } catch (error) {
     await recordUiOperation(operation, "error", startedAt, { errorKind: error instanceof Error ? error.name : "unknown" });
-    throw error;
+    const code = localLibraryErrorCode(error);
+    throw new Error(localLibraryErrorMessage(code, error instanceof Error ? error.message : undefined));
   }
 }

@@ -19,6 +19,7 @@ export class LocalArtworkCache {
   private readonly pending: Array<() => void> = [];
   private activeReads = 0;
   private initialized: Promise<void> | undefined;
+  private diskQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly directory: string, private readonly limitBytes = CACHE_LIMIT_BYTES) {}
 
@@ -56,15 +57,17 @@ export class LocalArtworkCache {
   private async ensureInitialized(): Promise<void> {
     if (!this.initialized) {
       this.initialized = (async () => {
-        await mkdir(this.directory, { recursive: true });
-        const entries = await readdir(this.directory, { withFileTypes: true }).catch(() => []);
-        let total = 0;
-        for (const entry of entries) {
-          if (!entry.isFile() || !/^artwork_[a-f0-9]{64}\.bin$/i.test(entry.name)) continue;
-          total += Number((await stat(join(this.directory, entry.name)).catch(() => ({ size: 0 }))).size);
-        }
-        this.diskBytes = total;
-        await this.evictDisk();
+        await this.withDiskLock(async () => {
+          await mkdir(this.directory, { recursive: true });
+          const entries = await readdir(this.directory, { withFileTypes: true }).catch(() => []);
+          let total = 0;
+          for (const entry of entries) {
+            if (!entry.isFile() || !/^artwork_[a-f0-9]{64}\.bin$/i.test(entry.name)) continue;
+            total += Number((await stat(join(this.directory, entry.name)).catch(() => ({ size: 0 }))).size);
+          }
+          this.diskBytes = total;
+          await this.evictDiskLocked();
+        });
       })();
     }
     await this.initialized;
@@ -104,18 +107,16 @@ export class LocalArtworkCache {
 
   private async writeDisk(cachePath: string, bytes: Buffer): Promise<void> {
     if (bytes.byteLength > this.limitBytes) return;
-    try {
-      const previous = await stat(cachePath);
-      this.diskBytes -= Number(previous.size);
-    } catch {
-      // New derivative.
-    }
-    await writeFile(cachePath, bytes);
-    this.diskBytes += bytes.byteLength;
-    await this.evictDisk();
+    await this.withDiskLock(async () => {
+      const previous = await stat(cachePath).catch(() => undefined);
+      await writeFile(cachePath, bytes);
+      const current = await stat(cachePath);
+      this.diskBytes += Number(current.size) - Number(previous?.size ?? 0);
+      await this.evictDiskLocked();
+    });
   }
 
-  private async evictDisk(): Promise<void> {
+  private async evictDiskLocked(): Promise<void> {
     if (this.diskBytes <= this.limitBytes) return;
     const entries = await readdir(this.directory, { withFileTypes: true }).catch(() => []);
     const candidates: Array<{ path: string; size: number; atime: number }> = [];
@@ -128,9 +129,30 @@ export class LocalArtworkCache {
     candidates.sort((left, right) => left.atime - right.atime);
     for (const candidate of candidates) {
       if (this.diskBytes <= this.limitBytes) break;
-      await unlink(candidate.path).catch(() => undefined);
-      this.diskBytes -= candidate.size;
-      this.memory.delete(candidate.path.slice(this.directory.length + 1, -4));
+      try {
+        await unlink(candidate.path);
+      } catch {
+        continue;
+      }
+      this.diskBytes = Math.max(0, this.diskBytes - candidate.size);
+      const cacheKey = candidate.path.slice(this.directory.length + 1, -4);
+      const memoryEntry = this.memory.get(cacheKey);
+      if (memoryEntry) {
+        this.memory.delete(cacheKey);
+        this.memoryBytes = Math.max(0, this.memoryBytes - memoryEntry.bytes.byteLength);
+      }
+    }
+  }
+
+  private async withDiskLock<T>(work: () => Promise<T>): Promise<T> {
+    const previous = this.diskQueue;
+    let release!: () => void;
+    this.diskQueue = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    try {
+      return await work();
+    } finally {
+      release();
     }
   }
 }
