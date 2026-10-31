@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { app } from "electron";
@@ -120,6 +120,18 @@ async function run(): Promise<void> {
 
     const episodeId = episodePage.items[0]?.mediaId;
     if (!episodeId) throw new Error("episode fixture did not produce a mediaId");
+    const detail = await database.getDetail(episodeId);
+    assert.equal(detail?.collectionTitle, "Example Show");
+    assert.equal(detail?.collectionKind, "show");
+    assert.equal(detail?.episodes.length, 1);
+    assert.equal(detail?.episodes[0]?.mediaId, episodeId);
+    const episodeFilter = await database.list({ page: 1, pageSize: 1, filter: "episode", sort: "title" });
+    assert.equal(episodeFilter.totalCount, 1);
+    assert.equal(episodeFilter.items[0]?.mediaId, episodeId);
+    const titlePage = await database.list({ page: 1, pageSize: 1, sort: "title" });
+    assert.equal(titlePage.pageSize, 1);
+    assert.equal(titlePage.items.length, 1);
+    assert.equal(titlePage.totalCount >= 3, true);
     const savedPlayback = await database.savePlayback({
       mediaId: episodeId,
       positionSec: 42,
@@ -131,6 +143,8 @@ async function run(): Promise<void> {
     });
     assert.equal(savedPlayback.positionSec, 42);
     assert.equal((await database.getPlayback(episodeId))?.audioTrackId, "audio-1");
+    const continueWatching = await database.listContinueWatching();
+    assert.equal(continueWatching.some((entry) => entry.item.mediaId === episodeId && entry.playback.positionSec === 42), true);
 
     await rm(metadataRoot, { recursive: true, force: true });
     const unavailable = await database.scanFolder(metadataRoot);
@@ -149,12 +163,16 @@ async function run(): Promise<void> {
     const cancelled = await database.cancelScan(scan.scanId);
     assert.equal(cancelled, false);
 
+    assert.equal(await database.removeSource(imported.item.sourceId), true);
+    assert.equal((await database.list({ page: 1, pageSize: 50, query: "Owned Movie 2026" })).totalCount, 0);
+    assert.equal((await stat(moviePath)).isFile(), true);
+
     await database.close();
     const reopened = new LocalLibraryDatabase({ dbPath, workerPath });
     const reopenedState = await reopened.start();
     assert.equal(reopenedState.status, "ready");
     const reopenedPage = await reopened.list({ page: 1, pageSize: 50 });
-    assert.equal(reopenedPage.items[0]?.mediaId, imported.item.mediaId);
+    assert.equal(reopenedPage.items.some((item) => item.mediaId === imported.item.mediaId), false);
     await reopened.close();
     process.stdout.write("PASS: local DB owner imported one fixture, reused stable opaque mediaId, listed without paths, and resolved only in main owner\n");
   } finally {

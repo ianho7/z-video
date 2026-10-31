@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <div class="app-shell">
+    <div class="app-shell" data-view="library">
       <header class="app-header">
         <div class="brand-lockup" aria-label="z-video 本地片库">
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
@@ -17,6 +17,7 @@
         </div>
         <div class="header-actions">
           <button id="choose-folder-button" class="secondary-button" type="button">添加文件夹</button>
+          <button id="scan-folder-button" class="secondary-button" type="button">扫描目录</button>
           <button id="open-video-button" class="primary-button" type="button">打开视频</button>
         </div>
       </header>
@@ -25,32 +26,83 @@
         <aside class="source-sidebar" aria-label="本地片库来源">
           <p class="eyebrow">SOURCES</p>
           <h2>我的来源</h2>
+          <button id="all-sources-button" class="source-all" type="button" aria-pressed="true">全部来源 <span id="all-source-count">0</span></button>
           <div id="source-list" class="source-list" role="list"></div>
-          <p class="muted source-note">媒体只读；应用数据保存在本机 userData。</p>
+          <p class="muted source-note">媒体只读；移除来源只清理应用索引，不删除源文件。</p>
         </aside>
+
         <section class="library-content" aria-labelledby="library-title">
           <div class="content-heading">
             <div>
               <p class="eyebrow">LOCAL LIBRARY</p>
               <h1 id="library-title">片库</h1>
             </div>
-            <label class="search-box" for="library-search-input">
+            <form id="library-search-form" class="search-box" role="search">
               <span aria-hidden="true">⌕</span>
-              <input id="library-search-input" type="search" autocomplete="off" placeholder="搜索片名" />
+              <input id="library-search-input" type="search" autocomplete="off" placeholder="搜索片名、剧集" aria-label="搜索片名、剧集" />
+              <button id="library-search-clear" class="icon-button" type="button" hidden aria-label="清除搜索">×</button>
+            </form>
+          </div>
+
+          <div class="library-toolbar">
+            <label>类型
+              <select id="library-filter" class="library-select">
+                <option value="all">全部</option>
+                <option value="movie">电影</option>
+                <option value="show">电视剧</option>
+                <option value="episode">剧集</option>
+                <option value="unclassified">未分类</option>
+              </select>
             </label>
+            <label>排序
+              <select id="library-sort" class="library-select">
+                <option value="recent">最近更新</option>
+                <option value="added_desc">最近添加</option>
+                <option value="title">标题</option>
+                <option value="year_desc">年份</option>
+                <option value="score_desc">评分</option>
+              </select>
+            </label>
+            <span id="scan-status" class="scan-status" role="status" aria-live="polite"></span>
+            <button id="cancel-scan-button" class="secondary-button compact-button" type="button" hidden>取消扫描</button>
           </div>
+
           <div id="library-message" class="status" role="status" aria-live="polite"></div>
-          <div id="library-grid" class="library-grid" role="list" aria-live="polite"></div>
-          <div id="library-empty" class="empty-state" hidden>
-            <h2>还没有本地影片</h2>
-            <p>选择一个文件夹导入第一部电影，或直接打开一个视频文件。</p>
-          </div>
+
+          <section id="continue-section" class="continue-section" hidden aria-labelledby="continue-title">
+            <div class="section-heading"><h2 id="continue-title">继续观看</h2><span id="continue-scope" class="muted"></span></div>
+            <div id="continue-row" class="continue-row"></div>
+          </section>
+
+          <section id="collection-section" aria-labelledby="collection-title">
+            <div class="section-heading"><h2 id="collection-title">全部媒体</h2><span id="page-scope" class="muted"></span></div>
+            <div id="library-grid" class="library-grid" role="list" aria-live="polite"></div>
+            <div id="library-empty" class="empty-state" hidden>
+              <h2 id="library-empty-title">还没有本地影片</h2>
+              <p id="library-empty-message">选择一个文件夹开始索引，或直接打开一个视频文件。</p>
+            </div>
+            <nav id="library-pagination" class="library-pagination" aria-label="片库分页"></nav>
+          </section>
+
           <section id="media-detail" class="media-detail" hidden aria-labelledby="media-detail-title">
-            <button id="media-detail-back" class="text-button" type="button">返回片库</button>
-            <p class="eyebrow">MEDIA DETAIL</p>
-            <h2 id="media-detail-title"></h2>
-            <p id="media-detail-meta" class="muted"></p>
-            <button id="media-detail-open" class="primary-button" type="button">打开条目</button>
+            <button id="media-detail-back" class="text-button" type="button">← 返回片库</button>
+            <div class="detail-layout">
+              <div id="detail-poster" class="detail-poster"><span class="poster-fallback">封面不可用</span></div>
+              <div class="detail-copy">
+                <p class="eyebrow">MEDIA DETAIL</p>
+                <h2 id="media-detail-title"></h2>
+                <p id="media-detail-meta" class="muted"></p>
+                <p id="media-detail-plot" class="detail-plot"></p>
+                <div class="detail-actions">
+                  <button id="media-detail-open" class="primary-button" type="button">播放</button>
+                  <span id="detail-availability" class="muted"></span>
+                </div>
+                <section id="detail-episodes-section" hidden aria-labelledby="detail-episodes-title">
+                  <h3 id="detail-episodes-title">剧集</h3>
+                  <div id="detail-episodes" class="episode-list"></div>
+                </section>
+              </div>
+            </div>
           </section>
         </section>
       </main>

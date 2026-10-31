@@ -10,6 +10,8 @@ import {
   LOCAL_LIBRARY_SCHEMA_VERSION,
   type LocalLibraryQuery,
   type LocalMediaItem,
+  type LocalMediaDetail,
+  type LocalContinueWatchingItem,
   type LocalArtworkReference,
   type LocalPlaybackState,
   type LocalScanProgress,
@@ -27,6 +29,11 @@ type WorkerRequest =
   | { id: number; command: "cancel-scan"; scanId: string }
   | { id: number; command: "list"; query: LocalLibraryQuery }
   | { id: number; command: "get"; mediaId: string }
+  | { id: number; command: "get-detail"; mediaId: string }
+  | { id: number; command: "list-continue-watching" }
+  | { id: number; command: "remove-source"; sourceId: string }
+  | { id: number; command: "source-root"; sourceId: string }
+  | { id: number; command: "resolve-artwork"; mediaId: string; kind?: "poster" | "fanart" }
   | { id: number; command: "resolve-path"; mediaId: string }
   | { id: number; command: "get-playback"; mediaId: string }
   | { id: number; command: "save-playback"; state: LocalPlaybackState }
@@ -619,9 +626,31 @@ function state(): { schemaVersion: typeof LOCAL_LIBRARY_SCHEMA_VERSION; sqliteAv
 function list(query: LocalLibraryQuery): { totalCount: number; items: LocalMediaItem[] } {
   const db = requireDatabase();
   const text = query.query?.trim() ?? "";
-  const where = text ? "AND (collections.title LIKE ? OR media_files.display_title LIKE ?)" : "";
-  const parameters = text ? [`%${text}%`, `%${text}%`] : [];
-  const count = db.prepare(`SELECT COUNT(*) AS count FROM media_files JOIN collections USING (collection_id) WHERE 1 = 1 ${where}`).get(...parameters) as { count?: number } | undefined;
+  const clauses = ["1 = 1"];
+  const parameters: Array<string | number> = [];
+  if (text) {
+    clauses.push("(collections.title LIKE ? OR media_files.display_title LIKE ?)");
+    parameters.push(`%${text}%`, `%${text}%`);
+  }
+  if (query.filter && query.filter !== "all") {
+    clauses.push(query.filter === "show" ? "collections.kind = 'show'" : "media_files.media_kind = ?");
+    if (query.filter !== "show") parameters.push(query.filter);
+  }
+  if (query.sourceId) {
+    clauses.push("media_files.source_id = ?");
+    parameters.push(query.sourceId);
+  }
+  const count = db.prepare(`SELECT COUNT(*) AS count FROM media_files JOIN collections USING (collection_id) WHERE ${clauses.join(" AND ")}`).get(...parameters) as { count?: number } | undefined;
+  const sort = query.sort ?? "recent";
+  const orderBy = sort === "title"
+    ? "collections.title COLLATE NOCASE ASC, media_files.display_title COLLATE NOCASE ASC"
+    : sort === "year_desc"
+      ? "collections.year IS NULL ASC, collections.year DESC, collections.title COLLATE NOCASE ASC"
+      : sort === "score_desc"
+        ? "collections.rating IS NULL ASC, collections.rating DESC, collections.title COLLATE NOCASE ASC"
+        : sort === "added_desc"
+          ? "media_files.added_at DESC, collections.title COLLATE NOCASE ASC"
+          : "media_files.updated_at DESC, collections.title COLLATE NOCASE ASC";
   const rows = db.prepare(`
     SELECT media_files.media_id AS mediaId, media_files.collection_id AS collectionId, media_files.source_id AS sourceId,
       media_files.display_title AS displayTitle, media_files.media_kind AS mediaKind,
@@ -631,8 +660,8 @@ function list(query: LocalLibraryQuery): { totalCount: number; items: LocalMedia
       collections.title, collections.kind, collections.year, collections.plot,
       collections.genre_json AS genreJson, collections.rating
     FROM media_files JOIN collections USING (collection_id) JOIN sources USING (source_id)
-    WHERE 1 = 1 ${where}
-    ORDER BY media_files.updated_at DESC, collections.title COLLATE NOCASE
+    WHERE ${clauses.join(" AND ")}
+    ORDER BY ${orderBy}
     LIMIT ? OFFSET ?
   `).all(...parameters, query.pageSize, (query.page - 1) * query.pageSize) as Array<Record<string, unknown>>;
   return { totalCount: Number(count?.count ?? 0), items: rows.map(toPublicItem) };
@@ -652,6 +681,110 @@ function get(mediaId: string): LocalMediaItem | undefined {
     WHERE media_files.media_id = ?
   `).get(mediaId) as Record<string, unknown> | undefined;
   return row ? toPublicItem(row) : undefined;
+}
+
+function getDetail(mediaId: string): LocalMediaDetail | undefined {
+  const item = get(mediaId);
+  if (!item) return undefined;
+  const db = requireDatabase();
+  const collection = db.prepare("SELECT title, kind FROM collections WHERE collection_id = ?").get(item.collectionId) as { title?: string; kind?: string } | undefined;
+  const rows = db.prepare(`
+    SELECT media_files.media_id AS mediaId, media_files.collection_id AS collectionId, media_files.source_id AS sourceId,
+      media_files.display_title AS displayTitle, media_files.media_kind AS mediaKind,
+      media_files.size_bytes AS sizeBytes, media_files.modified_at_ms AS modifiedAtMs,
+      media_files.season_number AS seasonNumber, media_files.episode_number AS episodeNumber,
+      media_files.available, sources.available AS sourceAvailable,
+      collections.title, collections.kind, collections.year, collections.plot,
+      collections.genre_json AS genreJson, collections.rating
+    FROM media_files JOIN collections USING (collection_id) JOIN sources USING (source_id)
+    WHERE media_files.collection_id = ?
+    ORDER BY media_files.season_number IS NULL, media_files.season_number, media_files.episode_number IS NULL,
+      media_files.episode_number, media_files.display_title COLLATE NOCASE
+  `).all(item.collectionId) as Array<Record<string, unknown>>;
+  return {
+    item,
+    ...(collection?.title ? { collectionTitle: collection.title } : {}),
+    ...(collection?.kind === "movie" || collection?.kind === "show" || collection?.kind === "unclassified" ? { collectionKind: collection.kind } : {}),
+    episodes: rows.map(toPublicItem),
+  };
+}
+
+function listContinueWatching(): LocalContinueWatchingItem[] {
+  const db = requireDatabase();
+  const rows = db.prepare(`
+    SELECT media_files.media_id AS mediaId, media_files.collection_id AS collectionId, media_files.source_id AS sourceId,
+      media_files.display_title AS displayTitle, media_files.media_kind AS mediaKind,
+      media_files.size_bytes AS sizeBytes, media_files.modified_at_ms AS modifiedAtMs,
+      media_files.season_number AS seasonNumber, media_files.episode_number AS episodeNumber,
+      media_files.available, sources.available AS sourceAvailable,
+      collections.title, collections.kind, collections.year, collections.plot,
+      collections.genre_json AS genreJson, collections.rating,
+      playback_state.position_sec AS positionSec, playback_state.duration_sec AS durationSec,
+      playback_state.audio_track_id AS audioTrackId, playback_state.subtitle_track_id AS subtitleTrackId,
+      playback_state.watched, playback_state.updated_at AS updatedAtMs
+    FROM playback_state
+      JOIN media_files ON media_files.media_id = playback_state.media_id
+      JOIN collections USING (collection_id)
+      JOIN sources USING (source_id)
+    WHERE playback_state.watched = 0 AND playback_state.position_sec > 0
+    ORDER BY playback_state.updated_at DESC
+    LIMIT 50
+  `).all() as Array<Record<string, unknown>>;
+  return rows.map((row) => ({
+    item: toPublicItem(row),
+    playback: {
+      mediaId: String(row.mediaId) as LocalPlaybackState["mediaId"],
+      positionSec: Number(row.positionSec),
+      ...(row.durationSec === null || row.durationSec === undefined ? {} : { durationSec: Number(row.durationSec) }),
+      ...(row.audioTrackId === null || row.audioTrackId === undefined ? {} : { audioTrackId: String(row.audioTrackId) }),
+      ...(row.subtitleTrackId === null || row.subtitleTrackId === undefined ? {} : { subtitleTrackId: String(row.subtitleTrackId) }),
+      watched: false,
+      updatedAtMs: Number(row.updatedAtMs),
+    },
+  }));
+}
+
+function sourceRoot(sourceId: string): string | undefined {
+  const db = requireDatabase();
+  const row = db.prepare("SELECT root_path AS rootPath FROM sources WHERE source_id = ?").get(sourceId) as { rootPath?: string } | undefined;
+  return row?.rootPath;
+}
+
+function removeSource(sourceId: string): boolean {
+  const db = requireDatabase();
+  const source = db.prepare("SELECT source_id AS sourceId FROM sources WHERE source_id = ?").get(sourceId) as { sourceId?: string } | undefined;
+  if (!source?.sourceId) return false;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("DELETE FROM playback_state WHERE media_id IN (SELECT media_id FROM media_files WHERE source_id = ?)").run(sourceId);
+    db.prepare("DELETE FROM artwork WHERE source_id = ?").run(sourceId);
+    db.prepare("DELETE FROM media_files WHERE source_id = ?").run(sourceId);
+    db.prepare("DELETE FROM collections WHERE source_id = ?").run(sourceId);
+    db.prepare("DELETE FROM scan_runs WHERE source_id = ?").run(sourceId);
+    db.prepare("DELETE FROM sources WHERE source_id = ?").run(sourceId);
+    db.exec("COMMIT");
+    return true;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function resolveArtwork(mediaId: string, kind?: "poster" | "fanart"): { path: string; cacheKey: string; kind: "poster" | "fanart" } | undefined {
+  const db = requireDatabase();
+  const row = db.prepare(`
+    SELECT sources.root_path AS rootPath, artwork.relative_path AS relativePath,
+      artwork.cache_key AS cacheKey, artwork.kind
+    FROM artwork
+      JOIN sources ON sources.source_id = artwork.source_id
+    WHERE artwork.media_id = ? AND (? IS NULL OR artwork.kind = ?)
+    ORDER BY CASE WHEN artwork.kind = 'poster' THEN 0 ELSE 1 END, artwork.updated_at DESC
+    LIMIT 1
+  `).get(mediaId, kind ?? null, kind ?? null) as { rootPath?: string; relativePath?: string; cacheKey?: string; kind?: string } | undefined;
+  if (!row?.rootPath || !row.relativePath || !row.cacheKey || (row.kind !== "poster" && row.kind !== "fanart")) return undefined;
+  const path = resolve(row.rootPath, ...row.relativePath.split("/"));
+  if (!pathWithin(row.rootPath, path)) throw new LocalWorkerError("storage", "本地 artwork 路径越过已选择的片库目录");
+  return { path, cacheKey: row.cacheKey, kind: row.kind };
 }
 
 function resolvePath(mediaId: string): string | undefined {
@@ -918,6 +1051,11 @@ async function handle(request: WorkerRequest): Promise<unknown> {
   }
   if (request.command === "list") return list(request.query);
   if (request.command === "get") return get(request.mediaId);
+  if (request.command === "get-detail") return getDetail(request.mediaId);
+  if (request.command === "list-continue-watching") return listContinueWatching();
+  if (request.command === "remove-source") return removeSource(request.sourceId);
+  if (request.command === "source-root") return sourceRoot(request.sourceId);
+  if (request.command === "resolve-artwork") return resolveArtwork(request.mediaId, request.kind);
   if (request.command === "resolve-path") return resolvePath(request.mediaId);
   if (request.command === "get-playback") return getPlayback(request.mediaId);
   if (request.command === "save-playback") return savePlayback(request.state);

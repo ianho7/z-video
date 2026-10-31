@@ -4,12 +4,14 @@ import { join } from "node:path";
 import { registerLocalLibraryIpcHandlers } from "./local-library-ipc";
 import { registerLocalPlaybackIpcHandlers } from "./local-playback-ipc";
 import { LocalLibraryDatabase } from "./local-library-database";
+import { LocalArtworkCache } from "./local-artwork-cache";
 import { MainLocalPlaybackHost } from "./player-host";
 import type { LocalPlaybackStore } from "../shared/local-playback-contracts";
 import { createMainWindow } from "./window";
 
 let mainWindow: ReturnType<typeof createMainWindow> | undefined;
 let localLibrary: LocalLibraryDatabase | undefined;
+let localArtworkCache: LocalArtworkCache | undefined;
 let unregisterLocalLibraryIpc: (() => void) | undefined;
 let localPlayback: MainLocalPlaybackHost | undefined;
 let unregisterLocalPlaybackIpc: (() => void) | undefined;
@@ -28,7 +30,8 @@ function createLocalWindow(): void {
   const window = createMainWindow();
   mainWindow = window;
   localPlayback = new MainLocalPlaybackHost(window, localLibrary as unknown as LocalPlaybackStore);
-  unregisterLocalLibraryIpc = registerLocalLibraryIpcHandlers(localLibrary, window);
+  if (!localArtworkCache) throw new Error("本地 artwork cache 尚未启动");
+  unregisterLocalLibraryIpc = registerLocalLibraryIpcHandlers(localLibrary, window, localArtworkCache);
   unregisterLocalPlaybackIpc = registerLocalPlaybackIpcHandlers(localPlayback);
   attachWindowLifecycle(window);
 }
@@ -52,6 +55,7 @@ function closePlayback(): Promise<void> {
 async function bootstrap(): Promise<void> {
   await app.whenReady();
   localLibrary = new LocalLibraryDatabase({ dbPath: join(app.getPath("userData"), "local-library", "library.sqlite") });
+  localArtworkCache = new LocalArtworkCache(join(app.getPath("userData"), "local-library", "artwork-cache"));
   await localLibrary.start();
   createLocalWindow();
   app.on("activate", () => {

@@ -8,8 +8,9 @@ import {
 import { IPC_CHANNELS } from "../shared/ipc-channels";
 import { recordUiOperation } from "./diagnostics";
 import { LocalLibraryDatabase } from "./local-library-database";
+import { LocalArtworkCache } from "./local-artwork-cache";
 
-export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, window: BrowserWindow): () => void {
+export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, window: BrowserWindow, artworkCache: LocalArtworkCache): () => void {
   const unsubscribe = database.onState((state) => {
     if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(IPC_CHANNELS.localLibraryState, state);
   });
@@ -37,7 +38,29 @@ export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, 
   })));
   ipcMain.handle(IPC_CHANNELS.localLibraryGet, (_event, value: unknown) => withUiOperation("local-library.get", async () => {
     const mediaId = parseMediaId(value);
-    return { state: database.getState(), item: await database.get(mediaId) };
+    const detail = await database.getDetail(mediaId);
+    return { state: database.getState(), detail, ...(detail ? { item: detail.item } : {}) };
+  }));
+  ipcMain.handle(IPC_CHANNELS.localLibraryContinueWatching, (_event) => withUiOperation("local-library.continue-watching", async () => ({
+    state: database.getState(),
+    items: await database.listContinueWatching(),
+  })));
+  ipcMain.handle(IPC_CHANNELS.localLibraryArtwork, (_event, value: unknown) => withUiOperation("local-library.artwork", async () => {
+    const input = parseArtworkInput(value);
+    const artwork = await database.resolveArtwork(input.mediaId, input.kind);
+    if (!artwork) return { state: database.getState() };
+    const image = await artworkCache.load(artwork.cacheKey, artwork.path);
+    return image ? { state: database.getState(), ...image } : { state: database.getState() };
+  }));
+  ipcMain.handle(IPC_CHANNELS.localLibraryRemoveSource, (_event, value: unknown) => withUiOperation("local-library.source-remove", async () => {
+    const sourceId = parseSourceId(value);
+    return database.removeSource(sourceId);
+  }));
+  ipcMain.handle(IPC_CHANNELS.localLibraryRefreshSource, (_event, value: unknown) => withUiOperation("local-library.source-refresh", async () => {
+    const sourceId = parseSourceId(value);
+    const rootPath = await database.sourceRoot(sourceId);
+    if (!rootPath) throw new Error("本地片库来源不存在");
+    return database.scanFolder(rootPath);
   }));
   ipcMain.handle(IPC_CHANNELS.localLibraryScan, () => withUiOperation("local-library.scan", async () => {
     const selection = await dialog.showOpenDialog(window, { properties: ["openDirectory"] });
@@ -57,6 +80,10 @@ export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, 
       IPC_CHANNELS.localLibraryOpenVideo,
       IPC_CHANNELS.localLibraryList,
       IPC_CHANNELS.localLibraryGet,
+      IPC_CHANNELS.localLibraryArtwork,
+      IPC_CHANNELS.localLibraryContinueWatching,
+      IPC_CHANNELS.localLibraryRemoveSource,
+      IPC_CHANNELS.localLibraryRefreshSource,
       IPC_CHANNELS.localLibraryScan,
       IPC_CHANNELS.localLibraryCancelScan,
     ]) ipcMain.removeHandler(channel);
@@ -75,16 +102,37 @@ function parseLocalLibraryQuery(value: unknown): LocalLibraryQuery {
   const pageSize = record.pageSize === undefined ? 50 : parseInteger(record.pageSize, "分页大小");
   if (page < 1 || pageSize < 1 || pageSize > 100) throw new Error("本地片库分页参数无效");
   if (record.query !== undefined && record.query !== null && typeof record.query !== "string") throw new Error("本地片库搜索词格式无效");
+  const filters = new Set(["all", "movie", "show", "episode", "unclassified"]);
+  const sorts = new Set(["recent", "title", "year_desc", "score_desc", "added_desc"]);
+  if (record.filter !== undefined && (!filters.has(String(record.filter)))) throw new Error("本地片库筛选条件无效");
+  if (record.sort !== undefined && (!sorts.has(String(record.sort)))) throw new Error("本地片库排序条件无效");
+  if (record.sourceId !== undefined && (typeof record.sourceId !== "string" || !/^source_[0-9a-f-]{36}$/i.test(record.sourceId))) throw new Error("本地片库来源格式无效");
   return {
     page,
     pageSize,
     ...(typeof record.query === "string" && record.query.trim() ? { query: record.query.trim().slice(0, 200) } : {}),
+    ...(typeof record.filter === "string" ? { filter: record.filter as LocalLibraryQuery["filter"] } : {}),
+    ...(typeof record.sort === "string" ? { sort: record.sort as LocalLibraryQuery["sort"] } : {}),
+    ...(typeof record.sourceId === "string" ? { sourceId: record.sourceId } : {}),
   };
 }
 
 function parseMediaId(value: unknown): string {
   if (!isOpaqueMediaId(value)) throw new Error("mediaId 格式无效");
   return value;
+}
+
+function parseSourceId(value: unknown): string {
+  if (typeof value !== "string" || !/^source_[0-9a-f-]{36}$/i.test(value)) throw new Error("sourceId 格式无效");
+  return value;
+}
+
+function parseArtworkInput(value: unknown): { mediaId: string; kind?: "poster" | "fanart" } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("artwork 参数格式无效");
+  const record = value as Record<string, unknown>;
+  const mediaId = parseMediaId(record.mediaId);
+  if (record.kind !== undefined && record.kind !== "poster" && record.kind !== "fanart") throw new Error("artwork 类型无效");
+  return { mediaId, ...(record.kind ? { kind: record.kind } : {}) };
 }
 
 function parseInteger(value: unknown, label: string): number {

@@ -33,6 +33,9 @@ export interface LocalSourceSummary {
 
 export type LocalMediaKind = "movie" | "show" | "episode" | "unclassified";
 
+export type LocalLibraryFilter = "all" | LocalMediaKind;
+export type LocalLibrarySort = "recent" | "title" | "year_desc" | "score_desc" | "added_desc";
+
 export interface LocalArtworkReference {
   kind: "poster" | "fanart";
   cacheKey: string;
@@ -54,6 +57,19 @@ export interface LocalMediaItem {
   seasonNumber?: number;
   episodeNumber?: number;
   artwork?: LocalArtworkReference[];
+}
+
+export interface LocalMediaDetail {
+  item: LocalMediaItem;
+  collectionTitle?: string;
+  collectionKind?: "movie" | "show" | "unclassified";
+  /** All files in the same local collection, ordered by season/episode. */
+  episodes: LocalMediaItem[];
+}
+
+export interface LocalContinueWatchingItem {
+  item: LocalMediaItem;
+  playback: LocalPlaybackState;
 }
 
 /** Playback owner contract. The mediaId is the only renderer-to-main target. */
@@ -100,6 +116,9 @@ export interface LocalLibraryQuery {
   page: number;
   pageSize: number;
   query?: string;
+  filter?: LocalLibraryFilter;
+  sort?: LocalLibrarySort;
+  sourceId?: string;
 }
 
 export interface LocalLibraryPage {
@@ -117,7 +136,15 @@ export interface LocalLibraryListResult {
 
 export interface LocalLibraryDetailResult {
   state: LocalLibraryState;
+  detail?: LocalMediaDetail;
+  /** Compatibility projection for older renderer callers. */
   item?: LocalMediaItem;
+}
+
+export interface LocalLibraryArtworkResult {
+  state: LocalLibraryState;
+  dataUrl?: string;
+  mimeType?: string;
 }
 
 export type LocalImportOutcome =
@@ -131,6 +158,10 @@ export interface LocalLibraryApi {
   openVideo(): Promise<LocalImportOutcome>;
   list(query?: Partial<LocalLibraryQuery>): Promise<LocalLibraryListResult>;
   get(mediaId: string): Promise<LocalLibraryDetailResult>;
+  getArtwork(mediaId: string, kind?: LocalArtworkReference["kind"]): Promise<LocalLibraryArtworkResult>;
+  listContinueWatching(): Promise<{ state: LocalLibraryState; items: LocalContinueWatchingItem[] }>;
+  removeSource(sourceId: string): Promise<LocalLibraryState>;
+  refreshSource(sourceId: string): Promise<LocalScanResult>;
   scanFolder(): Promise<LocalScanResult>;
   cancelScan(scanId: string): Promise<boolean>;
   onScanProgress(listener: (progress: LocalScanProgress) => void): () => void;

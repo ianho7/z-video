@@ -1,6 +1,7 @@
 import type {
   LocalLibraryApi,
   LocalLibraryDetailResult,
+  LocalLibraryArtworkResult,
   LocalLibraryListResult,
   LocalLibraryQuery,
   LocalLibraryState,
@@ -12,6 +13,8 @@ import type {
   LocalScanProgress,
   LocalScanResult,
   LocalSourceSummary,
+  LocalContinueWatchingItem,
+  LocalMediaDetail,
 } from "./local-library-contracts";
 import type {
   LocalPlaybackApi,
@@ -22,6 +25,7 @@ import type {
 export type {
   LocalLibraryApi,
   LocalLibraryDetailResult,
+  LocalLibraryArtworkResult,
   LocalLibraryListResult,
   LocalLibraryQuery,
   LocalLibraryState,
@@ -33,6 +37,8 @@ export type {
   LocalScanProgress,
   LocalScanResult,
   LocalSourceSummary,
+  LocalContinueWatchingItem,
+  LocalMediaDetail,
 } from "./local-library-contracts";
 export type { LocalPlaybackApi, LocalPlaybackControlCommand, LocalPlaybackEvent } from "./local-playback-contracts";
 

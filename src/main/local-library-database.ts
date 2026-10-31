@@ -9,6 +9,8 @@ import {
   type LocalImportOutcome,
   type LocalLibraryPage,
   type LocalLibraryQuery,
+  type LocalMediaDetail,
+  type LocalContinueWatchingItem,
   type LocalLibraryState,
   type LocalMediaItem,
   type LocalPlaybackState,
@@ -26,6 +28,11 @@ type WorkerCommand =
   | { command: "cancel-scan"; scanId: string }
   | { command: "list"; query: LocalLibraryQuery }
   | { command: "get"; mediaId: string }
+  | { command: "get-detail"; mediaId: string }
+  | { command: "list-continue-watching" }
+  | { command: "remove-source"; sourceId: string }
+  | { command: "source-root"; sourceId: string }
+  | { command: "resolve-artwork"; mediaId: string; kind?: "poster" | "fanart" }
   | { command: "resolve-path"; mediaId: string }
   | { command: "get-playback"; mediaId: string }
   | { command: "save-playback"; state: LocalPlaybackState }
@@ -184,6 +191,31 @@ export class LocalLibraryDatabase {
     return this.call<LocalMediaItem | undefined>({ command: "get", mediaId });
   }
 
+  async getDetail(mediaId: string): Promise<LocalMediaDetail | undefined> {
+    assertMediaId(mediaId);
+    return this.call<LocalMediaDetail | undefined>({ command: "get-detail", mediaId });
+  }
+
+  async listContinueWatching(): Promise<LocalContinueWatchingItem[]> {
+    return this.call<LocalContinueWatchingItem[]>({ command: "list-continue-watching" });
+  }
+
+  async removeSource(sourceId: string): Promise<LocalLibraryState> {
+    assertSourceId(sourceId);
+    await this.call<boolean>({ command: "remove-source", sourceId });
+    return this.refreshState();
+  }
+
+  async sourceRoot(sourceId: string): Promise<string | undefined> {
+    assertSourceId(sourceId);
+    return this.call<string | undefined>({ command: "source-root", sourceId });
+  }
+
+  async resolveArtwork(mediaId: string, kind?: "poster" | "fanart"): Promise<{ path: string; cacheKey: string; kind: "poster" | "fanart" } | undefined> {
+    assertMediaId(mediaId);
+    return this.call<{ path: string; cacheKey: string; kind: "poster" | "fanart" } | undefined>({ command: "resolve-artwork", mediaId, ...(kind ? { kind } : {}) });
+  }
+
   /** Main-only path resolution for the future playback owner; never expose through preload. */
   async resolveMediaPath(mediaId: string): Promise<string | undefined> {
     assertMediaId(mediaId);
@@ -265,4 +297,8 @@ function isWorkerEvent(value: unknown): value is WorkerEvent {
 
 function assertMediaId(mediaId: string): asserts mediaId is `media_${string}` {
   if (!isOpaqueMediaId(mediaId)) throw new LocalLibraryDatabaseError("invalid-input", "mediaId 格式无效");
+}
+
+function assertSourceId(sourceId: string): asserts sourceId is `source_${string}` {
+  if (typeof sourceId !== "string" || !/^source_[0-9a-f-]{36}$/i.test(sourceId)) throw new LocalLibraryDatabaseError("invalid-input", "sourceId 格式无效");
 }
