@@ -13,6 +13,7 @@ let localLibrary: LocalLibraryDatabase | undefined;
 let unregisterLocalLibraryIpc: (() => void) | undefined;
 let localPlayback: MainLocalPlaybackHost | undefined;
 let unregisterLocalPlaybackIpc: (() => void) | undefined;
+let playbackClosing: Promise<void> | undefined;
 let quitting = false;
 
 function attachWindowLifecycle(window: ReturnType<typeof createMainWindow>): void {
@@ -32,14 +33,20 @@ function createLocalWindow(): void {
   attachWindowLifecycle(window);
 }
 
-async function closePlayback(): Promise<void> {
+function closePlayback(): Promise<void> {
+  const previousClose = playbackClosing;
   unregisterLocalPlaybackIpc?.();
   unregisterLocalPlaybackIpc = undefined;
   unregisterLocalLibraryIpc?.();
   unregisterLocalLibraryIpc = undefined;
   const host = localPlayback;
   localPlayback = undefined;
-  await host?.close();
+  const close = Promise.all([previousClose ?? Promise.resolve(), host?.close() ?? Promise.resolve()]).then(() => undefined);
+  const tracked = close.finally(() => {
+    if (playbackClosing === tracked) playbackClosing = undefined;
+  });
+  playbackClosing = tracked;
+  return tracked;
 }
 
 async function bootstrap(): Promise<void> {
