@@ -155,21 +155,19 @@ function setLoginMessage(message = "", error = false): void {
 function renderState(state: PublicSessionState): void {
   const loggedIn = state.status === "authenticated";
   const mfaRequired = state.status === "mfa-required";
+  setLibrarySessionState(state);
   if (loginView) loginView.hidden = loggedIn;
   if (libraryView) libraryView.hidden = !loggedIn || playerVisible;
   if (playerView) playerView.hidden = !loggedIn || !playerVisible;
   if (mfaPanel) mfaPanel.hidden = !mfaRequired;
   if (mfaRequired && mfaHint) mfaHint.textContent = state.mfa?.message ?? "请输入验证码完成登录。";
   if (loggedIn) {
-    setLibrarySessionState(state);
     if (sessionUser) sessionUser.textContent = state.identity?.username ?? "已连接";
     if (libraryMessage) libraryMessage.textContent = state.error?.message ?? "选择一个分类开始浏览。";
     setLoginMessage();
   } else if (state.error) {
-    setLibrarySessionState(state);
     setLoginMessage(state.error.message, true);
   } else if (mfaRequired) {
-    setLibrarySessionState(state);
     setLoginMessage("账号需要二次验证。", false);
   }
 }

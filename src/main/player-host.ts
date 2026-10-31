@@ -9,6 +9,7 @@ import { MpvNativePlayer } from "./mpv-player";
 import { PlaybackCoordinator, type PlaybackIdentity, type PlaybackProgressSnapshot, type PlaybackTarget } from "./player";
 import { NasError, type AuthenticatedSession, type NasCollectionDetail, type NasEpisode, type NasPlaybackProgress, type NasPlaybackStream } from "./nas-client";
 import type { SessionController } from "./session-controller";
+import { rendererEpisodeId } from "./episode-identity";
 
 export interface PlaybackHost {
   chooseLocalFile(): Promise<{ opened: boolean }>;
@@ -51,7 +52,7 @@ export class MainPlaybackHost implements PlaybackHost {
             resolve: (command) => this.resolveNasTarget(command),
             reportProgress: (identity, target, snapshot) => this.reportProgress(identity, target, snapshot),
             rememberPlayback: (identity) => context.sessions.setLastPlayback(identity),
-            onUnauthorized: (error) => this.invalidateSession(error),
+            onUnauthorized: (error, sessionKey) => this.invalidateSession(error, sessionKey),
           }
         : undefined,
     );
@@ -99,54 +100,72 @@ export class MainPlaybackHost implements PlaybackHost {
     const context = this.context;
     const session = context?.sessions.getAuthenticatedSession();
     if (!context || !session) throw new NasError("unauthorized", "当前会话未认证", undefined, 401);
-    const detail = await context.nas.getCollectionDetail(session, command.collectionId, command.classificationId);
-    const episode = detail.seasons.flatMap((season) => season.episodes).find((candidate) => episodeMatches(candidate, command.episodeId));
-    if (!episode) throw new NasError("malformed", "详情中未找到所选 Episode");
-    if (!episode.videoId?.trim()) throw new NasError("malformed", "所选 Episode 缺少 video_id");
-    const stream = await context.nas.getPlaybackStream(session, episode);
-    const history = matchingHistory(detail, episode);
-    return {
-      source: stream.uri,
-      videoId: episode.videoId,
-      ...(episode.durationSec !== undefined ? { durationSec: episode.durationSec } : {}),
-      ...(history?.audioIndex !== undefined ? { audioIndex: history.audioIndex } : {}),
-      ...(history?.subtitleIndex !== undefined ? { subtitleIndex: history.subtitleIndex } : {}),
-      ...(history?.playChapter !== undefined ? { chapter: history.playChapter } : {}),
-      ...(history?.subtitleHash ? { subtitleHash: history.subtitleHash } : {}),
-      ...(history?.subtitleSetting ? { subtitleSetting: history.subtitleSetting } : {}),
-    };
+    const sessionKey = context.sessions.getSessionKey();
+    try {
+      const detail = await context.nas.getCollectionDetail(session, command.collectionId, command.classificationId);
+      if (context.sessions.getSessionKey() !== sessionKey) throw new NasError("stale", "播放会话已切换");
+      const episode = detail.seasons.flatMap((season) => season.episodes).find((candidate) => episodeMatches(candidate, command.episodeId, command.collectionId));
+      if (!episode) throw new NasError("malformed", "详情中未找到所选 Episode");
+      if (!episode.videoId?.trim()) throw new NasError("malformed", "所选 Episode 缺少 video_id");
+      const stream = await context.nas.getPlaybackStream(session, episode);
+      if (context.sessions.getSessionKey() !== sessionKey) throw new NasError("stale", "播放会话已切换");
+      const history = matchingHistory(detail, episode);
+      return {
+        source: stream.uri,
+        videoId: episode.videoId,
+        ...(sessionKey ? { sessionKey } : {}),
+        ...(history?.playDurationSec !== undefined && history.playDurationSec > 0 ? { resumePositionSec: history.playDurationSec } : {}),
+        ...(episode.durationSec !== undefined ? { durationSec: episode.durationSec } : {}),
+        ...(history?.audioIndex !== undefined ? { audioIndex: history.audioIndex } : {}),
+        ...(history?.subtitleIndex !== undefined ? { subtitleIndex: history.subtitleIndex } : {}),
+        ...(history?.playChapter !== undefined ? { chapter: history.playChapter } : {}),
+        ...(history?.subtitleHash ? { subtitleHash: history.subtitleHash } : {}),
+        ...(history?.subtitleSetting ? { subtitleSetting: history.subtitleSetting } : {}),
+      };
+    } catch (error) {
+      if (context.sessions.getSessionKey() !== sessionKey) throw new NasError("stale", "播放会话已切换");
+      throw error;
+    }
   }
 
   private async reportProgress(identity: PlaybackIdentity, target: PlaybackTarget, snapshot: PlaybackProgressSnapshot): Promise<void> {
     const context = this.context;
     const session = context?.sessions.getAuthenticatedSession();
     if (!context || !session) throw new NasError("unauthorized", "当前会话未认证", undefined, 401);
-    await context.nas.updatePlaybackProgress(session, {
-      collectionId: identity.collectionId,
-      classificationId: identity.classificationId,
-      videoId: target.videoId,
-      sec: snapshot.positionSec,
-      chapter: target.chapter ?? 0,
-      audioIndex: snapshot.audioIndex,
-      subtitleIndex: snapshot.subtitleIndex,
-      ...(target.subtitleHash ? { subtitleHash: target.subtitleHash } : {}),
-      ...(snapshot.durationSec !== undefined ? { videoDuration: snapshot.durationSec } : {}),
-      ...(target.subtitleSetting ? { subtitleSetting: target.subtitleSetting } : {}),
-    });
+    if (target.sessionKey && context.sessions.getSessionKey() !== target.sessionKey) throw new NasError("stale", "播放会话已切换");
+    try {
+      await context.nas.updatePlaybackProgress(session, {
+        collectionId: identity.collectionId,
+        classificationId: identity.classificationId,
+        videoId: target.videoId,
+        sec: snapshot.positionSec,
+        chapter: target.chapter ?? 0,
+        audioIndex: snapshot.audioIndex,
+        subtitleIndex: snapshot.subtitleIndex,
+        ...(target.subtitleHash ? { subtitleHash: target.subtitleHash } : {}),
+        ...(snapshot.durationSec !== undefined ? { videoDuration: snapshot.durationSec } : {}),
+        ...(target.subtitleSetting ? { subtitleSetting: target.subtitleSetting } : {}),
+      });
+    } catch (error) {
+      if (target.sessionKey && context.sessions.getSessionKey() !== target.sessionKey) throw new NasError("stale", "播放会话已切换");
+      throw error;
+    }
+    if (target.sessionKey && context.sessions.getSessionKey() !== target.sessionKey) throw new NasError("stale", "播放会话已切换");
     await context.onProgressSaved?.(identity);
   }
 
-  private async invalidateSession(error: unknown): Promise<void> {
+  private async invalidateSession(error: unknown, expectedSessionKey?: string): Promise<void> {
     const context = this.context;
     if (!context) return;
-    const state = await context.sessions.invalidate({ kind: "unauthorized", code: errorCode(error), message: "NAS 登录已失效，请重新登录。" });
+    const state = await context.sessions.invalidate({ kind: "unauthorized", code: errorCode(error), message: "NAS 登录已失效，请重新登录。" }, expectedSessionKey);
     if (!this.window.isDestroyed() && !this.window.webContents.isDestroyed()) this.window.webContents.send(IPC_CHANNELS.sessionState, state);
   }
 }
 
-function episodeMatches(episode: NasEpisode, identifier: string): boolean {
+function episodeMatches(episode: NasEpisode, identifier: string, collectionId?: string): boolean {
   const expected = identifier.trim();
-  return Boolean(expected) && [episode.episodeId, episode.videoId, episode.filePath, episode.versionId].some((candidate) => Boolean(candidate?.trim()) && candidate!.trim() === expected);
+  return Boolean(expected) && [episode.episodeId, episode.videoId, episode.filePath, episode.versionId].some((candidate) => Boolean(candidate?.trim()) && candidate!.trim() === expected)
+    || Boolean(collectionId && rendererEpisodeId(episode, collectionId) === expected);
 }
 
 function matchingHistory(detail: NasCollectionDetail, episode: NasEpisode): NasCollectionDetail["history"] {

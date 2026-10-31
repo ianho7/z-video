@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import { createServer } from "node:net";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const root = resolve(scriptDirectory, "..");
@@ -36,13 +37,37 @@ function runChild(command, args, options) {
   });
 }
 
-async function waitForRunning(child, timeoutMs) {
+async function reserveDebugPort() {
+  const server = createServer();
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("could not reserve a local debug port");
+  const port = address.port;
+  await new Promise((resolveResult, reject) => server.close((error) => error ? reject(error) : resolveResult()));
+  return port;
+}
+
+async function waitForRenderer(child, port, readinessPath, timeoutMs) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    if (child.exitCode !== null) return false;
+    if (child.exitCode !== null) return undefined;
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/json/list`);
+      if (response.ok) {
+        const targets = await response.json();
+        const page = Array.isArray(targets) && targets.find((target) => target?.type === "page" && typeof target.url === "string" && target.url.endsWith("/index.html") && typeof target.webSocketDebuggerUrl === "string");
+        if (page) {
+          const diagnostics = await readFile(readinessPath, "utf8").catch(() => "");
+          if (diagnostics.includes('"operation":"window.renderer-ready"')) return page;
+        }
+      }
+    } catch {
+      // The standard Electron debug endpoint is not ready yet.
+    }
     await new Promise((resolveResult) => setTimeout(resolveResult, 100));
   }
-  return child.exitCode === null;
+  return undefined;
 }
 
 async function stopOwnedProcess(child) {
@@ -85,7 +110,8 @@ try {
   console.log(`PASS: packaged Koffi/libmpv probe ${probe.stdout.trim()}`);
 
   const appLogFd = openSync(appLogPath, "w");
-  const appProcess = spawn(executable, [`--user-data-dir=${profile}`], {
+  const debugPort = await reserveDebugPort();
+  const appProcess = spawn(executable, [`--user-data-dir=${profile}`, `--remote-debugging-port=${debugPort}`], {
     cwd: packageRoot,
     env: { ...process.env, Z_VIDEO_NATIVE_BACKDROP: "0", Z_VIDEO_LOG_DIR: join(profile, "logs"), Z_VIDEO_MPV_DLL: "" },
     stdio: ["ignore", appLogFd, appLogFd],
@@ -94,11 +120,12 @@ try {
   let appSpawnError;
   appProcess.once("error", (error) => { appSpawnError = error; });
   try {
-    if (appSpawnError || !await waitForRunning(appProcess, 3000)) {
+    const rendererTarget = appSpawnError ? undefined : await waitForRenderer(appProcess, debugPort, join(profile, "logs", "diagnostics.jsonl"), 10_000);
+    if (appSpawnError || !rendererTarget) {
       const result = { code: appProcess.exitCode, signal: appProcess.signalCode };
-      throw new Error(`packaged app exited before launch proof: ${JSON.stringify(result)}${appSpawnError ? ` error=${appSpawnError.message}` : ""} log=${appLogPath}\n${await logTail(appLogPath)}`);
+      throw new Error(`packaged app did not expose a ready production renderer: ${JSON.stringify(result)}${appSpawnError ? ` error=${appSpawnError.message}` : ""} log=${appLogPath}\n${await logTail(appLogPath)}`);
     }
-    console.log(`PASS: packaged app stayed alive for isolated launch proof (pid=${appProcess.pid}, userData=${profile}, log=${appLogPath})`);
+    console.log(`PASS: packaged production renderer target ready (pid=${appProcess.pid}, url=${rendererTarget.url}, userData=${profile}, log=${appLogPath})`);
   } finally {
     await stopOwnedProcess(appProcess);
     closeSync(appLogFd);

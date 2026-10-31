@@ -38,10 +38,12 @@ export class SessionController {
   private classifications: ClassificationResult[] = [];
   private lastPlayback?: LastPlaybackContext;
   private rememberSession = false;
+  private transitionGeneration = 0;
 
   constructor(private readonly nas: NasGateway | NasApiClient, private readonly store: SessionStore) {}
 
   async restore(): Promise<PublicSessionState> {
+    const generation = ++this.transitionGeneration;
     let saved: PersistedSession | null;
     try {
       saved = await this.store.load();
@@ -55,10 +57,13 @@ export class SessionController {
       return this.loggedOutState();
     }
 
+    if (generation !== this.transitionGeneration) return this.getPublicState();
+
     this.session = { ...saved };
     this.lastPlayback = saved.lastPlayback ? { ...saved.lastPlayback } : undefined;
     this.rememberSession = true;
     const state = await this.readClassifications();
+    if (generation !== this.transitionGeneration) return this.getPublicState();
     if (state.status === "authenticated") {
       try {
         await this.store.save(toPersistedSession(this.session, this.lastPlayback));
@@ -70,6 +75,11 @@ export class SessionController {
   }
 
   async login(input: LoginInput): Promise<PublicSessionState> {
+    const generation = ++this.transitionGeneration;
+    this.session = undefined;
+    this.classifications = [];
+    this.lastPlayback = undefined;
+    this.rememberSession = false;
     this.pendingLogin = { ...input };
     try {
       const session = await this.nas.login({
@@ -77,7 +87,8 @@ export class SessionController {
         username: input.username,
         password: input.password,
       });
-      const state = await this.activate(session, input.remember);
+      if (generation !== this.transitionGeneration) return this.getPublicState();
+      const state = await this.activate(session, input.remember, generation);
       this.pendingLogin = undefined;
       return state;
     } catch (error) {
@@ -113,6 +124,7 @@ export class SessionController {
   }
 
   async verifyMfa(code: string): Promise<PublicSessionState> {
+    const generation = this.transitionGeneration;
     const pending = this.pendingLogin;
     if (!pending) return this.loggedOutState({ kind: "auth", message: "登录会话已失效，请重新输入账号和密码" });
     try {
@@ -121,7 +133,8 @@ export class SessionController {
         { serverUrl: pending.serverUrl, username: pending.username, password: pending.password },
         proof,
       );
-      const state = await this.activate(session, pending.remember);
+      if (generation !== this.transitionGeneration) return this.getPublicState();
+      const state = await this.activate(session, pending.remember, generation);
       this.pendingLogin = undefined;
       return state;
     } catch (error) {
@@ -134,6 +147,7 @@ export class SessionController {
   }
 
   async logout(): Promise<PublicSessionState> {
+    this.transitionGeneration += 1;
     this.session = undefined;
     this.pendingLogin = undefined;
     this.classifications = [];
@@ -155,6 +169,11 @@ export class SessionController {
   /** Main-process-only session accessor. It is never exposed through preload. */
   getAuthenticatedSession(): AuthenticatedSession | undefined {
     return this.session ? { ...this.session } : undefined;
+  }
+
+  /** Main-process-only identity for rejecting late work from an older session. */
+  getSessionKey(): string | undefined {
+    return this.session ? sessionKey(this.session) : undefined;
   }
 
   /** Main-process-only playback context; it contains IDs, never position or URI. */
@@ -181,7 +200,9 @@ export class SessionController {
     };
   }
 
-  async invalidate(error: AppError): Promise<PublicSessionState> {
+  async invalidate(error: AppError, expectedSessionKey?: string): Promise<PublicSessionState> {
+    if (expectedSessionKey !== undefined && this.getSessionKey() !== expectedSessionKey) return this.getPublicState();
+    this.transitionGeneration += 1;
     this.session = undefined;
     this.pendingLogin = undefined;
     this.classifications = [];
@@ -195,7 +216,8 @@ export class SessionController {
     return this.loggedOutState(error);
   }
 
-  private async activate(session: AuthenticatedSession, remember: boolean): Promise<PublicSessionState> {
+  private async activate(session: AuthenticatedSession, remember: boolean, generation: number): Promise<PublicSessionState> {
+    if (generation !== this.transitionGeneration) return this.getPublicState();
     this.session = session;
     this.classifications = [];
     this.lastPlayback = undefined;
@@ -212,15 +234,19 @@ export class SessionController {
 
   private async readClassifications(): Promise<PublicSessionState> {
     if (!this.session) return this.loggedOutState();
+    const session = this.session;
+    const expectedSessionKey = sessionKey(session);
     try {
-      const classifications = await this.nas.getClassifications(this.session);
+      const classifications = await this.nas.getClassifications(session);
+      if (this.getSessionKey() !== expectedSessionKey) return this.getPublicState();
       this.classifications = classifications.map((item) => ({ ...item }));
       return {
         status: "authenticated",
-        identity: publicIdentity(this.session),
+        identity: publicIdentity(session),
         classifications,
       };
     } catch (error) {
+      if (this.getSessionKey() !== expectedSessionKey) return this.getPublicState();
       const appError = toAppError(error, "无法读取片库分类");
       if (error instanceof NasError && error.kind === "unauthorized") {
         this.session = undefined;
@@ -248,6 +274,10 @@ export class SessionController {
   }
 }
 
+function sessionKey(session: AuthenticatedSession): string {
+  return [session.baseUrl, session.username, session.nasId ?? "", session.token].join("\u0000");
+}
+
 function toPersistedSession(session: AuthenticatedSession, lastPlayback?: LastPlaybackContext): PersistedSession {
   return {
     baseUrl: session.baseUrl,
@@ -271,7 +301,7 @@ function publicIdentity(session: AuthenticatedSession) {
 
 function toAppError(error: unknown, fallback: string): AppError {
   if (error instanceof NasError) {
-    const kind: AppError["kind"] = error.kind === "mfa-required" || error.kind === "auth" || error.kind === "crypto" ? "auth" : error.kind === "http" ? "network" : error.kind;
+    const kind: AppError["kind"] = error.kind === "mfa-required" || error.kind === "auth" || error.kind === "crypto" ? "auth" : error.kind === "http" ? "network" : ["network", "unauthorized", "business", "malformed", "storage", "auth", "unknown"].includes(error.kind) ? error.kind as AppError["kind"] : "unknown";
     return { kind, code: error.code, message: error.message || fallback };
   }
   if (error instanceof Error) return { kind: "unknown", message: error.message || fallback };

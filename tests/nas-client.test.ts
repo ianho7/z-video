@@ -24,6 +24,7 @@ interface RequestRecord {
 interface PlannedResponse {
   status?: number;
   body: unknown;
+  headers?: Record<string, string>;
 }
 
 async function readBody(request: IncomingMessage): Promise<string> {
@@ -48,7 +49,7 @@ async function startFixtureServer(plans: PlannedResponse[]) {
       response.end(JSON.stringify({ code: "UNPLANNED" }));
       return;
     }
-    response.writeHead(plan.status ?? 200, { "content-type": "application/json" });
+    response.writeHead(plan.status ?? 200, { "content-type": "application/json", ...(plan.headers ?? {}) });
     response.end(JSON.stringify(plan.body));
   });
   server.listen(0, "127.0.0.1");

@@ -18,6 +18,7 @@ import type {
 } from "../shared/contracts";
 import { NasError, type AuthenticatedSession, type NasCollection, type NasCollectionDetail, type NasCollectionPage } from "./nas-client";
 import { SessionController } from "./session-controller";
+import { rendererEpisodeId } from "./episode-identity";
 
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
@@ -25,6 +26,7 @@ const MAX_PAGE_CACHE_ENTRIES = 8;
 const MAX_DETAIL_CACHE_ENTRIES = 12;
 const MAX_IMAGE_CACHE_ENTRIES = 64;
 const MAX_IMAGE_CACHE_BYTES = 8 * 1024 * 1024;
+const MAX_SERVER_COUNT = 10_000_000;
 
 interface DetailCacheEntry {
   classificationId: string;
@@ -119,9 +121,9 @@ function mapCollection(item: NasCollection): Collection {
   };
 }
 
-function mapEpisode(episode: NasCollectionDetail["seasons"][number]["episodes"][number]): Episode {
+function mapEpisode(episode: NasCollectionDetail["seasons"][number]["episodes"][number], collectionId: string): Episode {
   return {
-    episodeId: episode.episodeId,
+    episodeId: rendererEpisodeId(episode, collectionId),
     episodeNumber: episode.episodeNumber,
     title: episode.title || `第${episode.episodeNumber}集`,
     ...(episode.durationSec !== undefined ? { durationSec: episode.durationSec } : {}),
@@ -142,7 +144,7 @@ function mapResume(detail: NasCollectionDetail): ResumeState | undefined {
   if (!selected && episodes.length === 1) selected = episodes[0];
   if (!selected) return undefined;
   return {
-    episodeId: selected.episodeId,
+    episodeId: rendererEpisodeId(selected, detail.collectionId),
     positionSec: history.playDurationSec,
     ...(history.audioIndex !== undefined ? { audioIndex: history.audioIndex } : {}),
     ...(history.subtitleIndex !== undefined ? { subtitleIndex: history.subtitleIndex } : {}),
@@ -154,7 +156,7 @@ function mapDetail(detail: NasCollectionDetail): CollectionDetail {
   const seasons: EpisodeSeason[] = detail.seasons.map((season) => ({
     seasonNumber: season.seasonNumber,
     title: season.title || `第${season.seasonNumber}季`,
-    episodes: season.episodes.map(mapEpisode),
+    episodes: season.episodes.map((episode) => mapEpisode(episode, detail.collectionId)),
   }));
   return { ...collection, seasons, resume: mapResume(detail) };
 }
@@ -234,14 +236,14 @@ function formatWatchTime(seconds: number): string {
 export function buildContinueWatchingItem(collectionId: string, classificationId: string, detail: NasCollectionDetail): ContinueWatchingItem | undefined {
   const resume = mapResume(detail);
   if (!resume) return undefined;
-  const episode = detail.seasons.flatMap((season) => season.episodes).find((candidate) => candidate.episodeId === resume.episodeId);
+  const episode = detail.seasons.flatMap((season) => season.episodes).find((candidate) => rendererEpisodeId(candidate, detail.collectionId) === resume.episodeId || episodeMatches(candidate, resume.episodeId));
   if (!episode) return undefined;
   const durationSeconds = episode.durationSec;
   const progressPercent = durationSeconds && durationSeconds > 0 ? Math.min(100, Math.floor((resume.positionSec * 100) / durationSeconds)) : undefined;
   return {
     collectionId,
     classificationId,
-    episodeId: episode.episodeId,
+    episodeId: rendererEpisodeId(episode, detail.collectionId),
     title: detail.title || "未命名影视",
     episodeTitle: episode.title || `第${episode.episodeNumber}集`,
     ...(detail.coverPath ? { imageKey: imageKey(collectionId, "cover") } : {}),
@@ -260,7 +262,8 @@ export class LibraryController {
   private readonly imageCache = new Map<string, CachedImage>();
   private imageCacheBytes = 0;
   private navigation: NavigationContext = defaultNavigation();
-  private requestGeneration = 0;
+  private navigationGeneration = 0;
+  private continueGeneration = 0;
   private activeSessionKey?: string;
 
   constructor(
@@ -275,29 +278,32 @@ export class LibraryController {
     } catch (error) {
       return { state: this.sessions.getPublicState(appError(error, "片库查询参数无效")) };
     }
-    const generation = ++this.requestGeneration;
+    const generation = ++this.navigationGeneration;
     const session = this.sessions.getAuthenticatedSession();
     if (!session) {
       this.clearCaches();
       return { state: { status: "logged-out", classifications: [], error: { kind: "unauthorized", message: "请先登录 NAS" } } };
     }
     this.ensureSession(session);
+    const sessionKey = this.sessionKey(session);
     try {
       const key = queryKey(query);
       let raw = this.pageCache.get(key);
       if (!raw) {
         raw = await this.nas.getCollections(session, query.classificationId, (query.page - 1) * query.pageSize + 1, query.pageSize);
-        if (generation >= this.requestGeneration) this.rememberPage(key, raw);
+        if (generation === this.navigationGeneration && this.sessions.getSessionKey() === this.sessionKey(session)) this.rememberPage(key, raw);
       } else {
         this.touchPage(key, raw);
       }
+      if (generation !== this.navigationGeneration || this.sessions.getSessionKey() !== sessionKey) return { state: this.sessions.getPublicState() };
       const page = this.toPage(query, raw);
-      if (generation === this.requestGeneration) {
+      if (generation === this.navigationGeneration) {
         this.navigation = { ...this.navigation, view: "library", library: { ...this.navigation.library, ...query, scrollTop: this.navigation.library.scrollTop } };
       }
       return { state: this.sessions.getPublicState(), page };
     } catch (error) {
-      return await this.handleError(error, "片库加载失败");
+      if (generation !== this.navigationGeneration || this.sessions.getSessionKey() !== sessionKey) return { state: this.sessions.getPublicState() };
+      return await this.handleError(error, "片库加载失败", sessionKey);
     }
   }
 
@@ -311,11 +317,15 @@ export class LibraryController {
       return { state: { status: "logged-out", classifications: [], error: { kind: "unauthorized", message: "请先登录 NAS" } } };
     }
     this.ensureSession(session);
+    const generation = ++this.navigationGeneration;
+    const sessionKey = this.sessionKey(session);
     const key = detailKey(collectionId, classificationId);
     try {
       let entry = this.detailCache.get(key);
       if (!entry) {
-        entry = { classificationId, detail: await this.nas.getCollectionDetail(session, collectionId, classificationId) };
+        const detail = await this.nas.getCollectionDetail(session, collectionId, classificationId);
+        if (generation !== this.navigationGeneration || this.sessions.getSessionKey() !== sessionKey) return { state: this.sessions.getPublicState() };
+        entry = { classificationId, detail };
         this.rememberDetail(key, entry);
       } else {
         this.touchDetail(key, entry);
@@ -323,6 +333,7 @@ export class LibraryController {
       this.rememberImagePath(collectionId, "cover", entry.detail.coverPath);
       this.rememberImagePath(collectionId, "background", entry.detail.backgroundPath);
       const detail = mapDetail(entry.detail);
+      if (generation !== this.navigationGeneration || this.sessions.getSessionKey() !== sessionKey) return { state: this.sessions.getPublicState() };
       this.navigation = {
         ...this.navigation,
         view: "detail",
@@ -330,7 +341,8 @@ export class LibraryController {
       };
       return { state: this.sessions.getPublicState(), detail };
     } catch (error) {
-      return await this.handleError(error, "详情加载失败");
+      if (generation !== this.navigationGeneration || this.sessions.getSessionKey() !== sessionKey) return { state: this.sessions.getPublicState() };
+      return await this.handleError(error, "详情加载失败", sessionKey);
     }
   }
 
@@ -341,24 +353,29 @@ export class LibraryController {
       return { state: { status: "logged-out", classifications: [], error: { kind: "unauthorized", message: "请先登录 NAS" } }, items: [] };
     }
     this.ensureSession(session);
+    const generation = ++this.continueGeneration;
+    const sessionKey = this.sessionKey(session);
     const lastPlayback = this.sessions.getLastPlayback();
     if (lastPlayback) {
       const key = detailKey(lastPlayback.collectionId, lastPlayback.classificationId);
       if (!this.detailCache.has(key)) {
         try {
           const detail = await this.nas.getCollectionDetail(session, lastPlayback.collectionId, lastPlayback.classificationId);
+          if (generation !== this.continueGeneration || this.sessions.getSessionKey() !== sessionKey) return { state: this.sessions.getPublicState(), items: [] };
           this.rememberDetail(key, { classificationId: lastPlayback.classificationId, detail });
           this.rememberImagePath(lastPlayback.collectionId, "cover", detail.coverPath);
           this.rememberImagePath(lastPlayback.collectionId, "background", detail.backgroundPath);
         } catch (error) {
+          if (generation !== this.continueGeneration || this.sessions.getSessionKey() !== sessionKey) return { state: this.sessions.getPublicState(), items: [] };
           const mapped = appError(error, "继续观看历史加载失败");
           if (mapped.kind === "unauthorized") {
             this.clearCaches();
-            return { state: await this.sessions.invalidate(mapped), items: [] };
+            return { state: await this.sessions.invalidate(mapped, sessionKey), items: [] };
           }
         }
       }
     }
+    if (generation !== this.continueGeneration || this.sessions.getSessionKey() !== sessionKey) return { state: this.sessions.getPublicState(), items: [] };
     const items: ContinueWatchingItem[] = [];
     for (const [key, entry] of this.detailCache) {
       const [classificationId, collectionId] = key.split("|", 2);
@@ -385,6 +402,7 @@ export class LibraryController {
       return { state: { status: "logged-out", classifications: [], error: { kind: "unauthorized", message: "请先登录 NAS" } } };
     }
     this.ensureSession(session);
+    const sessionKey = this.sessionKey(session);
     const pathKey = imageKey(collectionId, input.kind);
     const imagePath = this.imagePaths.get(pathKey);
     if (!imagePath) return { state: this.sessions.getPublicState({ kind: "malformed", message: "当前条目没有可用封面" }) };
@@ -395,10 +413,12 @@ export class LibraryController {
     }
     try {
       const image = await this.nas.fetchImage(session, imagePath);
+      if (this.sessions.getSessionKey() !== sessionKey) return { state: this.sessions.getPublicState() };
       this.rememberImage(pathKey, image);
       return { state: this.sessions.getPublicState(), dataUrl: image.dataUrl, mimeType: image.mimeType };
     } catch (error) {
-      return await this.handleError(error, "封面加载失败");
+      if (this.sessions.getSessionKey() !== sessionKey) return { state: this.sessions.getPublicState() };
+      return await this.handleError(error, "封面加载失败", sessionKey);
     }
   }
 
@@ -427,7 +447,7 @@ export class LibraryController {
     if (query.sort === "score_desc") filtered.sort(compareScoreDescending);
     if (query.sort === "release_year_desc") filtered.sort(compareReleaseYearDescending);
     const localSort = query.sort === "title" || query.sort === "score_desc" || query.sort === "release_year_desc";
-    const totalCount = raw.count;
+    const totalCount = saneServerCount(raw.count);
     const totalPages = totalCount !== undefined ? Math.max(1, Math.ceil(totalCount / query.pageSize)) : undefined;
     const scopeDescription = totalCount === undefined
       ? `当前已加载范围：第 ${query.page} 页 ${filtered.length}/${allCollections.length} 项；服务端未提供总数`
@@ -445,11 +465,11 @@ export class LibraryController {
     };
   }
 
-  private async handleError<T extends { state: PublicSessionState }>(error: unknown, fallback: string): Promise<T> {
+  private async handleError<T extends { state: PublicSessionState }>(error: unknown, fallback: string, expectedSessionKey?: string): Promise<T> {
     const mapped = appError(error, fallback);
     if (mapped.kind === "unauthorized") {
       this.clearCaches();
-      return { state: await this.sessions.invalidate(mapped) } as unknown as T;
+      return { state: await this.sessions.invalidate(mapped, expectedSessionKey) } as unknown as T;
     }
     return { state: this.sessions.getPublicState(mapped) } as T;
   }
@@ -501,10 +521,15 @@ export class LibraryController {
   }
 
   private ensureSession(session: AuthenticatedSession): void {
-    const key = `${session.baseUrl}|${session.username}|${session.nasId ?? ""}`;
+    const key = this.sessionKey(session);
     if (this.activeSessionKey === key) return;
     this.clearCaches();
     this.activeSessionKey = key;
+    this.navigation = defaultNavigation();
+  }
+
+  private sessionKey(session: AuthenticatedSession): string {
+    return [session.baseUrl, session.username, session.nasId ?? "", session.token].join("\u0000");
   }
 
   private clearCaches(): void {
@@ -515,6 +540,10 @@ export class LibraryController {
     this.imageCacheBytes = 0;
     this.activeSessionKey = undefined;
   }
+}
+
+function saneServerCount(value: number | undefined): number | undefined {
+  return value !== undefined && Number.isSafeInteger(value) && value >= 0 && value <= MAX_SERVER_COUNT ? value : undefined;
 }
 
 function normalizeNavigation(context: NavigationContext): NavigationContext {

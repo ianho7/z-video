@@ -1,4 +1,4 @@
-import { constants, createPublicKey, publicEncrypt } from "node:crypto";
+import { constants, createHash, createPublicKey, publicEncrypt } from "node:crypto";
 
 import { recordNasRequest } from "./diagnostics";
 
@@ -20,7 +20,8 @@ export type NasErrorKind =
   | "malformed"
   | "crypto"
   | "mfa-required"
-  | "auth";
+  | "auth"
+  | "stale";
 
 export class NasError extends Error {
   readonly name = "NasError";
@@ -302,7 +303,7 @@ function parseNasEpisode(value: unknown, collectionId: string, seasonNumber: num
   if (!hasEpisodeData) return undefined;
   const episodeNumber = Math.max(1, Math.round(numberValue(item.episode) ?? numberValue(item.episode_number) ?? numberValue(item.episode_num) ?? numberValue(item.number) ?? 1));
   const title = stringValue(item.title) ?? stringValue(item.name) ?? stringValue(item.episode_title) ?? stringValue(item.episode_name) ?? stringValue(item.version_name) ?? `第${episodeNumber}集`;
-  const stableId = videoId ?? versionId ?? filePath ?? `${collectionId}-${seasonNumber}-${episodeNumber}`;
+  const stableId = videoId ?? versionId ?? (filePath ? opaqueEpisodeId(collectionId, seasonNumber, episodeNumber, filePath) : `${collectionId}-${seasonNumber}-${episodeNumber}`);
   return {
     episodeId: stableId,
     episodeNumber,
@@ -315,6 +316,14 @@ function parseNasEpisode(value: unknown, collectionId: string, seasonNumber: num
     encryptedPath,
     from,
   };
+}
+
+function opaqueEpisodeId(collectionId: string, seasonNumber: number, episodeNumber: number, filePath: string): string {
+  const digest = createHash("sha256")
+    .update(`${collectionId}\u0000${seasonNumber}\u0000${episodeNumber}\u0000${filePath}`, "utf8")
+    .digest("hex")
+    .slice(0, 24);
+  return `episode-path-${digest}`;
 }
 
 function parseNasDetail(value: unknown, requestedCollectionId: string): NasCollectionDetail {
@@ -665,15 +674,31 @@ export class NasApiClient {
     if (!imagePath) throw new NasError("malformed", "图片请求缺少 image path");
     if (!session.token.trim()) throw new NasError("unauthorized", "当前会话未认证", undefined, 401);
     await this.ensureNasId(session);
-    const url = new URL(imagePath.startsWith("http://") || imagePath.startsWith("https://") ? imagePath : `${session.baseUrl.replace(/\/+$/, "")}/${imagePath.replace(/^\/+/, "")}`);
+    const sessionOrigin = new URL(session.baseUrl).origin;
+    let url = new URL(imagePath.startsWith("http://") || imagePath.startsWith("https://") ? imagePath : `${session.baseUrl.replace(/\/+$/, "")}/${imagePath.replace(/^\/+/, "")}`);
+    if (url.origin !== sessionOrigin) throw new NasError("malformed", "图片地址必须来自当前 NAS");
     url.searchParams.set("app", DEVICE.app);
     url.searchParams.set("plat", DEVICE.platform);
     const startedAt = Date.now();
     try {
-      const response = await this.fetcher(url.toString(), {
-        method: "GET",
-        headers: { token: session.token, Cookie: buildCookie(session) },
-      });
+      let response: Response | undefined;
+      for (let redirectCount = 0; redirectCount <= 5; redirectCount += 1) {
+        if (url.origin !== sessionOrigin) throw new NasError("malformed", "图片重定向超出当前 NAS");
+        response = await this.fetcher(url.toString(), {
+          method: "GET",
+          redirect: "manual",
+          headers: { token: session.token, Cookie: buildCookie(session) },
+        });
+        if (![301, 302, 303, 307, 308].includes(response.status)) break;
+        const location = response.headers.get("location");
+        if (!location) throw new NasError("malformed", "图片重定向缺少目标地址");
+        url = new URL(location, url);
+        if (url.origin !== sessionOrigin) throw new NasError("malformed", "图片重定向超出当前 NAS");
+        url.searchParams.set("app", DEVICE.app);
+        url.searchParams.set("plat", DEVICE.platform);
+        if (redirectCount === 5) throw new NasError("network", "图片重定向次数过多");
+      }
+      if (!response) throw new NasError("network", "图片请求没有响应");
       const bytes = Buffer.from(await response.arrayBuffer());
       if (response.status === 401 || response.status === 403) throw new NasError("unauthorized", "library.image 未认证", undefined, response.status);
       if (response.status !== 200) throw new NasError("http", `library.image HTTP ${response.status}`, undefined, response.status);
@@ -845,7 +870,13 @@ export class NasApiClient {
       throw new NasError("malformed", `${operation} 响应不是有效 JSON`, undefined, response.status);
     }
     const parsed = asObject(body, `${operation} 响应格式无效`) as unknown as ApiResponse;
-    void recordNasRequest(operation, method, safeRoute(url), "success", startedAt, { httpStatus: response.status, parseResult: "success" });
+    const businessOk = isSuccess(parsed);
+    await recordNasRequest(operation, method, safeRoute(url), businessOk ? "success" : "error", startedAt, {
+      httpStatus: response.status,
+      parseResult: "success",
+      businessResult: businessOk ? "success" : "error",
+      ...(businessOk ? {} : { errorCode: codeString(parsed.code) }),
+    });
     return parsed;
   }
 }

@@ -51,6 +51,8 @@ let navigation: NavigationContext = {
 let requestEpoch = 0;
 let detailOpen = false;
 let navigationSaveTimer: number | undefined;
+let searchDebounceTimer: number | undefined;
+let renderedSessionKey = "";
 
 function escapeHtml(value: string | number | undefined): string {
   return String(value ?? "").replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character] ?? character);
@@ -101,8 +103,8 @@ function classificationsName(id: string): string {
 }
 
 function currentQuery(): LibraryQuery {
-  const { scrollTop: _scrollTop, ...query } = navigation.library;
-  return query;
+  const { scrollTop: _scrollTop, query, ...rest } = navigation.library;
+  return { ...rest, ...(query ? { query } : {}) };
 }
 
 function setNavigationQuery(patch: Partial<LibraryQuery>): void {
@@ -141,7 +143,7 @@ function renderCollectionCard(collection: Collection): string {
 
 function renderContinueCard(item: ContinueWatchingItem): string {
   const progress = item.progressPercent === undefined ? "" : `<span class="progress-track" aria-label="${escapeHtml(item.progressLabel)}"><span style="width:${item.progressPercent}%"></span></span>`;
-  return `<button class="continue-card" type="button" data-continue-collection-id="${escapeHtml(item.collectionId)}" data-continue-classification-id="${escapeHtml(item.classificationId)}" aria-label="继续观看《${escapeHtml(item.title)}》"><span class="continue-image" data-continue-image-collection="${escapeHtml(item.collectionId)}">${imageFallback(item.title)}</span><span class="continue-copy"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.episodeTitle)} · ${escapeHtml(item.progressLabel)}</span>${progress}</span></button>`;
+  return `<button class="continue-card" type="button" data-continue-collection-id="${escapeHtml(item.collectionId)}" data-continue-classification-id="${escapeHtml(item.classificationId)}" data-continue-episode-id="${escapeHtml(item.episodeId)}" aria-label="继续观看《${escapeHtml(item.title)}》"><span class="continue-image" data-continue-image-collection="${escapeHtml(item.collectionId)}">${imageFallback(item.title)}</span><span class="continue-copy"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.episodeTitle)} · ${escapeHtml(item.progressLabel)}</span>${progress}</span></button>`;
 }
 
 function renderPage(page: LibraryPage): void {
@@ -166,20 +168,31 @@ function renderPagination(page: LibraryPage): void {
     libraryPagination.replaceChildren();
     return;
   }
-  const buttons: HTMLButtonElement[] = [];
+  const buttons: HTMLElement[] = [];
   const previous = document.createElement("button");
   previous.type = "button";
   previous.dataset.page = String(page.page - 1);
   previous.textContent = "上一页";
   previous.disabled = page.page <= 1;
   buttons.push(previous);
-  for (let index = 1; index <= totalPages; index += 1) {
+  const pageNumbers = new Set<number>([1, totalPages, page.page - 1, page.page, page.page + 1]);
+  for (let offset = -2; offset <= 2; offset += 1) pageNumbers.add(page.page + offset);
+  const visiblePages = [...pageNumbers].filter((index) => index >= 1 && index <= totalPages).sort((left, right) => left - right);
+  let previousPage = 0;
+  for (const index of visiblePages) {
+    if (previousPage > 0 && index - previousPage > 1) {
+      const ellipsis = document.createElement("span");
+      ellipsis.textContent = "…";
+      ellipsis.setAttribute("aria-hidden", "true");
+      buttons.push(ellipsis);
+    }
     const button = document.createElement("button");
     button.type = "button";
     button.dataset.page = String(index);
     button.textContent = String(index);
     button.setAttribute("aria-current", index === page.page ? "page" : "false");
     buttons.push(button);
+    previousPage = index;
   }
   const next = document.createElement("button");
   next.type = "button";
@@ -305,11 +318,15 @@ async function openDetail(collectionId: string, classificationId = navigation.li
       setMessage(result.state.error?.message ?? "详情加载失败。", true);
       return;
     }
-    activeDetail = result.detail;
-    selectedEpisodeId = episodeId ?? result.detail.resume?.episodeId ?? result.detail.seasons[0]?.episodes[0]?.episodeId ?? "";
-    renderDetail(result.detail);
+    const detail = result.detail;
+    activeDetail = detail;
+    const episodes = detail.seasons.flatMap((season) => season.episodes);
+    const requestedEpisodeId = episodeId && episodes.some((episode) => episode.episodeId === episodeId) ? episodeId : undefined;
+    const resumeEpisodeId = detail.resume && episodes.some((episode) => episode.episodeId === detail.resume?.episodeId) ? detail.resume.episodeId : undefined;
+    selectedEpisodeId = requestedEpisodeId ?? resumeEpisodeId ?? episodes[0]?.episodeId ?? "";
+    renderDetail(detail);
     mainPanel?.focus({ preventScroll: true });
-    void loadDetailImage(result.detail, epoch);
+    void loadDetailImage(detail, epoch);
   } catch (error) {
     if (epoch !== requestEpoch) return;
     setMessage(error instanceof Error ? error.message : "详情加载失败。", true);
@@ -322,10 +339,11 @@ function renderDetail(detail: CollectionDetail): void {
   if (continueSection) continueSection.hidden = true;
   detailSection.hidden = false;
   const selected = detail.seasons.flatMap((season) => season.episodes).find((episode) => episode.episodeId === selectedEpisodeId);
+  const selectedResume = detail.resume?.episodeId === selectedEpisodeId ? detail.resume : undefined;
   const episodes = detail.seasons.flatMap((season) => [`<div class="episode-season"><h3>${escapeHtml(season.title)}</h3><div class="episode-list">${season.episodes.map((episode) => renderEpisode(episode)).join("")}</div></div>`]);
-  const resume = detail.resume ? `<div class="detail-resume">上次观看到 ${escapeHtml(formatTime(detail.resume.positionSec))} · ${escapeHtml(selected?.title ?? "已保存进度")}</div>` : "";
-  detailSection.innerHTML = `<div class="detail-back-row"><p class="detail-kicker">内容详情 · 来源状态已保存</p><button class="text-button" type="button" data-detail-action="back">返回片库</button></div><div class="detail-layout"><div id="detail-cover" class="detail-poster">${imageFallback(detail.title)}</div><div class="detail-copy"><p class="eyebrow">CONTENT DETAIL</p><h1 id="detail-title">${escapeHtml(detail.title)}</h1><p class="detail-original">${escapeHtml(detail.releaseYear || "年份未知")} · ${escapeHtml(detail.videoType || "影视")}</p><div class="detail-meta"><span>${escapeHtml(detail.releaseYear || "年份未知")}</span><span>${escapeHtml(detail.videoType || "影视")}</span>${detail.score || detail.rating ? `<span>评分 ${escapeHtml(detail.score ?? detail.rating)}</span>` : ""}</div><div class="detail-actions"><button class="primary-button" type="button" data-detail-action="play">播放</button>${detail.resume ? `<button class="secondary-button" type="button" data-detail-action="resume">继续播放</button>` : ""}</div>${resume}<section><h3>选集</h3>${episodes.length ? episodes.join("") : `<div class="detail-empty">当前详情没有可播放 Episode。</div>`}</section><section><h3>简介</h3><p class="detail-storyline">${escapeHtml(detail.storyline || "暂无简介")}</p></section></div></div>`;
-  setMessage(detail.resume ? "详情已加载，存在真实续播历史。" : "详情已加载。");
+  const resume = selectedResume ? `<div class="detail-resume">上次观看到 ${escapeHtml(formatTime(selectedResume.positionSec))} · ${escapeHtml(selected?.title ?? "已保存进度")}</div>` : "";
+  detailSection.innerHTML = `<div class="detail-back-row"><p class="detail-kicker">内容详情 · 来源状态已保存</p><button class="text-button" type="button" data-detail-action="back">返回片库</button></div><div class="detail-layout"><div id="detail-cover" class="detail-poster">${imageFallback(detail.title)}</div><div class="detail-copy"><p class="eyebrow">CONTENT DETAIL</p><h1 id="detail-title">${escapeHtml(detail.title)}</h1><p class="detail-original">${escapeHtml(detail.releaseYear || "年份未知")} · ${escapeHtml(detail.videoType || "影视")}</p><div class="detail-meta"><span>${escapeHtml(detail.releaseYear || "年份未知")}</span><span>${escapeHtml(detail.videoType || "影视")}</span>${detail.score || detail.rating ? `<span>评分 ${escapeHtml(detail.score ?? detail.rating)}</span>` : ""}</div><div class="detail-actions"><button class="primary-button" type="button" data-detail-action="play">播放</button>${selectedResume ? `<button class="secondary-button" type="button" data-detail-action="resume">继续播放</button>` : ""}</div>${resume}<section><h3>选集</h3>${episodes.length ? episodes.join("") : `<div class="detail-empty">当前详情没有可播放 Episode。</div>`}</section><section><h3>简介</h3><p class="detail-storyline">${escapeHtml(detail.storyline || "暂无简介")}</p></section></div></div>`;
+  setMessage(selectedResume ? "详情已加载，存在当前 Episode 的真实续播历史。" : "详情已加载。");
 }
 
 function renderEpisode(episode: Episode): string {
@@ -362,7 +380,6 @@ async function sendPlaybackCommand(type: "play" | "resume"): Promise<void> {
     collectionId: activeDetail.collectionId,
     classificationId: navigation.library.classificationId,
     episodeId: selectedEpisodeId,
-    ...(type === "resume" && activeDetail.resume ? { startPositionSec: activeDetail.resume.positionSec } : {}),
   };
   if (!window.zVideo.player) {
     setMessage("播放模块尚未就绪，已保留当前 Episode 选择。", true);
@@ -402,7 +419,7 @@ export function initializeLibraryRenderer(): void {
   });
   continueRow?.addEventListener("click", (event) => {
     const card = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-continue-collection-id]");
-    if (card?.dataset.continueCollectionId) void openDetail(card.dataset.continueCollectionId, card.dataset.continueClassificationId);
+    if (card?.dataset.continueCollectionId) void openDetail(card.dataset.continueCollectionId, card.dataset.continueClassificationId, card.dataset.continueEpisodeId);
   });
   detailSection?.addEventListener("click", (event) => {
     const target = (event.target as HTMLElement).closest<HTMLElement>("[data-detail-action], [data-episode-id]");
@@ -425,11 +442,28 @@ export function initializeLibraryRenderer(): void {
   });
   searchForm?.addEventListener("submit", (event) => {
     event.preventDefault();
+    if (searchDebounceTimer !== undefined) window.clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = undefined;
     setNavigationQuery({ query: searchInput?.value.trim() || "", page: 1 });
     void loadCollections();
   });
-  searchInput?.addEventListener("input", () => { if (searchClear) searchClear.hidden = !Boolean(searchInput.value); });
-  searchClear?.addEventListener("click", () => { if (searchInput) searchInput.value = ""; setNavigationQuery({ query: "", page: 1 }); void loadCollections(); searchInput?.focus(); });
+  searchInput?.addEventListener("input", () => {
+    if (searchClear) searchClear.hidden = !Boolean(searchInput.value);
+    setNavigationQuery({ query: searchInput.value.trim(), page: 1 });
+    if (searchDebounceTimer !== undefined) window.clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = window.setTimeout(() => {
+      searchDebounceTimer = undefined;
+      void loadCollections();
+    }, 250);
+  });
+  searchClear?.addEventListener("click", () => {
+    if (searchDebounceTimer !== undefined) window.clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = undefined;
+    if (searchInput) searchInput.value = "";
+    setNavigationQuery({ query: "", page: 1 });
+    void loadCollections();
+    searchInput?.focus();
+  });
   filterSelect?.addEventListener("change", () => { setNavigationQuery({ filter: filterSelect.value as LibraryFilter, page: 1 }); void loadCollections(); });
   sortSelect?.addEventListener("change", () => { setNavigationQuery({ sort: sortSelect.value as LibraryQuery["sort"], page: 1 }); void loadCollections(); });
   libraryBackButton?.addEventListener("click", () => { void backToLibrary(); });
@@ -446,6 +480,17 @@ export function initializeLibraryRenderer(): void {
 }
 
 export function setLibrarySessionState(state: PublicSessionState): void {
+  const nextSessionKey = state.status === "authenticated" && state.identity
+    ? [state.identity.serverUrl, state.identity.username, state.identity.nasId].join("\u0000")
+    : "";
+  if (nextSessionKey !== renderedSessionKey) {
+    requestEpoch += 1;
+    renderedSessionKey = nextSessionKey;
+    activePage = undefined;
+    activeDetail = undefined;
+    detailOpen = false;
+    navigation = { ...navigation, view: "library", detail: undefined };
+  }
   sessionState = state;
   renderClassifications(state.classifications);
   if (state.status !== "authenticated") {

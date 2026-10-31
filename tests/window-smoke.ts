@@ -18,11 +18,11 @@ const fixturePage = {
   query: { classificationId: "movie", page: 1, pageSize: 50, filter: "all", sort: "recent" },
   page: 1,
   pageSize: 50,
-  totalCount: 1,
-  totalPages: 1,
+  totalCount: 50_000_000,
+  totalPages: 1_000_000,
   loadedCount: 1,
   coverage: "server-page",
-  scopeDescription: "当前已加载范围：第 1 页 1/1 项；共 1 页",
+  scopeDescription: "当前已加载范围：第 1 页 1/50000000 项；共 1000000 页",
   collections: [{ collectionId: "fixture-collection", title: "窗口测试影片", cover: "", releaseYear: "2026", videoType: "movie", imageKey: "fixture-collection|cover" }],
 };
 
@@ -37,6 +37,7 @@ const fixtureDetail = {
 
 async function run(): Promise<void> {
   await app.whenReady();
+  const collectionQueries: Array<Record<string, unknown>> = [];
   ipcMain.handle("session:restore", async () => loggedOutState);
   ipcMain.handle("session:login", async () => ({ state: authenticatedState }));
   ipcMain.handle("session:send-mfa", async () => ({ state: { ...loggedOutState, status: "mfa-required" } }));
@@ -45,9 +46,15 @@ async function run(): Promise<void> {
   ipcMain.handle("library:list-classifications", async () => ({ classifications: [], state: authenticatedState }));
   ipcMain.handle("library:get-navigation", async () => ({ view: "library", library: { classificationId: "movie", page: 1, pageSize: 50, filter: "all", sort: "recent", scrollTop: 0 } }));
   ipcMain.handle("library:set-navigation", async (_event, context) => context);
-  ipcMain.handle("library:list-collections", async () => ({ state: authenticatedState, page: fixturePage }));
+  ipcMain.handle("library:list-collections", async (_event, query) => {
+    collectionQueries.push(query as Record<string, unknown>);
+    return { state: authenticatedState, page: fixturePage };
+  });
   ipcMain.handle("library:get-detail", async () => ({ state: authenticatedState, detail: fixtureDetail }));
-  ipcMain.handle("library:list-continue-watching", async () => ({ state: authenticatedState, items: [] }));
+  ipcMain.handle("library:list-continue-watching", async () => ({
+    state: authenticatedState,
+    items: [{ collectionId: "fixture-collection", classificationId: "movie", episodeId: "fixture-episode", title: "窗口测试影片", episodeTitle: "正片", watchedSeconds: 12, durationSeconds: 90, progressPercent: 13, progressLabel: "已看 13%", durationLabel: "01:30", imageKey: "fixture-collection|cover" }],
+  }));
   ipcMain.handle("library:load-image", async () => ({ state: authenticatedState, dataUrl: "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=", mimeType: "image/gif" }));
   ipcMain.handle("discovery:start", async () => ({
     status: "success",
@@ -136,15 +143,31 @@ async function run(): Promise<void> {
       libraryVisible: document.querySelector('[data-view="library"]')?.hidden === false,
       category: document.querySelector('#classification-list')?.textContent || '',
       card: document.querySelector('[data-collection-id]')?.textContent || '',
-      scope: document.querySelector('#library-scope')?.textContent || ''
+       scope: document.querySelector('#library-scope')?.textContent || '',
+       continueEpisode: document.querySelector('[data-continue-episode-id]')?.getAttribute('data-continue-episode-id') || '',
+       paginationButtons: document.querySelectorAll('#library-pagination button[data-page]').length
     })`,
     true,
-  )) as { loginHidden: boolean; libraryVisible: boolean; category: string; card: string; scope: string };
+  )) as { loginHidden: boolean; libraryVisible: boolean; category: string; card: string; scope: string; continueEpisode: string; paginationButtons: number };
   assert.equal(afterSubmit.loginHidden, true);
   assert.equal(afterSubmit.libraryVisible, true);
   assert.match(afterSubmit.category, /电影/);
   assert.match(afterSubmit.card, /窗口测试影片/);
   assert.match(afterSubmit.scope, /当前已加载范围/);
+  assert.equal(afterSubmit.continueEpisode, "fixture-episode");
+  assert.ok(afterSubmit.paginationButtons <= 10);
+
+  const queriesBeforeSearch = collectionQueries.length;
+  await window.webContents.executeJavaScript(
+    `(() => { const input = document.querySelector('#library-search-input'); input.value = '窗口'; input.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`,
+    true,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  assert.equal(collectionQueries.length, queriesBeforeSearch + 1);
+  assert.equal(collectionQueries.at(-1)?.query, "窗口");
+  await window.webContents.executeJavaScript("document.querySelector('#library-search-clear').click()", true);
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  assert.equal(collectionQueries.at(-1)?.query, undefined);
 
   await window.webContents.executeJavaScript(
     `document.querySelector('#sidebar-toggle-button').click()`,

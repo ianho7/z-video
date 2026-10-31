@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { IPC_CHANNELS } from "../shared/ipc-channels";
 import type { WindowAppearanceState } from "../shared/contracts";
+import { recordUiOperation } from "./diagnostics";
 
 const WINDOW_BACKGROUND = "#101113";
 
@@ -74,7 +75,10 @@ export function createMainWindow(): BrowserWindow {
   const sendAppearance = () => {
     applyWindowAppearance(window, readWindowAppearance());
   };
-  window.webContents.once("did-finish-load", sendAppearance);
+  window.webContents.once("did-finish-load", () => {
+    sendAppearance();
+    void recordUiOperation("window.renderer-ready", "success", Date.now());
+  });
   const onNativeThemeUpdated = () => sendAppearance();
   nativeTheme.on("updated", onNativeThemeUpdated);
   window.once("closed", () => nativeTheme.off("updated", onNativeThemeUpdated));

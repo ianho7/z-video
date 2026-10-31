@@ -21,7 +21,7 @@ Electron 变更的最小检查顺序：`npm run typecheck` → `npm test` → �
 ## 实现约束
 
 - Electron sandboxed renderer 负责展示和交互，main/preload 负责会话、请求、模型和播放协调；UI 回调保持非阻塞，网络、图片解码及媒体工作通过后台任务完成，再将结果派发到 renderer。
-- 首选单进程、单窗口和一个播放引擎。新增进程、运行时、服务或多后端须有当前需求和具体收益；不预建通用框架。
+- Electron 默认运行时按受控多进程模型工作；产品层仍保持单窗口、单播放引擎和最小协调结构。新增应用服务、运行时或多后端须有当前需求和具体收益；不预建通用框架。
 - 媒体数据直接交给 main-owned native playback；renderer 只接收必要状态，避免 CPU 逐帧拷贝及完整片库重复加载。缓存有容量上限。
 - 依赖按实际使用功能裁剪；区分开发工具链/构建缓存、安装体积和运行资源。没有实测数据时不承诺尺寸、启动时间或硬解能力。
 - 127.0.0.1 的代理端口和 `/splay/` 地址来自官方客户端运行时，不是独立 NAS API 的保证。先证明替代客户端的连接和流获取路径，再依赖它。
@@ -41,20 +41,20 @@ Electron 变更的最小检查顺序：`npm run typecheck` → `npm test` → �
 - UI 异步刷新必须先获取分类并确定有效的 `classification_id`，再请求影视列表；空 ID 不得静默转换为空列表。
 - “无错误但暂无内容”必须区分真实空片库、请求未发送、响应解析为空，以及鉴权或协议错误。
 - 登录成功后的会话恢复必须使用系统安全存储中的 `token` 和 `nas_id`，并保留可观测的恢复证据。
-- Windows/macOS 发布构建必须启用 `keyring` 对应的原生后端 feature（Windows `windows-native`、macOS `apple-native`）；未启用时会退回进程内 mock，重启后必然丢失登录凭据。
+- 仅在维护旧 Slint/Rust 回滚实现时，Windows/macOS 发布构建才检查 `keyring` 对应的原生后端 feature（Windows `windows-native`、macOS `apple-native`）；Electron 默认路径使用 `safeStorage`/DPAPI，不把旧 keyring feature 当作 `npm` 检查前置条件。
 - `nas_id` 是设备身份，`nas_sign` 是 `/key/pub` 返回的签名上下文；两者必须分开保存、恢复和传参，不能用一个字段代替另一个。
 - 启动恢复遇到 `401/403` 或明确的未认证响应时，必须清理失效凭据并回到登录页，不能反复使用坏 token 进入片库刷新。
 - 影视列表响应只有在确认 `data.list` 存在后才能映射为空列表；缺少该字段必须报告解析/协议异常，并记录服务返回的业务错误码。
 - 本地诊断日志默认写入 `%LOCALAPPDATA%\z-video\logs\diagnostics.jsonl`，至少覆盖 UI 操作、请求路径、HTTP 状态、解析结果、业务结果、耗时和错误码。
 - 在沙箱或复现环境中可设置 `Z_VIDEO_LOG_DIR` 覆盖日志目录；覆盖只用于诊断，不改变正式环境的默认路径。
 - 协议参数以官方 Windows app 的静态与运行时证据为准，Web 端参数不得直接套用；静态候选与运行时确认必须分开记录。
-- 任何接口参数、响应字段或协议解析变更，必须同步更新 `reference/protocol-ledger.md`、`tests/fixtures/protocol/` 和对应 owner 边界契约测试；完成前运行 `cargo test --test protocol_contract_test -- --test-threads=1`、`cargo check`、`python scripts/check_protocol_contracts.py` 与 `git diff --check`。这些检查只证明本地契约，不替代真实 NAS 验收。
+- 任何接口参数、响应字段或协议解析变更，必须同步更新 `reference/protocol-ledger.md`、`tests/fixtures/protocol/` 和对应 owner 边界契约测试；Electron 默认路径先运行 `npm run typecheck`、`npm test` 与 `git diff --check`，再按实际影响运行 `python scripts/check_protocol_contracts.py`。仅当变更触及旧 Slint/Rust 协议 owner 时，才增加 `cargo test --test protocol_contract_test -- --test-threads=1` 和 `cargo check`；这些检查只证明本地契约，不替代真实 NAS 验收。
 - 普通片库列表 `POST /zvideo/video/v2/list` 经真实 NAS 验证使用 `system=94`；`system=7` 在同一分类会返回 `count=0/list=[]`，只能作为兼容回退，不能作为默认参数。
 - 片库卡片的 `release_year`、评分等字段可能返回数字或字符串；模型解析必须兼容两种 JSON 类型，不能因 `integer 2026` 这类值丢弃整页。
 - `/auth/login` 返回成功不代表片库身份已经完整；登录后及恢复保存会话时，都要通过 `/zhelper/state` 补齐并保存 `nas_id`，再请求分类和列表。
 - `/key/pub` 返回的 `sign` 是签名上下文，不是 `nas_id`；请求和凭据持久化必须分别保留 `nas_sign` 与 `nas_id`。
 - 分类响应的片库总数可能在 `collection_count`，不能只读取 `count`；HTTP 200 也必须继续检查响应字段、列表长度和业务结果。
 - 新版 `POST /zvideo/collection/v2/info` 可能只返回详情和剧集、不带 `data.history`；详情缺少历史时，按官方客户端证据只读回退 `POST /zvideo/collection/info`（同样传 `collection_id`、`classification_id`、`get_type=all`），再把 `data.history` 合并到详情。回退失败不能把已成功的详情伪装成空片库，但必须留下可观测的请求和错误记录。
-- Windows 验证前要确认运行进程来自当前 `target\\debug\\z-video.exe`；旧进程会锁住可执行文件，也会让界面看起来像修复没有生效。
+- 旧 Slint/Rust Windows 验证才检查当前 `target\\debug\\z-video.exe`，并确认没有旧进程锁文件；Electron 验证应确认当前 `dist`/package 的 Electron executable 和隔离 user-data profile，不能把 Rust target 路径当作默认入口。
 - 所有诊断日志必须脱敏，不得保存密码、短信验证码、完整 token、原始播放地址或完整私密媒体路径。
 - 调查输出必须记录证据来源、覆盖范围、未知项和验证命令；未被证据确认的结论不得写成已实现事实。

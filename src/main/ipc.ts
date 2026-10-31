@@ -1,12 +1,14 @@
 import { ipcMain } from "electron";
 
-import type { LibraryQuery, NavigationContext, LoginInput, PlaybackCommand } from "../shared/contracts";
+import type { LibraryQuery, NavigationContext, PlaybackCommand } from "../shared/contracts";
 import { IPC_CHANNELS } from "../shared/ipc-channels";
 import { LibraryController, type LibraryDetailRequest, type LibraryImageRequest } from "./library-controller";
 import { NasApiClient } from "./nas-client";
 import type { PlaybackHost } from "./player-host";
 import { SessionController } from "./session-controller";
 import { DiscoveryController } from "./discovery";
+import { parseLoginInput } from "./ipc-validation";
+import { recordUiOperation } from "./diagnostics";
 
 export { IPC_CHANNELS } from "../shared/ipc-channels";
 
@@ -16,26 +18,32 @@ export function registerIpcHandlers(
   player?: PlaybackHost,
   discovery = new DiscoveryController(),
 ): void {
-  ipcMain.handle(IPC_CHANNELS.restore, () => controller.restore());
-  ipcMain.handle(IPC_CHANNELS.login, async (_event, value: unknown) => ({ state: await controller.login(parseLoginInput(value)) }));
-  ipcMain.handle(IPC_CHANNELS.sendMfa, async (_event, value: unknown) => ({ state: await controller.sendMfaCode(parseOptionalString(value)) }));
-  ipcMain.handle(IPC_CHANNELS.verifyMfa, async (_event, value: unknown) => ({ state: await controller.verifyMfa(parseRequiredString(value, "验证码")) }));
-  ipcMain.handle(IPC_CHANNELS.logout, async () => ({ state: await controller.logout() }));
-  ipcMain.handle(IPC_CHANNELS.listClassifications, () => controller.listClassifications());
+  ipcMain.handle(IPC_CHANNELS.restore, () => withUiOperation("session.restore", () => controller.restore()));
+  ipcMain.handle(IPC_CHANNELS.login, (_event, value: unknown) => withUiOperation("session.login", async () => {
+    await player?.close();
+    return { state: await controller.login(parseLoginInput(value)) };
+  }));
+  ipcMain.handle(IPC_CHANNELS.sendMfa, (_event, value: unknown) => withUiOperation("session.send-mfa", () => controller.sendMfaCode(parseOptionalString(value))));
+  ipcMain.handle(IPC_CHANNELS.verifyMfa, (_event, value: unknown) => withUiOperation("session.verify-mfa", () => controller.verifyMfa(parseRequiredString(value, "验证码"))));
+  ipcMain.handle(IPC_CHANNELS.logout, () => withUiOperation("session.logout", async () => {
+    await player?.close();
+    return { state: await controller.logout() };
+  }));
+  ipcMain.handle(IPC_CHANNELS.listClassifications, () => withUiOperation("library.list-classifications", async () => closeAfterSessionLoss(await controller.listClassifications(), player)));
   if (player) {
-    ipcMain.handle(IPC_CHANNELS.playerChooseLocalFile, () => player.chooseLocalFile());
-    ipcMain.handle(IPC_CHANNELS.playerChooseSubtitleFile, () => player.chooseSubtitleFile());
-    ipcMain.handle(IPC_CHANNELS.playerCommand, (_event, value: unknown) => player.handle(parsePlaybackCommand(value)));
+    ipcMain.handle(IPC_CHANNELS.playerChooseLocalFile, () => withUiOperation("player.choose-local-file", () => player.chooseLocalFile()));
+    ipcMain.handle(IPC_CHANNELS.playerChooseSubtitleFile, () => withUiOperation("player.choose-subtitle-file", () => player.chooseSubtitleFile()));
+    ipcMain.handle(IPC_CHANNELS.playerCommand, (_event, value: unknown) => withUiOperation("player.command", () => player.handle(parsePlaybackCommand(value))));
   }
 
-  ipcMain.handle(IPC_CHANNELS.listCollections, (_event, value: unknown) => library.listCollections(parseLibraryQuery(value)));
-  ipcMain.handle(IPC_CHANNELS.getCollectionDetail, (_event, value: unknown) => library.getDetail(parseLibraryDetail(value)));
-  ipcMain.handle(IPC_CHANNELS.listContinueWatching, () => library.listContinueWatching());
-  ipcMain.handle(IPC_CHANNELS.loadImage, (_event, value: unknown) => library.loadImage(parseLibraryImage(value)));
-  ipcMain.handle(IPC_CHANNELS.getNavigation, () => library.getNavigation());
-  ipcMain.handle(IPC_CHANNELS.setNavigation, (_event, value: unknown) => library.setNavigation(parseNavigation(value)));
-  ipcMain.handle(IPC_CHANNELS.discoveryStart, () => discovery.start());
-  ipcMain.handle(IPC_CHANNELS.discoveryCancel, () => discovery.cancel());
+  ipcMain.handle(IPC_CHANNELS.listCollections, (_event, value: unknown) => withUiOperation("library.list-collections", async () => closeAfterSessionLoss(await library.listCollections(parseLibraryQuery(value)), player)));
+  ipcMain.handle(IPC_CHANNELS.getCollectionDetail, (_event, value: unknown) => withUiOperation("library.get-detail", async () => closeAfterSessionLoss(await library.getDetail(parseLibraryDetail(value)), player)));
+  ipcMain.handle(IPC_CHANNELS.listContinueWatching, () => withUiOperation("library.list-continue-watching", async () => closeAfterSessionLoss(await library.listContinueWatching(), player)));
+  ipcMain.handle(IPC_CHANNELS.loadImage, (_event, value: unknown) => withUiOperation("library.load-image", async () => closeAfterSessionLoss(await library.loadImage(parseLibraryImage(value)), player)));
+  ipcMain.handle(IPC_CHANNELS.getNavigation, () => withUiOperation("library.get-navigation", () => library.getNavigation()));
+  ipcMain.handle(IPC_CHANNELS.setNavigation, (_event, value: unknown) => withUiOperation("library.set-navigation", () => library.setNavigation(parseNavigation(value))));
+  ipcMain.handle(IPC_CHANNELS.discoveryStart, () => withUiOperation("discovery.start", () => discovery.start()));
+  ipcMain.handle(IPC_CHANNELS.discoveryCancel, () => withUiOperation("discovery.cancel", () => discovery.cancel()));
 }
 
 function parsePlaybackCommand(value: unknown): PlaybackCommand {
@@ -68,19 +76,31 @@ function parsePlaybackCommand(value: unknown): PlaybackCommand {
   }
 }
 
-function parseLoginInput(value: unknown): LoginInput {
-  const record = asRecord(value, "登录参数");
-  return {
-    serverUrl: parseRequiredString(record.serverUrl, "NAS 地址"),
-    username: parseRequiredString(record.username, "账号"),
-    password: parseRequiredString(record.password, "密码"),
-    remember: typeof record.remember === "boolean" ? record.remember : false,
-  };
-}
-
 function parseOptionalString(value: unknown): string | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   return parseRequiredString(value, "参数");
+}
+
+async function withUiOperation<T>(operation: string, action: () => Promise<T> | T): Promise<T> {
+  const startedAt = Date.now();
+  try {
+    const result = await action();
+    await recordUiOperation(operation, "success", startedAt);
+    return result;
+  } catch (error) {
+    await recordUiOperation(operation, "error", startedAt, {
+      errorKind: error instanceof Error ? error.name : "unknown",
+    });
+    throw error;
+  }
+}
+
+async function closeAfterSessionLoss<T>(result: T, player: PlaybackHost | undefined): Promise<T> {
+  if (player && result && typeof result === "object" && "state" in result) {
+    const state = (result as { state?: { status?: string } }).state;
+    if (state?.status === "logged-out") await player.close();
+  }
+  return result;
 }
 
 function parseRequiredString(value: unknown, label: string): string {
