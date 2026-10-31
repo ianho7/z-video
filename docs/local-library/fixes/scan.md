@@ -34,7 +34,7 @@ The same owned 2,000/20,000 scale smoke passed after the optimization: 1,990 ms 
 
 ## Review follow-up evidence
 
-The final profile smoke at `.scratch/local-library/runs/scan-profile-1793457206191-16808/scan-profile-report.json` also restarted the worker with an existing directory as `Z_VIDEO_SCAN_PROFILE_PATH`. The scan still returned `completed`; the unwritable profile output was treated as diagnostic-only and did not replace the scan result. The owner smoke at `.scratch/local-library/db-1793457177722-17196/electron.log` observed a playback write from scan progress while another scan was active, and verified that a later partial directory failure retained the already committed first item.
+The final profile smoke at `.scratch/local-library/runs/scan-profile-1793457281727-16928/scan-profile-report.json` also restarted the worker with an existing directory as `Z_VIDEO_SCAN_PROFILE_PATH`. The scan still returned `completed`; the unwritable profile output was treated as diagnostic-only and did not replace the scan result. The owner smoke at `.scratch/local-library/db-1793457277994-24368/electron.log` observed a playback write from scan progress while another scan was active, and verified that a later partial directory failure retained the already committed first item.
 
 ## Changes
 

@@ -1242,15 +1242,16 @@ async function scanDirectory(
 
 async function scanRoot(rootPath: string): Promise<LocalScanResult> {
   if (activeScan) throw new LocalWorkerError("invalid-input", "已有本地片库扫描正在进行");
-  const profiler = beginScanProfiler();
-  scanProfiler = profiler;
-  scanCaches = { nfo: new Map(), artwork: new Map() };
   const counters: ScanCounters = { scannedFiles: 0, importedFiles: 0, updatedFiles: 0, warnings: [], seenRelativePaths: new Set() };
+  let profiler: ScanProfiler | undefined;
   let profileStatus: ScanProfileReport["status"] = "error";
   let source: ReturnType<typeof ensureSource> | undefined;
   let scanId: string | undefined;
   let cancellation: { requested: boolean } | undefined;
   try {
+    profiler = beginScanProfiler();
+    scanProfiler = profiler;
+    scanCaches = { nfo: new Map(), artwork: new Map() };
     const requestedRoot = resolve(rootPath);
     const canonicalRoot = await profileAsync("realpath", () => realpath(requestedRoot), "realpath").catch(() => undefined);
     const sourceRoot = canonicalRoot ?? requestedRoot;
