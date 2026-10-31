@@ -23,6 +23,9 @@ const IPC_CHANNELS = {
   localLibraryOpenVideo: "local-library:open-video",
   localLibraryList: "local-library:list",
   localLibraryGet: "local-library:get",
+  localLibraryScan: "local-library:scan",
+  localLibraryCancelScan: "local-library:scan-cancel",
+  localLibraryScanProgress: "local-library:scan-progress",
   restore: "session:restore",
   login: "session:login",
   sendMfa: "session:send-mfa",
@@ -52,6 +55,13 @@ const api: ElectronApi = {
     openVideo: () => ipcRenderer.invoke(IPC_CHANNELS.localLibraryOpenVideo),
     list: (query?: Partial<LocalLibraryQuery>) => ipcRenderer.invoke(IPC_CHANNELS.localLibraryList, query),
     get: (mediaId: string) => ipcRenderer.invoke(IPC_CHANNELS.localLibraryGet, mediaId),
+    scanFolder: () => ipcRenderer.invoke(IPC_CHANNELS.localLibraryScan),
+    cancelScan: (scanId: string) => ipcRenderer.invoke(IPC_CHANNELS.localLibraryCancelScan, scanId),
+    onScanProgress: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, value: Parameters<typeof listener>[0]) => listener(value);
+      ipcRenderer.on(IPC_CHANNELS.localLibraryScanProgress, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.localLibraryScanProgress, handler);
+    },
     onState: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, value: Parameters<typeof listener>[0]) => listener(value);
       ipcRenderer.on(IPC_CHANNELS.localLibraryState, handler);

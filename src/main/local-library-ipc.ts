@@ -13,6 +13,9 @@ export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, 
   const unsubscribe = database.onState((state) => {
     if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(IPC_CHANNELS.localLibraryState, state);
   });
+  const unsubscribeScan = database.onScanProgress((progress) => {
+    if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(IPC_CHANNELS.localLibraryScanProgress, progress);
+  });
   ipcMain.handle(IPC_CHANNELS.localLibraryState, () => database.getState());
   ipcMain.handle(IPC_CHANNELS.localLibraryChooseFolder, () => withUiOperation("local-library.choose-folder", async () => {
     const selection = await dialog.showOpenDialog(window, { properties: ["openDirectory", "createDirectory"] });
@@ -36,16 +39,32 @@ export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, 
     const mediaId = parseMediaId(value);
     return { state: database.getState(), item: await database.get(mediaId) };
   }));
+  ipcMain.handle(IPC_CHANNELS.localLibraryScan, () => withUiOperation("local-library.scan", async () => {
+    const selection = await dialog.showOpenDialog(window, { properties: ["openDirectory"] });
+    if (selection.canceled || !selection.filePaths[0]) return { status: "cancelled", scanId: "scan_00000000-0000-4000-8000-000000000000", sourceId: "", scannedFiles: 0, importedFiles: 0, updatedFiles: 0, warningCount: 0, warnings: [], error: "已取消选择片库目录" } as const;
+    return database.scanFolder(selection.filePaths[0]);
+  }));
+  ipcMain.handle(IPC_CHANNELS.localLibraryCancelScan, (_event, value: unknown) => withUiOperation("local-library.scan-cancel", async () => {
+    if (!isScanId(value)) throw new Error("scanId 格式无效");
+    return database.cancelScan(value);
+  }));
   return () => {
     unsubscribe();
+    unsubscribeScan();
     for (const channel of [
       IPC_CHANNELS.localLibraryState,
       IPC_CHANNELS.localLibraryChooseFolder,
       IPC_CHANNELS.localLibraryOpenVideo,
       IPC_CHANNELS.localLibraryList,
       IPC_CHANNELS.localLibraryGet,
+      IPC_CHANNELS.localLibraryScan,
+      IPC_CHANNELS.localLibraryCancelScan,
     ]) ipcMain.removeHandler(channel);
   };
+}
+
+function isScanId(value: unknown): value is string {
+  return typeof value === "string" && /^scan_[0-9a-f-]{36}$/i.test(value);
 }
 
 function parseLocalLibraryQuery(value: unknown): LocalLibraryQuery {

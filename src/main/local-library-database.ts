@@ -11,6 +11,10 @@ import {
   type LocalLibraryQuery,
   type LocalLibraryState,
   type LocalMediaItem,
+  type LocalPlaybackState,
+  type LocalPlaybackUpdate,
+  type LocalScanProgress,
+  type LocalScanResult,
 } from "../shared/local-library-contracts";
 
 type WorkerCommand =
@@ -18,9 +22,13 @@ type WorkerCommand =
   | { command: "state" }
   | { command: "import-first-movie"; rootPath: string }
   | { command: "import-video"; filePath: string; rootPath: string }
+  | { command: "scan"; rootPath: string }
+  | { command: "cancel-scan"; scanId: string }
   | { command: "list"; query: LocalLibraryQuery }
   | { command: "get"; mediaId: string }
   | { command: "resolve-path"; mediaId: string }
+  | { command: "get-playback"; mediaId: string }
+  | { command: "save-playback"; state: LocalPlaybackState }
   | { command: "close" };
 
 interface WorkerSuccess {
@@ -33,6 +41,11 @@ interface WorkerFailure {
   id: number;
   ok: false;
   error: { code: "sqlite-unavailable" | "storage" | "invalid-input" | "unknown"; message: string };
+}
+
+interface WorkerEvent {
+  event: "scan-progress";
+  progress: LocalScanProgress;
 }
 
 interface PendingRequest {
@@ -59,6 +72,7 @@ export class LocalLibraryDatabase {
   private nextRequestId = 1;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly stateListeners = new Set<(state: LocalLibraryState) => void>();
+  private readonly scanListeners = new Set<(progress: LocalScanProgress) => void>();
   private state: LocalLibraryState = {
     status: "error",
     schemaVersion: LOCAL_LIBRARY_SCHEMA_VERSION,
@@ -77,9 +91,13 @@ export class LocalLibraryDatabase {
     await mkdir(dirname(this.dbPath), { recursive: true });
     this.worker = utilityProcess.fork(this.workerPath, [], { serviceName: "z-video-local-library" });
     this.worker.on("message", (event) => {
-      const payload = event && typeof event === "object" && "id" in event
+      const payload = event && typeof event === "object" && ("id" in event || "event" in event)
         ? event
         : (event as unknown as { data?: unknown }).data;
+      if (isWorkerEvent(payload)) {
+        for (const listener of this.scanListeners) listener(payload.progress);
+        return;
+      }
       this.handleWorkerMessage(payload as WorkerSuccess | WorkerFailure);
     });
     this.worker.on("exit", (code) => this.handleWorkerExit(code));
@@ -120,6 +138,11 @@ export class LocalLibraryDatabase {
     return () => this.stateListeners.delete(listener);
   }
 
+  onScanProgress(listener: (progress: LocalScanProgress) => void): () => void {
+    this.scanListeners.add(listener);
+    return () => this.scanListeners.delete(listener);
+  }
+
   async refreshState(): Promise<LocalLibraryState> {
     const result = await this.call<{ schemaVersion: typeof LOCAL_LIBRARY_SCHEMA_VERSION; sqliteAvailable: true; sources: LocalLibraryState["sources"] }>({ command: "state" });
     this.state = { status: "ready", ...result };
@@ -141,6 +164,16 @@ export class LocalLibraryDatabase {
     return { status: "imported", item: result.item, state };
   }
 
+  async scanFolder(rootPath: string): Promise<LocalScanResult> {
+    const result = await this.call<LocalScanResult>({ command: "scan", rootPath });
+    await this.refreshState();
+    return result;
+  }
+
+  async cancelScan(scanId: string): Promise<boolean> {
+    return this.call<boolean>({ command: "cancel-scan", scanId });
+  }
+
   async list(query: LocalLibraryQuery): Promise<LocalLibraryPage> {
     const result = await this.call<{ totalCount: number; items: LocalMediaItem[] }>({ command: "list", query });
     return { query: { ...query }, page: query.page, pageSize: query.pageSize, ...result };
@@ -155,6 +188,29 @@ export class LocalLibraryDatabase {
   async resolveMediaPath(mediaId: string): Promise<string | undefined> {
     assertMediaId(mediaId);
     return this.call<string | undefined>({ command: "resolve-path", mediaId });
+  }
+
+  async resolveMedia(mediaId: string): Promise<string | undefined> {
+    return this.resolveMediaPath(mediaId);
+  }
+
+  async getPlayback(mediaId: string): Promise<LocalPlaybackState | undefined> {
+    assertMediaId(mediaId);
+    return this.call<LocalPlaybackState | undefined>({ command: "get-playback", mediaId });
+  }
+
+  async savePlayback(state: LocalPlaybackState): Promise<LocalPlaybackState>;
+  async savePlayback(mediaId: string, state: LocalPlaybackUpdate): Promise<LocalPlaybackState>;
+  async savePlayback(stateOrMediaId: LocalPlaybackState | string, update?: LocalPlaybackUpdate): Promise<LocalPlaybackState> {
+    let state: LocalPlaybackState;
+    if (typeof stateOrMediaId === "string") {
+      assertMediaId(stateOrMediaId);
+      state = { ...update, mediaId: stateOrMediaId, updatedAtMs: update?.updatedAtMs ?? Date.now(), watched: update?.watched ?? false, positionSec: update?.positionSec ?? 0 };
+    } else {
+      state = stateOrMediaId;
+    }
+    assertMediaId(state.mediaId);
+    return this.call<LocalPlaybackState>({ command: "save-playback", state });
   }
 
   async close(): Promise<void> {
@@ -203,6 +259,10 @@ export class LocalLibraryDatabase {
   }
 }
 
-function assertMediaId(mediaId: string): void {
+function isWorkerEvent(value: unknown): value is WorkerEvent {
+  return Boolean(value && typeof value === "object" && (value as { event?: unknown }).event === "scan-progress");
+}
+
+function assertMediaId(mediaId: string): asserts mediaId is `media_${string}` {
   if (!isOpaqueMediaId(mediaId)) throw new LocalLibraryDatabaseError("invalid-input", "mediaId 格式无效");
 }

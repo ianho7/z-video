@@ -8,8 +8,11 @@ import { spawn } from "node:child_process";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const root = resolve(scriptDirectory, "..");
-const dependencyRoot = existsSync(join(root, "node_modules")) ? join(root, "node_modules") : resolve(root, "..", "..", "node_modules");
-const electronPackage = join(dependencyRoot, "electron");
+const dependencyRoots = [join(root, "node_modules"), resolve(root, "..", "..", "node_modules")];
+const electronPackage = dependencyRoots
+  .map((dependencyRoot) => join(dependencyRoot, "electron"))
+  .find((candidate) => existsSync(join(candidate, "path.txt")));
+if (!electronPackage) throw new Error("Electron package with an installed path.txt is unavailable");
 const electronBinaryName = (await readFile(join(electronPackage, "path.txt"), "utf8")).trim();
 const electronBinary = join(electronPackage, "dist", electronBinaryName);
 const entry = join(root, "dist", "tests", "local-library-database-smoke.js");

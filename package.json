@@ -27,6 +27,7 @@
     "typescript": "^5.7.2"
   },
   "dependencies": {
+    "fast-xml-parser": "5.11.2",
     "koffi": "3.3.5"
   }
 }

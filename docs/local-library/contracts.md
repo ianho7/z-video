@@ -9,9 +9,9 @@ The utility process creates these tables in the database under application `user
 | Table | Foundation fields | Next owner |
 |---|---|---|
 | `sources` | `source_id`, `root_path` (main/worker only), `label`, `available`, timestamps | 02 scan |
-| `collections` | `collection_id`, `title`, `kind`, optional year/plot/genre/rating, timestamps | 02 metadata |
-| `media_files` | `media_id`, `collection_id`, `source_id`, `relative_path` (main/worker only), `size_bytes`, `modified_at_ms`, `available`, timestamps | 02 scan / 03 playback |
-| `artwork` | `artwork_id`, `collection_id`, `kind`, source fingerprint/cache key | 02 metadata |
+| `collections` | `collection_id`, `title`, `kind`, optional year/plot/genre/rating, owner identity/source-relative grouping, timestamps | 02 metadata |
+| `media_files` | `media_id`, `collection_id`, `source_id`, `relative_path` (main/worker only), display title/kind, optional season/episode, `size_bytes`, `modified_at_ms`, `available`, timestamps | 02 scan / 03 playback |
+| `artwork` | `artwork_id`, collection/media owner, source-relative path (main/worker only), `kind`, source fingerprint/cache key | 02 metadata |
 | `playback_state` | `media_id`, position/duration, audio/subtitle track IDs, watched, updated time | 03 playback |
 | `scan_runs` | source, generation, completion, error, start/completion times | 02 scan |
 
@@ -27,7 +27,9 @@ Channels are defined in `src/shared/ipc-channels.ts` and exposed through `window
 - `local-library:list` → validates bounded page/query input and returns `LocalLibraryPage` with renderer-safe items.
 - `local-library:get` → validates opaque `mediaId` and returns one renderer-safe item; missing media is not a path error.
 
-Renderer-visible `LocalMediaItem` fields are `mediaId`, `sourceId`, title, kind, size, modified time, and availability. Absolute paths, UNC paths, source-relative paths, database rows, credentials, NAS signs, and raw playback URIs are never part of the public DTO.
+Renderer-visible `LocalMediaItem` fields are `mediaId`, `sourceId`, `collectionId`, title, kind, optional year/plot/genres/rating/season/episode, artwork cache keys, size, modified time, and availability. Absolute paths, UNC paths, source-relative paths, database rows, credentials, NAS signs, and raw playback URIs are never part of the public DTO.
+
+Ticket 02 adds main-owned `scanFolder`, `cancelScan`, and bounded `onScanProgress` operations. A scan result reports counts, warnings, and `completed`/`cancelled`/`partial`/`unavailable` status without exposing a root path. A successful traversal is the only operation allowed to mark unseen files unavailable; cancellation, permission errors, and disconnected roots preserve existing rows and playback state.
 
 ## Identity
 
@@ -35,4 +37,4 @@ Renderer-visible `LocalMediaItem` fields are `mediaId`, `sourceId`, title, kind,
 
 ## Handoff
 
-Ticket 02 may add metadata columns/records only through the schema owner and must preserve the opaque-ID and path boundary. Ticket 03 may use the main-only resolve method and `playback_state`, but must not add a renderer path escape hatch or NAS progress write.
+Ticket 02 may add metadata columns/records only through the schema owner and must preserve the opaque-ID and path boundary. Ticket 03 uses `getPlayback`/`savePlayback` keyed by `mediaId` plus the main-only `resolveMedia` method; it must not add a renderer path escape hatch or NAS progress write.

@@ -7,7 +7,10 @@ import type {
   LocalImportOutcome,
   LocalMediaItem,
   LocalPlaybackState,
+  LocalPlaybackUpdate,
   LocalPlaybackTarget,
+  LocalScanProgress,
+  LocalScanResult,
   LocalSourceSummary,
 } from "./local-library-contracts";
 
@@ -20,7 +23,10 @@ export type {
   LocalImportOutcome,
   LocalMediaItem,
   LocalPlaybackState,
+  LocalPlaybackUpdate,
   LocalPlaybackTarget,
+  LocalScanProgress,
+  LocalScanResult,
   LocalSourceSummary,
 } from "./local-library-contracts";
 

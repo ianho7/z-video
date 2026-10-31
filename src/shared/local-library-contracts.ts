@@ -31,14 +31,29 @@ export interface LocalSourceSummary {
   itemCount: number;
 }
 
+export type LocalMediaKind = "movie" | "show" | "episode" | "unclassified";
+
+export interface LocalArtworkReference {
+  kind: "poster" | "fanart";
+  cacheKey: string;
+}
+
 export interface LocalMediaItem {
   mediaId: `media_${string}`;
   sourceId: string;
+  collectionId: string;
   title: string;
-  kind: "movie";
+  kind: LocalMediaKind;
   sizeBytes: number;
   modifiedAtMs: number;
   available: boolean;
+  year?: number;
+  plot?: string;
+  genres?: string[];
+  rating?: number;
+  seasonNumber?: number;
+  episodeNumber?: number;
+  artwork?: LocalArtworkReference[];
 }
 
 /** Playback owner contract. The mediaId is the only renderer-to-main target. */
@@ -52,8 +67,25 @@ export interface LocalPlaybackState {
   updatedAtMs: number;
 }
 
+export type LocalPlaybackUpdate = Omit<LocalPlaybackState, "mediaId" | "updatedAtMs"> & { updatedAtMs?: number };
+
 export interface LocalPlaybackTarget {
   mediaId: `media_${string}`;
+}
+
+export interface LocalScanProgress {
+  scanId: string;
+  sourceId: string;
+  status: "running" | "completed" | "cancelled" | "partial" | "unavailable";
+  scannedFiles: number;
+  importedFiles: number;
+  updatedFiles: number;
+  warningCount: number;
+}
+
+export interface LocalScanResult extends LocalScanProgress {
+  warnings: string[];
+  error?: string;
 }
 
 export interface LocalLibraryState {
@@ -99,5 +131,8 @@ export interface LocalLibraryApi {
   openVideo(): Promise<LocalImportOutcome>;
   list(query?: Partial<LocalLibraryQuery>): Promise<LocalLibraryListResult>;
   get(mediaId: string): Promise<LocalLibraryDetailResult>;
+  scanFolder(): Promise<LocalScanResult>;
+  cancelScan(scanId: string): Promise<boolean>;
+  onScanProgress(listener: (progress: LocalScanProgress) => void): () => void;
   onState(listener: (state: LocalLibraryState) => void): () => void;
 }
