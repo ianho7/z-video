@@ -96,7 +96,6 @@ interface ScanProfileReport {
 
 interface ScanProfiler {
   outputPath: string;
-  ioDelayMs: number;
   startedAt: number;
   report: ScanProfileReport;
 }
@@ -116,8 +115,6 @@ interface NfoCacheEntry {
 function beginScanProfiler(): ScanProfiler | undefined {
   const outputPath = process.env.Z_VIDEO_SCAN_PROFILE_PATH;
   if (!outputPath) return undefined;
-  const parsedDelay = Number(process.env.Z_VIDEO_SCAN_IO_DELAY_MS ?? "0");
-  const ioDelayMs = Number.isFinite(parsedDelay) && parsedDelay > 0 ? parsedDelay : 0;
   const stagesMs = {
     enumerationMs: 0,
     realpathMs: 0,
@@ -129,7 +126,6 @@ function beginScanProfiler(): ScanProfiler | undefined {
   } satisfies Record<`${ScanProfileStage}Ms`, number>;
   return {
     outputPath,
-    ioDelayMs,
     startedAt: performance.now(),
     report: {
       version: 1,
@@ -145,6 +141,7 @@ function beginScanProfiler(): ScanProfiler | undefined {
 
 let scanProfiler: ScanProfiler | undefined;
 let scanCaches: ScanCaches | undefined;
+const maxNfoMetadataCacheEntries = 512;
 const nfoMetadataCache = new Map<string, NfoCacheEntry>();
 
 function profileCount(name: string, amount = 1): void {
@@ -158,6 +155,17 @@ function profileError(error: unknown): void {
   if (!scanProfiler.report.errors.includes(message)) scanProfiler.report.errors.push(message);
 }
 
+function rememberNfoMetadata(filePath: string, value: NfoCacheEntry): void {
+  nfoMetadataCache.delete(filePath);
+  while (nfoMetadataCache.size >= maxNfoMetadataCacheEntries) {
+    const oldest = nfoMetadataCache.keys().next().value as string | undefined;
+    if (!oldest) break;
+    nfoMetadataCache.delete(oldest);
+    profileCount("nfoCacheEvictions");
+  }
+  nfoMetadataCache.set(filePath, value);
+}
+
 function profileSync<T>(stage: ScanProfileStage, operation: () => T): T {
   if (!scanProfiler) return operation();
   if (stage === "database") profileCount("databaseOperations");
@@ -169,10 +177,9 @@ function profileSync<T>(stage: ScanProfileStage, operation: () => T): T {
   }
 }
 
-async function profileAsync<T>(stage: ScanProfileStage, operation: () => Promise<T>, callName?: string, applyDelay = true): Promise<T> {
+async function profileAsync<T>(stage: ScanProfileStage, operation: () => Promise<T>, callName?: string): Promise<T> {
   if (!scanProfiler) return operation();
   if (callName) profileCount(callName);
-  if (applyDelay && scanProfiler.ioDelayMs > 0) await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, scanProfiler?.ioDelayMs ?? 0));
   const startedAt = performance.now();
   try {
     return await operation();
@@ -193,6 +200,7 @@ async function finishScanProfiler(profiler: ScanProfiler | undefined, status: Sc
     updatedFiles: counters.updatedFiles,
     warnings: counters.warnings.length,
   };
+  profiler.report.calls.nfoCacheSize = nfoMetadataCache.size;
   await mkdir(dirname(profiler.outputPath), { recursive: true });
   await appendFile(profiler.outputPath, `${JSON.stringify(profiler.report)}\n`, "utf8");
 }
@@ -584,17 +592,18 @@ async function readNfoFile(filePath: string, warnings: string[]): Promise<Parsed
       if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > maxNfoBytes) {
         const warning = "NFO 文件过大或不可用，已使用文件名回退";
         warnings.push(warning);
-        nfoMetadataCache.set(filePath, { size: Number(metadata.size), modifiedAtMs: Number(metadata.mtimeMs), warning });
+        rememberNfoMetadata(filePath, { size: Number(metadata.size), modifiedAtMs: Number(metadata.mtimeMs), warning });
         return undefined;
       }
       const cachedMetadata = nfoMetadataCache.get(filePath);
       if (cachedMetadata && cachedMetadata.size === Number(metadata.size) && cachedMetadata.modifiedAtMs === Number(metadata.mtimeMs) && !cachedMetadata.warning) {
         profileCount("nfoMetadataCacheHits");
+        rememberNfoMetadata(filePath, cachedMetadata);
         return cachedMetadata.value;
       }
       const xml = await profileAsync("nfo", () => readFile(filePath, "utf8"), "readFile");
       const value = profileSync("nfo", () => parseNfo(xml));
-      nfoMetadataCache.set(filePath, { size: Number(metadata.size), modifiedAtMs: Number(metadata.mtimeMs), value });
+      rememberNfoMetadata(filePath, { size: Number(metadata.size), modifiedAtMs: Number(metadata.mtimeMs), value });
       return value;
     } catch {
       const warning = "NFO 无法解析，已使用文件名回退";
@@ -647,7 +656,7 @@ async function conventionalArtwork(rootPath: string, directory: string, baseName
       return candidate.names.some((name) => stem.toLowerCase() === name.toLowerCase()) && supportedArtworkExtensions.has(extname(entry.name).toLowerCase());
     });
     if (match) {
-      const filePath = await profileAsync("artwork", () => artworkPath(rootPath, directory, match.name), undefined, false);
+      const filePath = await profileAsync("artwork", () => artworkPath(rootPath, directory, match.name));
       if (filePath) output.push({ kind: candidate.kind, filePath });
     }
   }
@@ -685,7 +694,7 @@ async function discoverMedia(
   const displayTitle = episode ? metadataTitle(nfo, baseName) : metadataTitle(nfo, collectionTitle);
   const artworkFiles: Array<{ kind: "poster" | "fanart"; filePath: string }> = [];
   for (const reference of nfo?.artwork ?? []) {
-    const resolved = await profileAsync("artwork", () => artworkPath(rootPath, dirname(filePath), reference.path), undefined, false);
+    const resolved = await profileAsync("artwork", () => artworkPath(rootPath, dirname(filePath), reference.path));
     if (resolved) artworkFiles.push({ kind: reference.kind, filePath: resolved });
   }
   if (showContext?.artwork.length) artworkFiles.push(...showContext.artwork);
@@ -1148,7 +1157,7 @@ async function scanDirectory(
     const metadata = await readNfoFile(join(safeCurrentDirectory, tvshow.name), counters.warnings);
     const artworkFiles: Array<{ kind: "poster" | "fanart"; filePath: string }> = [];
     for (const candidate of metadata?.artwork ?? []) {
-      const artworkFile = await profileAsync("artwork", () => artworkPath(rootPath, safeCurrentDirectory, candidate.path), undefined, false);
+      const artworkFile = await profileAsync("artwork", () => artworkPath(rootPath, safeCurrentDirectory, candidate.path));
       if (artworkFile) artworkFiles.push({ kind: candidate.kind, filePath: artworkFile });
     }
     if (!artworkFiles.length) artworkFiles.push(...await conventionalArtwork(rootPath, safeCurrentDirectory, basename(safeCurrentDirectory), entries));
@@ -1193,7 +1202,8 @@ async function scanDirectory(
       if (result.created) counters.importedFiles += 1;
       else counters.updatedFiles += 1;
       counters.seenRelativePaths.add(discovered.relativePath);
-    } catch {
+    } catch (error) {
+      profileError(error);
       counters.warnings.push("视频条目无法索引，已保留此前索引");
     }
     emitProgress(progressFor(scanId, sourceId, "running", counters));

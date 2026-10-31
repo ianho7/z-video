@@ -7,6 +7,7 @@ import { app } from "electron";
 import { LocalLibraryDatabase } from "../src/main/local-library-database";
 
 const itemCount = 23;
+const cacheProbeCount = 520;
 
 async function writeMovieFixture(root: string, index: number): Promise<void> {
   const directory = join(root, "movies", `Movie-${String(index + 1).padStart(2, "0")}`);
@@ -41,6 +42,18 @@ async function writeShowFixture(root: string): Promise<void> {
   }));
 }
 
+async function writeCacheProbeFixture(root: string): Promise<void> {
+  const directory = join(root, "cache-limit", "movies");
+  await mkdir(directory, { recursive: true });
+  await Promise.all(Array.from({ length: cacheProbeCount }, async (_, index) => {
+    const title = `Cache Probe ${index + 1}`;
+    await Promise.all([
+      writeFile(join(directory, `${title}.mkv`), `cache probe ${index + 1}`),
+      writeFile(join(directory, `${title}.nfo`), `<movie><title>${title}</title><year>2026</year></movie>`),
+    ]);
+  }));
+}
+
 async function run(): Promise<void> {
   const profile = await mkdtemp(join(process.env.TEMP ?? process.cwd(), "z-video-local-scan-profile-"));
   const fixtureRoot = join(profile, "owned-fixture");
@@ -60,14 +73,21 @@ async function run(): Promise<void> {
     assert.equal(first.status, "completed");
     assert.equal(first.scannedFiles, itemCount);
     assert.equal(first.importedFiles, itemCount);
+    await writeFile(join(fixtureRoot, "movies", "Movie-01", "Owned Movie 1.nfo"), "<movie><title>Owned Movie 1 Updated</title><year>2026</year><genre>Drama</genre><plot>Changed NFO must be re-read.</plot></movie>");
     const repeated = await database.scanFolder(fixtureRoot);
     assert.equal(repeated.status, "completed");
     assert.equal(repeated.scannedFiles, itemCount);
     assert.equal(repeated.importedFiles, 0);
     assert.equal(repeated.updatedFiles, itemCount);
-    const page = await database.list({ page: 1, pageSize: 1, query: "Owned" });
-    assert.equal(page.totalCount, itemCount);
-    process.stdout.write(`SCAN_PROFILE_RESULT: ${JSON.stringify({ itemCount, firstStatus: first.status, repeatedStatus: repeated.status, repeatedUpdatedFiles: repeated.updatedFiles })}\n`);
+    const page = await database.list({ page: 1, pageSize: 1, query: "Owned Movie 1 Updated" });
+    assert.equal(page.totalCount, 1);
+    assert.equal(page.items[0]?.title, "Owned Movie 1 Updated");
+    await writeCacheProbeFixture(profile);
+    const cacheProbe = await database.scanFolder(join(profile, "cache-limit"));
+    assert.equal(cacheProbe.status, "completed");
+    assert.equal(cacheProbe.scannedFiles, cacheProbeCount);
+    assert.equal(cacheProbe.importedFiles, cacheProbeCount);
+    process.stdout.write(`SCAN_PROFILE_RESULT: ${JSON.stringify({ itemCount, firstStatus: first.status, repeatedStatus: repeated.status, repeatedUpdatedFiles: repeated.updatedFiles, cacheProbeCount })}\n`);
   } finally {
     await database.close();
     if (app.isReady()) app.quit();

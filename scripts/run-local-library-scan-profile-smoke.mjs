@@ -18,13 +18,13 @@ const entry = join(root, "dist", "tests", "local-library-scan-profile-smoke.js")
 const evidenceDir = join(root, ".scratch", "local-library", "runs", `scan-profile-${Date.now()}-${process.pid}`);
 await mkdir(evidenceDir, { recursive: true });
 
-async function runDelay(delayMs) {
-  const logPath = join(evidenceDir, `delay-${delayMs}ms.electron.log`);
-  const profilePath = join(evidenceDir, `delay-${delayMs}ms.profile.jsonl`);
+async function runProfile() {
+  const logPath = join(evidenceDir, "electron.log");
+  const profilePath = join(evidenceDir, "scan-profile.jsonl");
   const logFd = openSync(logPath, "w");
   const child = spawn(electronBinary, ["--disable-gpu", entry], {
     cwd: root,
-    env: { ...process.env, Z_VIDEO_SCAN_PROFILE_PATH: profilePath, Z_VIDEO_SCAN_IO_DELAY_MS: String(delayMs) },
+    env: { ...process.env, Z_VIDEO_SCAN_PROFILE_PATH: profilePath },
     stdio: ["ignore", logFd, logFd],
     windowsHide: true,
   });
@@ -33,14 +33,21 @@ async function runDelay(delayMs) {
   clearTimeout(timeout);
   closeSync(logFd);
   const output = await readFile(logPath, "utf8").catch(() => "");
-  if (code !== 0) throw new Error(`scan profile smoke failed delay=${delayMs} code=${code} signal=${signal ?? "none"} log=${logPath}\n${output}`);
+  if (code !== 0) throw new Error(`scan profile smoke failed code=${code} signal=${signal ?? "none"} log=${logPath}\n${output}`);
   const profiles = (await readFile(profilePath, "utf8")).trim().split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
-  if (profiles.length !== 2) throw new Error(`scan profile smoke expected two profile rows delay=${delayMs}, got ${profiles.length}; log=${logPath}`);
-  return { delayMs, profiles, logPath };
+  if (profiles.length !== 3) throw new Error(`scan profile smoke expected three profile rows, got ${profiles.length}; log=${logPath}`);
+  const repeated = profiles[1];
+  const capacity = profiles[2];
+  if (repeated.calls?.nfoMetadataCacheHits !== 18 || repeated.calls?.readFile !== 1) {
+    throw new Error(`scan profile smoke did not prove changed NFO refresh: ${JSON.stringify(repeated.calls)}; log=${logPath}`);
+  }
+  if (capacity.calls?.nfoCacheSize > 512 || !(capacity.calls?.nfoCacheEvictions > 0)) {
+    throw new Error(`scan profile smoke did not prove bounded NFO cache: ${JSON.stringify(capacity.calls)}; log=${logPath}`);
+  }
+  return { profiles, logPath };
 }
 
-const runs = [];
-for (const delayMs of [0, 2]) runs.push(await runDelay(delayMs));
+const run = await runProfile();
 const reportPath = join(evidenceDir, "scan-profile-report.json");
-await writeFile(reportPath, `${JSON.stringify({ fixture: { itemCount: 23, movies: 12, episodes: 11 }, runs, report: reportPath }, null, 2)}\n`, "utf8");
-console.log(`PASS: local library scan stage profile for 23 owned NFO/artwork items (report=${reportPath})`);
+await writeFile(reportPath, `${JSON.stringify({ fixture: { itemCount: 23, movies: 12, episodes: 11, cacheProbeCount: 520 }, run, report: reportPath }, null, 2)}\n`, "utf8");
+console.log(`PASS: local library scan stage profile and bounded NFO cache probe (report=${reportPath})`);
