@@ -49,6 +49,8 @@ function resolveMpvPath(): string | undefined {
     process.env.Z_VIDEO_MPV_DLL,
     join(process.cwd(), "vendor", "mpv", "libmpv-2.dll"),
     join(resolve(process.cwd(), "..", ".."), "vendor", "mpv", "libmpv-2.dll"),
+    join(resolve(process.resourcesPath, ".."), "vendor", "mpv", "libmpv-2.dll"),
+    join(process.resourcesPath, "app", "vendor", "mpv", "libmpv-2.dll"),
     join(resolve(__dirname, "..", ".."), "vendor", "mpv", "libmpv-2.dll"),
   ].filter((value): value is string => Boolean(value));
   return candidates.find((value) => existsSync(value));

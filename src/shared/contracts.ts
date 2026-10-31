@@ -166,6 +166,12 @@ export interface OperationOutcome {
   state: PublicSessionState;
 }
 
+export interface WindowAppearanceState {
+  nativeBackdrop: boolean;
+  reducedTransparency: boolean;
+  highContrast: boolean;
+}
+
 /** Renderer-safe LAN discovery result. Probe credentials and opaque signs stay in main. */
 export interface DiscoveryResult {
   ip: string;
@@ -215,6 +221,9 @@ export type PlaybackEvent =
   | { type: "closed"; episodeId?: string };
 
 export interface ElectronApi {
+  appearance: {
+    onState(listener: (state: WindowAppearanceState) => void): () => void;
+  };
   session: {
     restore(): Promise<PublicSessionState>;
     login(input: LoginInput): Promise<LoginOutcome>;

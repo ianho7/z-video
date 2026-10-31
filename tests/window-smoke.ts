@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { app, BrowserWindow, ipcMain } from "electron";
 
-const smokeUserData = join(process.env.TEMP ?? process.cwd(), `z-video-electron-window-smoke-${process.pid}`);
+const smokeUserData = process.env.Z_VIDEO_WINDOW_SMOKE_PROFILE ?? join(process.env.TEMP ?? process.cwd(), `z-video-electron-window-smoke-${process.pid}`);
 app.setPath("userData", smokeUserData);
 app.setPath("sessionData", join(smokeUserData, "session"));
 
@@ -145,6 +145,28 @@ async function run(): Promise<void> {
   assert.match(afterSubmit.category, /电影/);
   assert.match(afterSubmit.card, /窗口测试影片/);
   assert.match(afterSubmit.scope, /当前已加载范围/);
+
+  await window.webContents.executeJavaScript(
+    `document.querySelector('#sidebar-toggle-button').click()`,
+    true,
+  );
+  const collapsedSidebar = (await window.webContents.executeJavaScript(
+    `({ collapsed: document.querySelector('[data-view="library"]')?.classList.contains('sidebar-collapsed'), expanded: document.querySelector('#sidebar-toggle-button')?.getAttribute('aria-expanded'), hidden: document.querySelector('#classification-sidebar')?.getAttribute('aria-hidden') })`,
+    true,
+  )) as { collapsed: boolean; expanded: string | null; hidden: string | null };
+  assert.equal(collapsedSidebar.collapsed, true);
+  assert.equal(collapsedSidebar.expanded, "false");
+  assert.equal(collapsedSidebar.hidden, "true");
+  await window.webContents.executeJavaScript(
+    `document.querySelector('#sidebar-toggle-button').click()`,
+    true,
+  );
+  const expandedSidebar = (await window.webContents.executeJavaScript(
+    `({ collapsed: document.querySelector('[data-view="library"]')?.classList.contains('sidebar-collapsed'), expanded: document.querySelector('#sidebar-toggle-button')?.getAttribute('aria-expanded') })`,
+    true,
+  )) as { collapsed: boolean; expanded: string | null };
+  assert.equal(expandedSidebar.collapsed, false);
+  assert.equal(expandedSidebar.expanded, "true");
 
   await window.webContents.executeJavaScript(
     `document.querySelector('[data-collection-id="fixture-collection"]').click()`,

@@ -1,5 +1,17 @@
 # 开发交接
 
+## Electron cutover handoff（2026-10-31）
+
+当前默认入口是 Electron 45 + TypeScript：`npm run start`、`npm run build`、`npm run package`。Windows portable 包默认输出到 `.scratch/electron-migration/05-package/z-video-win32-x64/`，包内使用 Electron runtime、Koffi Windows x64 prebuild 和一份 `vendor/mpv/libmpv-2.dll`；`resources/app` 不含 Rust、测试、reference、source maps 或开发依赖。`npm run verify:package` 会在隔离 cwd 和 fresh `--user-data-dir` 下验证包内 EXE 启动，并用 Electron Node runtime 加载包内 Koffi 与 libmpv。
+
+Ticket 05 已补齐旧窗口契约：preferred `1040x720`、minimum `900x640`、sidebar collapse、Windows `backgroundMaterial: "acrylic"` 以及 nativeTheme/high-contrast/reduced-transparency/unsupported-build 的不透明回退。主进程退出会等待播放器关闭，以便完成已开始的观看进度 flush。真实窗口侧栏/回退和两个独立 Electron 进程的 Windows safeStorage synthetic fixture 有本地证据；没有读取用户会话或连接真实 NAS。
+
+本次 Windows 资源记录位于 `.scratch/electron-migration/runs/05-resources-1793418913399-24128/resource-measurement.json`：node_modules `405,872,832` bytes、npm cache `491,439,771` bytes、portable 总目录 `502,108,811` bytes（109 files）、fresh packaged `z-video.exe` idle working set `138,178,560` bytes。它们分别代表开发依赖/cache、distributable folder 和一次 idle runtime sample，不代表 Rust release 对比或性能预算。
+
+本次可复核证据目录：window/sidebar `.scratch/electron-migration/runs/05-window-1793419011005-12080/window.log`；reduced-transparency/geometry `.scratch/electron-migration/runs/05-appearance-1793418898412-24420/appearance.log`；packaged EXE/Koffi/libmpv `.scratch/electron-migration/runs/05-package-1793418903414-10632/packaged-app.log`；fresh-process safeStorage `.scratch/electron-migration/runs/05-safe-storage-1793418547179-11752/{save,restore}.log`。这些日志没有用户凭证、token、NAS 地址或媒体 URI。
+
+仍未通过的边界：真实 NAS 登录/流、真实 NAS 进度读回、硬解选择、DWM 实际采样画面、mixed-DPI、多显示器、macOS、签名/安装器/自动更新和公开分发许可证。libmpv 包含来源 archive 名称与 DLL SHA-256，但仓库没有足够的许可证 notice 证明公开再分发；不要把 portable 目录标为 public-ready。
+
 记录日期：2026-10-16。此目录已经包含报告和设计文档，尚无应用代码。后续在 `D:\project\z-video` 开发；无需重新执行 REA 安装或复制全部历史输出。
 
 首版范围已经用户确认：局域网、NAS 现有片库及观看进度、基础播放、Windows 先交付、个人自用。详细能力与后置项见 `architecture.md` 的“首版范围”和 `adr/0002-first-release-scope.md`，接手时无需重新询问这五项。

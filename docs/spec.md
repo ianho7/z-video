@@ -1,6 +1,12 @@
-# z-video 首版 Spec：Slint / Rust 局域网影视客户端
+# z-video 首版 Spec：Electron / TypeScript 局域网影视客户端
 
-状态：需求与验收边界已确认，尚未实现。日期：2026-10-16。
+状态：需求与验收边界已确认；Electron Windows 路径已实现，Ticket 05 的 package/窗口/safeStorage/资源记录已有本地证据，真实 NAS/硬解/DWM/macOS/公开分发仍待验收。日期：2026-10-31。
+
+## 当前实现状态
+
+Windows 默认桌面入口是 Electron 45 + TypeScript；`npm run start`、`npm run build` 和 `npm run package` 不依赖 Rust/Cargo。实现保留 NAS 协议字段边界、安全会话、片库分页/排序、Collection 详情、Episode 播放协调和 native libmpv 播放路径。窗口沿用 `1040x720` preferred、`900x640` minimum、侧栏可收起，并在 Windows native material 不可用或减少透明度/高对比时使用不透明回退。
+
+Ticket 05 的 package、Koffi/libmpv 资源隔离、真实 Electron 窗口回归、fresh-process Windows safeStorage synthetic fixture 和分项资源记录已有本地证据。真实 NAS、硬件解码、DWM 采样画面、mixed-DPI、macOS 和公开分发许可证仍是未验证/阻塞项；不得把本地 fixture、Chromium 截图或 package 启动存活当成这些证据。
 
 ## Problem Statement
 
@@ -10,7 +16,7 @@
 
 ## Solution
 
-提供基于 Slint GUI 和 Rust 业务核心的 Windows 桌面应用。用户在本机登录自己的 NAS，浏览已有 Media library，进入 Collection 详情、选择 Episode、开始 Playback session，并将观看进度同步至 NAS，以便再次打开时续播。
+提供基于 Electron 45 + TypeScript 的 Windows 桌面应用。用户在本机登录自己的 NAS，浏览已有 Media library，进入 Collection 详情、选择 Episode、开始 native libmpv Playback session，并将观看进度同步至 NAS，以便再次打开时续播。
 
 首版保证局域网使用，以 NAS 现有片库为主要事实来源，Windows 先交付，先个人自用。macOS 保持架构兼容但延后真实运行验收。预留 Scraper plugin 的数据与调用边界，首版不实现插件运行时。
 
@@ -27,7 +33,7 @@
 7. As an 影视观众, I want 查看 Collection 的已有简介和元数据, so that 我能判断要看什么。
 8. As an 影视观众, I want 查看 Collection 下的 Episode 并手动选择, so that 我能播放目标影片或指定剧集。
 9. As an 影视观众, I want 从详情页直接开始播放, so that 片库到播放的操作连续且明确。
-10. As an 影视观众, I want 在 Slint 应用窗口中看到视频和可操作的播放控制层, so that 我不用依靠官方客户端播放窗口完成观看。
+10. As an 影视观众, I want 在 Electron 应用窗口中看到视频和可操作的播放控制层, so that 我不用依靠官方客户端播放窗口完成观看。
 11. As an 影视观众, I want 暂停和继续播放, so that 我可以中断观看而不丢失当前播放位置。
 12. As an 影视观众, I want 拖动到目标播放位置, so that 我能跳过或重看片段且不会被旧进度回调拉回。
 13. As an 影视观众, I want 在具备支持能力的硬件上对常用素材使用硬件解码, so that 播放时避免不必要的 CPU 开销。
@@ -52,9 +58,9 @@
 
 ### GUI 与执行结构
 
-采用 Slint 声明式 GUI 与 Rust 业务核心。首选一个应用进程、一个窗口和一个播放引擎；片库和播放是应用内的不同界面状态。新增进程或运行时须由真实平台集成约束或当前产品需求证明必要。
+采用 Electron main、sandboxed renderer 和窄 preload bridge。首选一个应用进程、一个主窗口和一个播放引擎；片库和播放是应用内的不同界面状态。Electron 的受控多进程模型是运行时前提，不能据此推断需要额外服务或通用框架。
 
-Slint 负责展示、交互和播放控制层；Rust 协调会话、网络、模型、缓存及播放。网络、图片解码和媒体工作不阻塞 UI 线程，异步结果正确派发至 UI。视频走原生渲染路径，避免 CPU 逐帧读取再交给 GUI。
+renderer 负责展示、交互和播放控制层；Electron main 协调会话、网络、模型、缓存及播放，preload 只暴露 renderer-safe DTO。网络、图片解码和媒体工作不阻塞 renderer，异步结果正确派发到窗口。视频走 native libmpv 路径，避免 CPU 逐帧读取再交给 HTML。
 
 ### NAS 与数据归属
 
@@ -66,7 +72,7 @@ NAS 保持 Media library 与观看进度的主要事实来源；本地保存设�
 
 ### 播放
 
-libmpv 是优先评估候选，未决定依赖版本、绑定、图形后端或分发构建。选择前先证明应用可独立获取有效流，并在 Slint 窗口组合视频表面、控制层和全屏。若前提不成立，记录具体限制并调整方案，不能靠复用官方进程掩盖独立链路缺失。
+当前 Windows 播放路径使用 native libmpv + Koffi；仍需真实 NAS 流和硬件素材证明独立获取、解码和画面集成。播放在 Electron 窗口组合 native surface、控制层和全屏；若前提不成立，记录具体限制并调整方案，不能靠复用官方进程掩盖独立链路缺失。
 
 本地代理端口和不透明媒体路径是官方客户端当次会话产物；不写死端口、NAS 地址或用户标识，不拼造流地址。使用当前鉴权与服务返回的地址，明确媒体请求所需凭证。
 
@@ -98,7 +104,7 @@ Windows 先交付；平台代码集中处理，macOS 后续单独构建和运行
 
 以 Windows 实际应用的“局域网登录 → 分类/片库 → Collection 详情/Episode → 播放 → NAS 进度保存 → 再次打开续播”为主要验收路径。只验证外部行为、持久化结果和独立协议契约，不冻结内部函数、组件树或调用次数。
 
-当前仓库已有 Cargo/Slint 应用、`tests/` 下的契约与集成测试，以及用于原生窗口快照的 `poster_grid_preview` 入口；当前未配置 CI。既有官方客户端运行证据仅作为协议线索，不作为替代实现通过证据。真实 NAS、播放器和跨平台运行仍按上面的边界分别验收，不把本地编译或快照当成这些能力的替代证明。
+当前仓库保留 Cargo/Slint 回滚实现，同时有 Electron `tests/` owner-boundary 测试、真实窗口 smoke 和 package/resource scripts；当前未配置 CI。既有官方客户端运行证据仅作为协议线索，不作为替代实现通过证据。真实 NAS、播放器和跨平台运行仍按上面的边界分别验收，不把本地编译或快照当成这些能力的替代证明。
 
 ### 风险与主要证明
 
@@ -106,7 +112,7 @@ Windows 先交付；平台代码集中处理，macOS 后续单独构建和运行
 |---|---|---|
 | 独立鉴权和片库访问 | 官方客户端与本地代理不运行时，新应用完成所需登录及真实 LAN 片库访问；失败/MFA 过期/Session 失效时显示对应恢复入口 | 复用旧 token 或代理掩盖独立链路缺失；登录失败却显示片库成功 |
 | NAS 协议与流获取 | 在真实 NAS 边界记录脱敏请求方法、编码、状态和必要返回结构，使用返回流成功打开；固定样本仅证明解析契约 | 错误编码或凭证位置、静态候选当成已支持接口、过期流地址被写死 |
-| 原生画面和基础控制 | 在 Windows Slint 真窗口执行暂停/继续、拖动、手动选集、音轨、内外字幕、全屏；状态和声画匹配当前 Episode | 单独播放器可用但嵌入黑屏、控制层遮挡/不可操作、旧会话回调污染新会话 |
+| 原生画面和基础控制 | 在 Windows Electron/native libmpv 真窗口执行暂停/继续、拖动、手动选集、音轨、内外字幕、全屏；状态和声画匹配当前 Episode | 单独播放器可用但嵌入黑屏、控制层遮挡/不可操作、旧会话回调污染新会话 |
 | 实际硬解 | 对支持设备上的代表性常用素材记录编码/容器、引擎版本及实际解码路径 | 仅设置硬解选项而实际上仍软解 |
 | 进度保存与续播 | 在真实 Playback session 中产生位置，核对 NAS 返回的保存结果；关闭并再次打开应用读取同一 Episode 的进度并续播，按协议精度解释偏差 | 只打印上报日志、仅保存进程内状态、写入其他 Episode |
 | GUI 与资源约束 | 在海报加载、NAS 断开/请求失败及播放操作期间实际操作窗口；依据实现的缓存上限填充并确认回收、磁盘用量不持续无界增长，记录资源实测值 | UI 阻塞、退出/换页后旧请求覆盖当前页面、海报缓存无限增长 |
@@ -130,9 +136,9 @@ Windows 先交付；平台代码集中处理，macOS 后续单独构建和运行
 
 ## Further Notes
 
-已确认：Slint＋Rust；局域网首版；沿用 NAS 片库；基础播放；Windows 优先；先个人自用；插件只预留边界。验收边界已在本轮由用户确认。
+已确认：Electron＋TypeScript；局域网首版；沿用 NAS 片库；基础播放；Windows 优先；先个人自用；插件只预留边界。验收边界已在本轮由用户确认。
 
-尚未技术证明：Rust 独立登录及媒体流获取、MFA/Session 细节、流地址有效期、Slint 与引擎集成、硬解和音字幕覆盖。libmpv 仍是候选。开发从独立连接与原生播放前提入手，这些是实现调查工作，不是要求用户再次选择产品范围。
+尚未技术证明：Electron 独立登录及媒体流获取、MFA/Session 细节、流地址有效期、native libmpv 硬解和音字幕覆盖。开发从独立连接与原生播放前提入手，这些是实现调查工作，不是要求用户再次选择产品范围。
 
 官方 Windows 客户端曾通过本地代理进入极影视、启动 UZPlayer/VLC 并上报递增播放秒数；此事实不证明新客户端能脱离官方运行时工作，也不证明上报已持久化。原始日志可能含敏感字段，未迁入项目；逆向报告和 catalog 是特定版本的证据，不作为跨固件通用规范。
 

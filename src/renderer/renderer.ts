@@ -27,6 +27,8 @@ const playerAudioTrack = document.querySelector<HTMLSelectElement>("#player-audi
 const playerSubtitleTrack = document.querySelector<HTMLSelectElement>("#player-subtitle-track");
 const playerSubtitleFileButton = document.querySelector<HTMLButtonElement>("#player-subtitle-file-button");
 const playerStatus = document.querySelector<HTMLElement>("#player-status");
+const sidebarToggleButton = document.querySelector<HTMLButtonElement>("#sidebar-toggle-button");
+const sidebar = document.querySelector<HTMLElement>("#classification-sidebar");
 
 let playerVisible = false;
 let playerDurationSec = 0;
@@ -41,6 +43,23 @@ const discoveryResults = document.querySelector<HTMLElement>("#discovery-results
 let appBusy = false;
 let discoveryLoading = false;
 let discoveryGeneration = 0;
+let sidebarVisible = true;
+
+function renderWindowAppearance(state: { nativeBackdrop: boolean; reducedTransparency: boolean; highContrast: boolean }): void {
+  document.documentElement.dataset.nativeBackdrop = String(state.nativeBackdrop);
+  document.documentElement.dataset.reducedTransparency = String(state.reducedTransparency);
+  document.documentElement.dataset.highContrast = String(state.highContrast);
+}
+
+function renderSidebarVisibility(): void {
+  if (libraryView) libraryView.classList.toggle("sidebar-collapsed", !sidebarVisible);
+  if (sidebar) sidebar.setAttribute("aria-hidden", String(!sidebarVisible));
+  if (sidebarToggleButton) {
+    sidebarToggleButton.setAttribute("aria-expanded", String(sidebarVisible));
+    sidebarToggleButton.setAttribute("aria-label", sidebarVisible ? "隐藏侧栏" : "显示侧栏");
+    sidebarToggleButton.title = sidebarVisible ? "隐藏侧栏" : "显示侧栏";
+  }
+}
 
 function requireElement<T extends Element>(element: T | null, name: string): T {
   if (!element) throw new Error(`renderer element missing: ${name}`);
@@ -381,6 +400,12 @@ playerSubtitleFileButton?.addEventListener("click", async () => {
 
 window.zVideo.player.onEvent(renderPlaybackEvent);
 window.zVideo.session.onState((state) => renderState(state));
+window.zVideo.appearance.onState(renderWindowAppearance);
+sidebarToggleButton?.addEventListener("click", () => {
+  sidebarVisible = !sidebarVisible;
+  renderSidebarVisibility();
+});
+renderSidebarVisibility();
 discoverButton?.addEventListener("click", async () => {
   const generation = ++discoveryGeneration;
   setDiscoveryLoading(true);

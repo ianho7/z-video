@@ -11,6 +11,7 @@ import type {
   PublicSessionState,
   DiscoveryCancelOutcome,
   DiscoveryOutcome,
+  WindowAppearanceState,
 } from "../shared/contracts";
 
 // Sandboxed preloads may require Electron's built-ins, but not local CommonJS
@@ -22,6 +23,7 @@ const IPC_CHANNELS = {
   verifyMfa: "session:verify-mfa",
   logout: "session:logout",
   sessionState: "session:state",
+  appearanceState: "appearance:state",
   listClassifications: "library:list-classifications",
   playerChooseLocalFile: "player:choose-local-file",
   playerChooseSubtitleFile: "player:choose-subtitle-file",
@@ -38,6 +40,13 @@ const IPC_CHANNELS = {
 } as const;
 
 const api: ElectronApi = {
+  appearance: {
+    onState: (listener: (state: WindowAppearanceState) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, value: WindowAppearanceState) => listener(value);
+      ipcRenderer.on(IPC_CHANNELS.appearanceState, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.appearanceState, handler);
+    },
+  },
   session: {
     restore: () => ipcRenderer.invoke(IPC_CHANNELS.restore) as Promise<PublicSessionState>,
     login: (input: LoginInput) => ipcRenderer.invoke(IPC_CHANNELS.login, input) as Promise<{ state: PublicSessionState }>,
