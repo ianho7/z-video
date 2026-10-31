@@ -2,7 +2,7 @@ import { app, safeStorage } from "electron";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import type { PersistedSession, SessionStore } from "./session-controller";
+import type { LastPlaybackContext, PersistedSession, SessionStore } from "./session-controller";
 
 export interface SafeStorageLike {
   isEncryptionAvailable(): boolean;
@@ -69,7 +69,19 @@ function parsePersistedSession(value: unknown): PersistedSession {
   if (nasId) session.nasId = nasId;
   if (nasSign) session.nasSign = nasSign;
   if (nasName) session.nasName = nasName;
+  const lastPlayback = parseLastPlayback(record.lastPlayback);
+  if (lastPlayback) session.lastPlayback = lastPlayback;
   return session;
+}
+
+function parseLastPlayback(value: unknown): LastPlaybackContext | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const collectionId = optionalString(record.collectionId);
+  const classificationId = optionalString(record.classificationId);
+  const episodeId = optionalString(record.episodeId);
+  if (!collectionId || !classificationId || !episodeId) return undefined;
+  return { collectionId, classificationId, episodeId };
 }
 
 function optionalString(value: unknown): string | undefined {

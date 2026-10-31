@@ -113,6 +113,17 @@ test("library controller maps detail history to a real resume item and keeps pri
   assert.equal(gateway.imageCalls.length, 1);
 });
 
+test("continue watching rebuilds the remembered Episode from NAS detail after a fresh controller", async () => {
+  const gateway = new FixtureGateway();
+  const { library, sessions } = await authenticatedController(gateway);
+  await sessions.setLastPlayback({ collectionId: "c03", classificationId: "movie", episodeId: "episode-02" });
+
+  const result = await library.listContinueWatching();
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0]?.episodeId, "episode-02");
+  assert.deepEqual(gateway.detailCalls, ["c03"]);
+});
+
 test("an unauthorized library request clears the session instead of returning an empty page", async () => {
   const gateway = new FixtureGateway();
   const store = new MemoryStore();

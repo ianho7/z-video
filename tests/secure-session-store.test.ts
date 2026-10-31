@@ -33,10 +33,13 @@ test("secure session store round-trips encrypted session without writing token p
       token: "fixture-session",
       nasId: "fixture-nas",
       nasSign: "fixture-sign",
+      lastPlayback: { collectionId: "collection-01", classificationId: "movie", episodeId: "episode-01" },
     };
     await store.save(session);
     const onDisk = await readFile(path, "utf8");
     assert.equal(onDisk.includes("fixture-session"), false);
+    assert.equal(onDisk.includes("episode-01"), false);
+    assert.equal(onDisk.includes("position"), false);
     assert.deepEqual(await store.load(), session);
     await store.clear();
     assert.equal(await store.load(), null);

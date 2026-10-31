@@ -221,6 +221,7 @@ export interface ElectronApi {
     sendMfaCode(challengeType?: string): Promise<OperationOutcome>;
     verifyMfa(code: string): Promise<LoginOutcome>;
     logout(): Promise<OperationOutcome>;
+    onState(listener: (state: PublicSessionState) => void): () => void;
   };
   library: {
     listClassifications(): Promise<{ classifications: Classification[]; state: PublicSessionState }>;

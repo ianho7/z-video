@@ -86,7 +86,11 @@ export interface NasEpisode {
   seasonNumber: number;
   /** Kept in main only for the player/image owner. */
   filePath?: string;
+  /** Server video identity used by the progress endpoint. */
+  videoId?: string;
   versionId?: string;
+  encryptedPath?: string;
+  from?: string;
 }
 
 export interface NasPlaybackHistory {
@@ -94,6 +98,9 @@ export interface NasPlaybackHistory {
   playDurationSec?: number;
   audioIndex?: number;
   subtitleIndex?: number;
+  subtitleHash?: string;
+  subtitleSetting?: string;
+  playChapter?: number;
 }
 
 export interface NasCollectionDetail extends NasCollection {
@@ -105,6 +112,27 @@ export interface NasImage {
   dataUrl: string;
   mimeType: string;
   bytes: number;
+}
+
+export interface NasPlaybackStream {
+  /** Main/native boundary only. Never include this in renderer DTOs or logs. */
+  uri: string;
+  audioList: unknown[];
+  subtitleList: unknown[];
+  extraFields: Record<string, unknown>;
+}
+
+export interface NasPlaybackProgress {
+  collectionId: string;
+  classificationId: string;
+  videoId: string;
+  sec: number;
+  chapter: number;
+  audioIndex: number;
+  subtitleIndex: number;
+  subtitleHash?: string;
+  videoDuration?: number;
+  subtitleSetting?: string;
 }
 
 export class MfaProof {
@@ -255,8 +283,11 @@ function parseNasHistory(value: unknown): NasPlaybackHistory | undefined {
   const playDurationSec = numberValue(object.play_duration) ?? numberValue(object.play_duration_sec) ?? numberValue(object.position);
   const audioIndex = numberValue(object.audio_index);
   const subtitleIndex = numberValue(object.subtitle_index);
-  if (!lastVideoId && playDurationSec === undefined && audioIndex === undefined && subtitleIndex === undefined) return undefined;
-  return { lastVideoId, playDurationSec, audioIndex, subtitleIndex };
+  const subtitleHash = stringValue(object.subtitle_hash);
+  const subtitleSetting = stringValue(object.subtitle_setting);
+  const playChapter = numberValue(object.play_chapter) ?? numberValue(object.chapter);
+  if (!lastVideoId && playDurationSec === undefined && audioIndex === undefined && subtitleIndex === undefined && !subtitleHash && !subtitleSetting && playChapter === undefined) return undefined;
+  return { lastVideoId, playDurationSec, audioIndex, subtitleIndex, subtitleHash, subtitleSetting, playChapter };
 }
 
 function parseNasEpisode(value: unknown, collectionId: string, seasonNumber: number): NasEpisode | undefined {
@@ -265,6 +296,8 @@ function parseNasEpisode(value: unknown, collectionId: string, seasonNumber: num
   const videoId = stringValue(item.video_id) ?? stringValue(item.episode_id) ?? stringValue(item.id);
   const filePath = stringValue(item.file_path) ?? stringValue(item.episode_path) ?? stringValue(item.path) ?? stringValue(item.url);
   const versionId = stringValue(item.version_id);
+  const encryptedPath = stringValue(item.encrypted_path);
+  const from = stringValue(item.from);
   const hasEpisodeData = Boolean(videoId || filePath || versionId || item.episode !== undefined || item.episode_number !== undefined || item.episode_num !== undefined);
   if (!hasEpisodeData) return undefined;
   const episodeNumber = Math.max(1, Math.round(numberValue(item.episode) ?? numberValue(item.episode_number) ?? numberValue(item.episode_num) ?? numberValue(item.number) ?? 1));
@@ -277,7 +310,10 @@ function parseNasEpisode(value: unknown, collectionId: string, seasonNumber: num
     durationSec: parseDurationSeconds(item.video_duration ?? item.duration ?? item.duration_sec),
     seasonNumber,
     filePath,
+    videoId,
     versionId,
+    encryptedPath,
+    from,
   };
 }
 
@@ -370,6 +406,43 @@ function contextForm(session: AuthenticatedSession): URLSearchParams {
 
 function formUrl(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}?&drnd=${generateDrnd()}`;
+}
+
+function buildPlaybackUrl(baseUrl: string, path: string, filePath: string, encryptedPath?: string, fromInput?: string): string {
+  const url = new URL(`${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`);
+  url.searchParams.set("drnd", generateDrnd());
+  url.searchParams.set("plat", DEVICE.platform);
+  url.searchParams.set("file_path", filePath);
+  url.searchParams.set("play_env", "1");
+  url.searchParams.set("video_codec", "hevc,h264,mpeg4");
+  url.searchParams.set("support_format", "3");
+  url.searchParams.set("version", DEVICE.version);
+  url.searchParams.set("device_id", DEVICE.deviceId);
+  url.searchParams.set("device", DEVICE.device);
+  if (encryptedPath) url.searchParams.set("encrypted_path", encryptedPath);
+  url.searchParams.set("from", fromInput?.trim() || "");
+  return url.toString();
+}
+
+function parsePlaybackStream(value: unknown, baseUrl: string): NasPlaybackStream {
+  const data = asObject(value, "播放地址响应缺少 data");
+  const rawUri = stringValue(data.uri);
+  if (!rawUri) throw new NasError("malformed", "播放地址响应缺少有效 URI");
+  let uri: string;
+  try {
+    const parsed = new URL(rawUri, baseUrl);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("unsupported protocol");
+    uri = parsed.toString();
+  } catch {
+    throw new NasError("malformed", "播放地址响应 URI 无效");
+  }
+  const { uri: _uri, audio_list: _audioList, subtitle_list: _subtitleList, ...extraFields } = data;
+  return {
+    uri,
+    audioList: arrayValue(data.audio_list) ?? [],
+    subtitleList: arrayValue(data.subtitle_list) ?? [],
+    extraFields,
+  };
 }
 
 function encryptCredential(publicKeyText: string, value: string): string {
@@ -536,6 +609,55 @@ export class NasApiClient {
       void recordNasRequest("library.collection_history", "POST", "/zvideo/collection/info", "error", Date.now(), errorDetails(error));
     }
     return detail;
+  }
+
+  async getPlaybackStream(session: AuthenticatedSession, episode: NasEpisode): Promise<NasPlaybackStream> {
+    if (!session.token.trim()) throw new NasError("unauthorized", "当前会话未认证", undefined, 401);
+    const filePath = episode.filePath?.trim() ?? "";
+    if (!filePath) throw new NasError("malformed", "Episode 缺少 file_path，无法请求播放地址");
+    await this.ensureNasId(session);
+    const encryptedPath = episode.encryptedPath?.trim() || undefined;
+    const primaryRoute = encryptedPath ? "/transcode/decrypt/play" : "/transcode/play";
+    const legacyRoute = encryptedPath ? "/transcode/decrypt/playaddr" : "/transcode/playaddr";
+    const primaryUrl = buildPlaybackUrl(session.baseUrl, primaryRoute, filePath, encryptedPath, episode.from);
+    try {
+      const body = await this.getJson(primaryUrl, "playback.stream", session);
+      if (!isSuccess(body)) throw new NasError("business", errorMessage(body), codeString(body.code));
+      return parsePlaybackStream(body.data, session.baseUrl);
+    } catch (error) {
+      const shouldTryLegacy = error instanceof NasError && (error.status === 404 || (error.kind === "business" && error.code === "404"));
+      if (!shouldTryLegacy) throw error;
+      const legacyUrl = buildPlaybackUrl(session.baseUrl, legacyRoute, filePath, encryptedPath, episode.from);
+      const body = await this.getJson(legacyUrl, "playback.stream.legacy", session);
+      if (!isSuccess(body)) throw new NasError("business", errorMessage(body), codeString(body.code));
+      return parsePlaybackStream(body.data, session.baseUrl);
+    }
+  }
+
+  async updatePlaybackProgress(session: AuthenticatedSession, progress: NasPlaybackProgress): Promise<void> {
+    if (!session.token.trim()) throw new NasError("unauthorized", "当前会话未认证", undefined, 401);
+    const collectionId = progress.collectionId.trim();
+    const classificationId = progress.classificationId.trim();
+    const videoId = progress.videoId.trim();
+    if (!collectionId || !classificationId || !videoId) throw new NasError("malformed", "播放进度缺少合集、分类或 Episode");
+    if (!Number.isFinite(progress.sec) || progress.sec < 0 || !Number.isFinite(progress.chapter) || progress.chapter < 0 || !Number.isFinite(progress.audioIndex) || !Number.isFinite(progress.subtitleIndex)) {
+      throw new NasError("malformed", "播放进度字段格式无效");
+    }
+    await this.ensureNasId(session);
+    const form = new URLSearchParams({
+      collection_id: collectionId,
+      classification_id: classificationId,
+      video_id: videoId,
+      sec: String(Math.max(0, Math.round(progress.sec))),
+      chapter: String(Math.max(0, Math.round(progress.chapter))),
+      audio_index: String(Math.round(progress.audioIndex)),
+      subtitle_index: String(Math.round(progress.subtitleIndex)),
+    });
+    if (progress.subtitleHash?.trim()) form.set("subtitle_hash", progress.subtitleHash.trim());
+    if (progress.videoDuration !== undefined && Number.isFinite(progress.videoDuration) && progress.videoDuration > 0) form.set("video_duration", String(Math.round(progress.videoDuration)));
+    if (progress.subtitleSetting?.trim()) form.set("subtitle_setting", progress.subtitleSetting);
+    const body = await this.postSessionForm(formUrl(session.baseUrl, "/zvideo/video/updateplaytime"), form, session, "playback.progress");
+    if (!isSuccess(body)) throw new NasError("business", errorMessage(body), codeString(body.code));
   }
 
   async fetchImage(session: AuthenticatedSession, imagePathInput: string): Promise<NasImage> {

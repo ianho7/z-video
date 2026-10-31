@@ -96,7 +96,7 @@ export class MpvNativePlayer implements PlayerEngine {
 
   async start(path: string, startPositionSec: number | undefined, onEvent: (event: PlayerEngineEvent) => void): Promise<void> {
     if (process.platform !== "win32") throw new Error("native libmpv playback is currently Windows-only");
-    if (!existsSync(path)) throw new Error("selected media is unavailable");
+    if (!isRemoteMediaSource(path) && !existsSync(path)) throw new Error("selected media is unavailable");
     await this.stop();
     this.onEvent = onEvent;
     this.pendingStartPosition = Number.isFinite(startPositionSec) && (startPositionSec ?? 0) > 0 ? startPositionSec : undefined;
@@ -312,5 +312,14 @@ export class MpvNativePlayer implements PlayerEngine {
     if (this.stateTimer) clearInterval(this.stateTimer);
     this.eventTimer = undefined;
     this.stateTimer = undefined;
+  }
+}
+
+function isRemoteMediaSource(source: string): boolean {
+  try {
+    const protocol = new URL(source).protocol;
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
   }
 }

@@ -14,7 +14,11 @@
     }
   ],
   "endpoints": [
-    { "method": "GET", "path": "/transcode/play", "purpose": "static-playback-candidate" },
+    { "method": "GET", "path": "/transcode/play", "purpose": "primary-playback-address", "owner": "src/main/nas-client.ts:getPlaybackStream" },
+    { "method": "GET", "path": "/transcode/decrypt/play", "purpose": "encrypted-primary-playback-address", "owner": "src/main/nas-client.ts:getPlaybackStream" },
+    { "method": "GET", "path": "/transcode/playaddr", "purpose": "404-only-legacy-fallback", "owner": "src/main/nas-client.ts:getPlaybackStream" },
+    { "method": "GET", "path": "/transcode/decrypt/playaddr", "purpose": "404-only-encrypted-legacy-fallback", "owner": "src/main/nas-client.ts:getPlaybackStream" },
+    { "method": "POST", "path": "/zvideo/video/updateplaytime", "purpose": "NAS-owned-viewing-progress", "owner": "src/main/nas-client.ts:updatePlaybackProgress" },
     { "method": "GET", "path": "/transcode/video/streams", "purpose": "official-runtime-stream-preparation" }
   ],
   "variants": {
@@ -32,13 +36,35 @@
           "audio_list": { "types": ["array"], "value_omitted": true },
           "subtitle_list": { "types": ["array"], "value_omitted": true }
         }
-      }
+      },
+      "owner": "src/main/nas-client.ts:getPlaybackStream"
     },
     "http_200_business_error": {
       "http_status_type": "integer",
       "code_types": ["string", "integer"],
       "data": { "presence": "absent_or_null", "type": "null_or_absent" },
       "outcome": "business_error_not_empty_stream"
+    },
+    "progress_success": {
+      "http_status_type": "integer",
+      "code_types": ["integer", "string"],
+      "data": {
+        "presence": "optional",
+        "type": "object",
+        "fields": {
+          "collection_id": { "types": ["string"], "value_omitted": true },
+          "classification_id": { "types": ["string"], "value_omitted": true },
+          "video_id": { "types": ["string"], "value_omitted": true },
+          "sec": { "types": ["integer"], "value_omitted": true },
+          "chapter": { "types": ["integer"], "value_omitted": true },
+          "audio_index": { "types": ["integer"], "value_omitted": true },
+          "subtitle_index": { "types": ["integer"], "value_omitted": true },
+          "subtitle_hash": { "types": ["string"], "value_omitted": true },
+          "video_duration": { "types": ["integer"], "value_omitted": true },
+          "subtitle_setting": { "types": ["string"], "value_omitted": true }
+        }
+      },
+      "owner": "src/main/nas-client.ts:updatePlaybackProgress"
     }
   },
   "safety": {

@@ -4,6 +4,7 @@ export const IPC_CHANNELS = {
   sendMfa: "session:send-mfa",
   verifyMfa: "session:verify-mfa",
   logout: "session:logout",
+  sessionState: "session:state",
   listClassifications: "library:list-classifications",
   playerChooseLocalFile: "player:choose-local-file",
   playerChooseSubtitleFile: "player:choose-subtitle-file",

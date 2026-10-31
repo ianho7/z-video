@@ -113,3 +113,96 @@ test("external subtitles stay main-owned and can be selected or turned off", asy
   assert.deepEqual(engine.calls, ["stop", "subtitle-file:private-subtitle.srt", "subtitle:2", "subtitle:off"]);
   assert.equal(JSON.stringify(events).includes("private-subtitle.srt"), false);
 });
+
+test("NAS playback resolves a private stream in main and flushes only its matching progress", async () => {
+  const engine = new FakePlayerEngine();
+  const events: PlaybackEvent[] = [];
+  const progress: Array<{ identity: unknown; target: unknown; snapshot: unknown }> = [];
+  const coordinator = new PlaybackCoordinator(
+    engine,
+    (event) => events.push(event),
+    () => undefined,
+    {
+      resolve: async () => ({
+        source: "http://127.0.0.1:5055/stream/opaque",
+        videoId: "video-01",
+        durationSec: 120,
+        audioIndex: 1,
+        subtitleIndex: -1,
+        chapter: 2,
+        subtitleHash: "hash-01",
+        subtitleSetting: '{"font":"small"}',
+      }),
+      reportProgress: async (identity, target, snapshot) => {
+        progress.push({ identity, target, snapshot });
+      },
+    },
+  );
+
+  await coordinator.handle({ type: "open", collectionId: "collection-01", classificationId: "movie", episodeId: "episode-01", startPositionSec: 18 });
+  engine.starts[0].onEvent({ type: "ready", durationSec: 120 });
+  engine.starts[0].onEvent({ type: "position", positionSec: 42, durationSec: 120 });
+  await coordinator.handle({ type: "close" });
+
+  assert.equal(engine.starts[0]?.path, "http://127.0.0.1:5055/stream/opaque");
+  assert.deepEqual(progress, [{
+    identity: { collectionId: "collection-01", classificationId: "movie", episodeId: "episode-01" },
+    target: {
+      source: "http://127.0.0.1:5055/stream/opaque",
+      videoId: "video-01",
+      durationSec: 120,
+      audioIndex: 1,
+      subtitleIndex: -1,
+      chapter: 2,
+      subtitleHash: "hash-01",
+      subtitleSetting: '{"font":"small"}',
+    },
+    snapshot: { positionSec: 42, durationSec: 120, audioIndex: 1, subtitleIndex: -1 },
+  }]);
+  assert.equal(events.some((event) => event.type === "error"), false);
+  assert.deepEqual(events.at(-1), { type: "closed", episodeId: "episode-01" });
+});
+
+test("stale NAS stream resolution cannot start or report the replaced Episode", async () => {
+  const engine = new FakePlayerEngine();
+  const events: PlaybackEvent[] = [];
+  const resolvers: Array<(target: { source: string; videoId: string }) => void> = [];
+  const progress: string[] = [];
+  const coordinator = new PlaybackCoordinator(engine, (event) => events.push(event), () => undefined, {
+    resolve: async (command) => new Promise((resolve) => {
+      resolvers.push((target) => resolve(target));
+      if (command.episodeId === "episode-02") resolvers.at(-1)?.({ source: "http://127.0.0.1:5055/two", videoId: "video-02" });
+    }),
+    reportProgress: async (identity) => { progress.push(identity.episodeId); },
+  });
+
+  const first = coordinator.handle({ type: "open", collectionId: "collection-01", classificationId: "movie", episodeId: "episode-01" });
+  await new Promise((resolve) => setImmediate(resolve));
+  const second = coordinator.handle({ type: "open", collectionId: "collection-01", classificationId: "movie", episodeId: "episode-02" });
+  await second;
+  resolvers[0]?.({ source: "http://127.0.0.1:5055/one", videoId: "video-01" });
+  await first;
+
+  assert.deepEqual(engine.starts.map((start) => start.path), ["http://127.0.0.1:5055/two"]);
+  assert.deepEqual(progress, []);
+  assert.equal(events.some((event) => event.type === "error" && event.episodeId === "episode-01"), false);
+  await coordinator.handle({ type: "close" });
+});
+
+test("native closed events flush the active NAS identity before closing", async () => {
+  const engine = new FakePlayerEngine();
+  const events: PlaybackEvent[] = [];
+  const progress: string[] = [];
+  const coordinator = new PlaybackCoordinator(engine, (event) => events.push(event), () => undefined, {
+    resolve: async () => ({ source: "http://127.0.0.1:5055/stream", videoId: "video-01" }),
+    reportProgress: async (identity) => { progress.push(identity.episodeId); },
+  });
+
+  await coordinator.handle({ type: "open", collectionId: "collection-01", classificationId: "movie", episodeId: "episode-01" });
+  engine.starts[0].onEvent({ type: "position", positionSec: 5 });
+  engine.starts[0].onEvent({ type: "closed" });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(progress, ["episode-01"]);
+  assert.deepEqual(events.at(-1), { type: "closed", episodeId: "episode-01" });
+});

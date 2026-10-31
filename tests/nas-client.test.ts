@@ -3,7 +3,13 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { once } from "node:events";
 import test from "node:test";
 
-import { NasApiClient, NasError, normalizeLanUrl, type AuthenticatedSession } from "../src/main/nas-client";
+import {
+  NasApiClient,
+  NasError,
+  normalizeLanUrl,
+  type AuthenticatedSession,
+  type NasEpisode,
+} from "../src/main/nas-client";
 
 const FIXTURE_PUBLIC_KEY =
   "MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBALKZ8KjQHGuJZx7HK65jCfI+UW7q/ts6HscZzFC0iwFeQjlj5XCKn2/iDsJwjssh0wR7oQNtt0fsAcoEE8VF9C8CAwEAAQ==";
@@ -247,4 +253,159 @@ test("MFA keeps NAS sign, cloud key id, and opaque proof in their separate proto
   assert.equal(verifyForm.get("sms_code"), "123456");
   const loginForm = formBody(nas.requests[3].body);
   assert.equal(loginForm.get("sms_proof"), "opaque-proof");
+});
+
+function playbackEpisode(overrides: Partial<NasEpisode> = {}): NasEpisode {
+  return {
+    episodeId: "episode-01",
+    episodeNumber: 1,
+    title: "Fixture episode",
+    seasonNumber: 1,
+    filePath: "/private/fixture/movie.mkv",
+    videoId: "video-01",
+    ...overrides,
+  };
+}
+
+function playbackSession(baseUrl: string): AuthenticatedSession {
+  return {
+    baseUrl,
+    username: "fixture-user",
+    token: "fixture-session",
+    nasId: "fixture-nas",
+    nasSign: "fixture-sign",
+  };
+}
+
+test("playback stream keeps NAS query, token header and separated cookie identity", async (t) => {
+  const fixture = await startFixtureServer([
+    {
+      body: {
+        code: 200,
+        data: {
+          uri: "/stream/fixture-episode",
+          audio_list: [{ index: 0, language: "原声" }],
+          subtitle_list: [{ index: 1, language: "中文" }],
+          future_server_field: { keep: true },
+        },
+      },
+    },
+  ]);
+  t.after(() => fixture.close());
+
+  const stream = await new NasApiClient().getPlaybackStream(playbackSession(fixture.baseUrl), playbackEpisode());
+  assert.equal(stream.uri, `${fixture.baseUrl}/stream/fixture-episode`);
+  assert.deepEqual(stream.audioList, [{ index: 0, language: "原声" }]);
+  assert.deepEqual(stream.subtitleList, [{ index: 1, language: "中文" }]);
+  assert.deepEqual(stream.extraFields, { future_server_field: { keep: true } });
+
+  const request = fixture.requests[0];
+  assert.equal(request.method, "GET");
+  const url = new URL(`http://fixture${request.path}`);
+  assert.equal(url.pathname, "/transcode/play");
+  assert.ok(url.searchParams.get("drnd"));
+  assert.equal(url.searchParams.get("plat"), "pc");
+  assert.equal(url.searchParams.get("file_path"), "/private/fixture/movie.mkv");
+  assert.equal(url.searchParams.get("play_env"), "1");
+  assert.equal(url.searchParams.get("video_codec"), "hevc,h264,mpeg4");
+  assert.equal(url.searchParams.get("support_format"), "3");
+  assert.equal(url.searchParams.get("from"), "");
+  assert.equal(url.searchParams.get("version"), "2.3.0");
+  assert.equal(url.searchParams.get("device_id"), "z-video-client-01");
+  assert.equal(url.searchParams.get("device"), "z-video-desktop");
+  assert.equal(url.searchParams.has("token"), false);
+  assert.equal(request.headers.token, "fixture-session");
+  assert.match(String(request.headers.cookie), /nas_id=fixture-nas/);
+  assert.match(String(request.headers.cookie), /sign=fixture-sign/);
+  assert.equal(JSON.stringify(stream).includes("fixture-session"), false);
+});
+
+test("playback stream uses decrypt route and only falls back from a 404", async (t) => {
+  const fixture = await startFixtureServer([
+    { body: { code: 404, message: "新播放接口不可用" } },
+    { body: { code: 200, data: { uri: "/legacy/fixture-stream" } } },
+  ]);
+  t.after(() => fixture.close());
+
+  const stream = await new NasApiClient().getPlaybackStream(
+    playbackSession(fixture.baseUrl),
+    playbackEpisode({ encryptedPath: "/private/fixture/encrypted" }),
+  );
+
+  assert.equal(stream.uri, `${fixture.baseUrl}/legacy/fixture-stream`);
+  assert.equal(new URL(`http://fixture${fixture.requests[0].path}`).pathname, "/transcode/decrypt/play");
+  assert.equal(new URL(`http://fixture${fixture.requests[1].path}`).pathname, "/transcode/decrypt/playaddr");
+  assert.equal(new URL(`http://fixture${fixture.requests[0].path}`).searchParams.get("encrypted_path"), "/private/fixture/encrypted");
+});
+
+test("playback stream does not disguise unauthorized or malformed responses as legacy success", async (t) => {
+  const unauthorized = await startFixtureServer([{ status: 401, body: { code: "N001401" } }]);
+  const malformed = await startFixtureServer([{ body: { code: 200, data: {} } }]);
+  t.after(() => Promise.all([unauthorized.close(), malformed.close()]));
+
+  await assert.rejects(
+    () => new NasApiClient().getPlaybackStream(playbackSession(unauthorized.baseUrl), playbackEpisode()),
+    (error: unknown) => error instanceof NasError && error.kind === "unauthorized",
+  );
+  assert.equal(unauthorized.requests.length, 1);
+  await assert.rejects(
+    () => new NasApiClient().getPlaybackStream(playbackSession(malformed.baseUrl), playbackEpisode()),
+    (error: unknown) => error instanceof NasError && error.kind === "malformed",
+  );
+  assert.equal(malformed.requests.length, 1);
+});
+
+test("progress owner sends the exact form and rejects a business error", async (t) => {
+  const fixture = await startFixtureServer([
+    { body: { code: 200, data: {} } },
+    { body: { code: "T000001", message: "进度参数无效" } },
+  ]);
+  t.after(() => fixture.close());
+  const client = new NasApiClient();
+  const session = playbackSession(fixture.baseUrl);
+  await client.updatePlaybackProgress(session, {
+    collectionId: "collection-01",
+    classificationId: "movie",
+    videoId: "video-01",
+    sec: 42,
+    chapter: 2,
+    audioIndex: 1,
+    subtitleIndex: -1,
+    subtitleHash: "hash-01",
+    videoDuration: 120,
+    subtitleSetting: JSON.stringify({ font: "small" }),
+  });
+
+  const request = fixture.requests[0];
+  assert.equal(request.method, "POST");
+  assert.equal(new URL(`http://fixture${request.path}`).pathname, "/zvideo/video/updateplaytime");
+  const form = formBody(request.body);
+  assert.deepEqual(Object.fromEntries(form), {
+    collection_id: "collection-01",
+    classification_id: "movie",
+    video_id: "video-01",
+    sec: "42",
+    chapter: "2",
+    audio_index: "1",
+    subtitle_index: "-1",
+    subtitle_hash: "hash-01",
+    video_duration: "120",
+    subtitle_setting: '{"font":"small"}',
+  });
+  assert.equal(request.headers.token, "fixture-session");
+  assert.match(String(request.headers.cookie), /nas_id=fixture-nas/);
+  assert.match(String(request.headers.cookie), /sign=fixture-sign/);
+
+  await assert.rejects(
+    () => client.updatePlaybackProgress(session, {
+      collectionId: "collection-01",
+      classificationId: "movie",
+      videoId: "video-01",
+      sec: 43,
+      chapter: 2,
+      audioIndex: 1,
+      subtitleIndex: -1,
+    }),
+    (error: unknown) => error instanceof NasError && error.kind === "business" && error.code === "T000001",
+  );
 });
