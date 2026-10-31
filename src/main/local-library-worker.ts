@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
+import type { Dirent } from "node:fs";
+import { appendFile, lstat, mkdir, readFile, readdir, realpath, stat } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { performance } from "node:perf_hooks";
 import { setImmediate as yieldImmediate } from "node:timers/promises";
 
 import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
@@ -72,6 +74,128 @@ const maxNfoBytes = 2 * 1024 * 1024;
 let database: DatabaseSyncType | undefined;
 let activeScan: Promise<LocalScanResult> | undefined;
 const scanCancellation = new Map<string, { requested: boolean }>();
+
+type ScanProfileStage = "enumeration" | "realpath" | "lstat" | "stat" | "nfo" | "artwork" | "database";
+
+interface ScanProfileReport {
+  version: 1;
+  status: "running" | "completed" | "cancelled" | "partial" | "unavailable" | "error";
+  totalMs: number;
+  stagesMs: Record<`${ScanProfileStage}Ms`, number>;
+  calls: Record<string, number>;
+  errors: string[];
+  counts: {
+    directories: number;
+    videoCandidates: number;
+    scannedFiles: number;
+    importedFiles: number;
+    updatedFiles: number;
+    warnings: number;
+  };
+}
+
+interface ScanProfiler {
+  outputPath: string;
+  ioDelayMs: number;
+  startedAt: number;
+  report: ScanProfileReport;
+}
+
+interface ScanCaches {
+  nfo: Map<string, Promise<ParsedNfo | undefined>>;
+  artwork: Map<string, Promise<string | undefined>>;
+}
+
+interface NfoCacheEntry {
+  size: number;
+  modifiedAtMs: number;
+  value?: ParsedNfo;
+  warning?: string;
+}
+
+function beginScanProfiler(): ScanProfiler | undefined {
+  const outputPath = process.env.Z_VIDEO_SCAN_PROFILE_PATH;
+  if (!outputPath) return undefined;
+  const parsedDelay = Number(process.env.Z_VIDEO_SCAN_IO_DELAY_MS ?? "0");
+  const ioDelayMs = Number.isFinite(parsedDelay) && parsedDelay > 0 ? parsedDelay : 0;
+  const stagesMs = {
+    enumerationMs: 0,
+    realpathMs: 0,
+    lstatMs: 0,
+    statMs: 0,
+    nfoMs: 0,
+    artworkMs: 0,
+    databaseMs: 0,
+  } satisfies Record<`${ScanProfileStage}Ms`, number>;
+  return {
+    outputPath,
+    ioDelayMs,
+    startedAt: performance.now(),
+    report: {
+      version: 1,
+      status: "running",
+      totalMs: 0,
+      stagesMs,
+      calls: {},
+      errors: [],
+      counts: { directories: 0, videoCandidates: 0, scannedFiles: 0, importedFiles: 0, updatedFiles: 0, warnings: 0 },
+    },
+  };
+}
+
+let scanProfiler: ScanProfiler | undefined;
+let scanCaches: ScanCaches | undefined;
+const nfoMetadataCache = new Map<string, NfoCacheEntry>();
+
+function profileCount(name: string, amount = 1): void {
+  if (!scanProfiler) return;
+  scanProfiler.report.calls[name] = (scanProfiler.report.calls[name] ?? 0) + amount;
+}
+
+function profileError(error: unknown): void {
+  if (!scanProfiler) return;
+  const message = error instanceof Error ? error.message : String(error);
+  if (!scanProfiler.report.errors.includes(message)) scanProfiler.report.errors.push(message);
+}
+
+function profileSync<T>(stage: ScanProfileStage, operation: () => T): T {
+  if (!scanProfiler) return operation();
+  if (stage === "database") profileCount("databaseOperations");
+  const startedAt = performance.now();
+  try {
+    return operation();
+  } finally {
+    scanProfiler.report.stagesMs[`${stage}Ms`] += performance.now() - startedAt;
+  }
+}
+
+async function profileAsync<T>(stage: ScanProfileStage, operation: () => Promise<T>, callName?: string, applyDelay = true): Promise<T> {
+  if (!scanProfiler) return operation();
+  if (callName) profileCount(callName);
+  if (applyDelay && scanProfiler.ioDelayMs > 0) await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, scanProfiler?.ioDelayMs ?? 0));
+  const startedAt = performance.now();
+  try {
+    return await operation();
+  } finally {
+    scanProfiler.report.stagesMs[`${stage}Ms`] += performance.now() - startedAt;
+  }
+}
+
+async function finishScanProfiler(profiler: ScanProfiler | undefined, status: ScanProfileReport["status"], counters: ScanCounters): Promise<void> {
+  if (!profiler) return;
+  profiler.report.status = status;
+  profiler.report.totalMs = performance.now() - profiler.startedAt;
+  profiler.report.counts = {
+    directories: profiler.report.calls.directories ?? 0,
+    videoCandidates: profiler.report.calls.videoCandidates ?? 0,
+    scannedFiles: counters.scannedFiles,
+    importedFiles: counters.importedFiles,
+    updatedFiles: counters.updatedFiles,
+    warnings: counters.warnings.length,
+  };
+  await mkdir(dirname(profiler.outputPath), { recursive: true });
+  await appendFile(profiler.outputPath, `${JSON.stringify(profiler.report)}\n`, "utf8");
+}
 
 function makeId(prefix: "media" | "source" | "collection" | "scan" | "artwork"): string {
   return `${prefix}_${randomUUID()}`;
@@ -229,17 +353,19 @@ function pathWithin(rootPath: string, candidatePath: string): boolean {
 }
 
 async function canonicalDirectory(rootPath: string): Promise<string> {
-  const candidate = await realpath(resolve(rootPath)).catch(() => undefined);
+  const candidate = await profileAsync("realpath", () => realpath(resolve(rootPath)), "realpath").catch(() => undefined);
   if (!candidate) throw new LocalWorkerError("invalid-input", "选择的片库目录不可用");
-  const metadata = await lstat(candidate).catch(() => undefined);
+  const metadata = await profileAsync("lstat", () => lstat(candidate), "lstat").catch(() => undefined);
   if (!metadata?.isDirectory()) throw new LocalWorkerError("invalid-input", "选择的片库目录不可用");
   return candidate;
 }
 
-async function canonicalPathWithin(rootPath: string, candidatePath: string): Promise<string | undefined> {
+async function canonicalPathWithin(rootPath: string, candidatePath: string, knownCanonicalRoot?: string): Promise<string | undefined> {
   const [root, candidate] = await Promise.all([
-    realpath(resolve(rootPath)).catch(() => undefined),
-    realpath(resolve(candidatePath)).catch(() => undefined),
+    knownCanonicalRoot
+      ? Promise.resolve(knownCanonicalRoot)
+      : profileAsync("realpath", () => realpath(resolve(rootPath)), "realpath").catch(() => undefined),
+    profileAsync("realpath", () => realpath(resolve(candidatePath)), "realpath").catch(() => undefined),
   ]);
   return root && candidate && pathContained(root, candidate) ? candidate : undefined;
 }
@@ -247,11 +373,11 @@ async function canonicalPathWithin(rootPath: string, candidatePath: string): Pro
 async function assertRootAndFile(rootPath: string, filePath: string): Promise<{ root: string; file: string; relativePath: string }> {
   const root = await canonicalDirectory(rootPath);
   const requestedFile = resolve(filePath);
-  const fileMetadata = await lstat(requestedFile).catch(() => undefined);
+  const fileMetadata = await profileAsync("lstat", () => lstat(requestedFile), "lstat").catch(() => undefined);
   if (!fileMetadata?.isFile() || fileMetadata.isSymbolicLink()) {
     throw new LocalWorkerError("invalid-input", "选择的本地视频文件不可用");
   }
-  const file = await canonicalPathWithin(root, requestedFile);
+  const file = await canonicalPathWithin(root, requestedFile, root);
   if (!file) throw new LocalWorkerError("invalid-input", "媒体文件必须位于已选择的本地片库目录内");
   const relativePath = relative(root, file);
   if (!relativePath || isAbsolute(relativePath) || relativePath === ".." || relativePath.startsWith(`..${sep}`)) {
@@ -272,15 +398,16 @@ async function findFirstVideo(rootPath: string): Promise<string | undefined> {
   while (pending.length > 0) {
     const current = pending.shift();
     if (!current) continue;
-    const entries = (await readdir(current, { withFileTypes: true })).sort((left, right) => left.name.localeCompare(right.name));
+    const entries = await profileAsync("enumeration", () => readdir(current, { withFileTypes: true }), "readdir");
+    profileSync("enumeration", () => entries.sort((left, right) => left.name.localeCompare(right.name)));
     for (const entry of entries) {
       if (entry.isSymbolicLink()) continue;
       const child = join(current, entry.name);
       if (entry.isDirectory()) {
-        const safeChild = await canonicalPathWithin(root, child);
+        const safeChild = await canonicalPathWithin(root, child, root);
         if (safeChild) pending.push(safeChild);
       } else if (entry.isFile() && supportedVideoExtensions.has(extname(entry.name).toLowerCase())) {
-        const safeChild = await canonicalPathWithin(root, child);
+        const safeChild = await canonicalPathWithin(root, child, root);
         if (safeChild) return safeChild;
       }
     }
@@ -292,23 +419,24 @@ function ensureSource(rootPath: string): { sourceId: string; label: string; root
   const db = requireDatabase();
   const root = resolve(rootPath);
   const label = safeSourceLabel(root);
-  const existing = db.prepare("SELECT source_id AS sourceId, label, available FROM sources WHERE root_path = ?").get(root) as { sourceId?: string; label?: string; available?: number } | undefined;
+  const existing = profileSync("database", () => db.prepare("SELECT source_id AS sourceId, label, available FROM sources WHERE root_path = ?").get(root) as { sourceId?: string; label?: string; available?: number } | undefined);
   const timestamp = now();
   if (existing?.sourceId) {
-    if (existing.label !== label) db.prepare("UPDATE sources SET label = ?, updated_at = ? WHERE source_id = ?").run(label, timestamp, existing.sourceId);
-    return { sourceId: existing.sourceId, label, rootPath: root, available: Number(existing.available) === 1 };
+    const sourceId = existing.sourceId;
+    if (existing.label !== label) profileSync("database", () => db.prepare("UPDATE sources SET label = ?, updated_at = ? WHERE source_id = ?").run(label, timestamp, sourceId));
+    return { sourceId, label, rootPath: root, available: Number(existing.available) === 1 };
   }
   const sourceId = makeId("source");
-  db.prepare("INSERT INTO sources (source_id, root_path, label, available, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)").run(sourceId, root, label, timestamp, timestamp);
+  profileSync("database", () => db.prepare("INSERT INTO sources (source_id, root_path, label, available, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)").run(sourceId, root, label, timestamp, timestamp));
   return { sourceId, label, rootPath: root, available: false };
 }
 
 async function assertNoOverlappingSource(rootPath: string, sourceId?: string): Promise<void> {
   const db = requireDatabase();
   const candidateRoot = resolve(rootPath);
-  const rows = (sourceId
+  const rows = profileSync("database", () => (sourceId
     ? db.prepare("SELECT source_id AS sourceId, root_path AS rootPath FROM sources WHERE source_id <> ?").all(sourceId)
-    : db.prepare("SELECT source_id AS sourceId, root_path AS rootPath FROM sources").all()) as Array<{ sourceId?: string; rootPath?: string }>;
+    : db.prepare("SELECT source_id AS sourceId, root_path AS rootPath FROM sources").all()) as Array<{ sourceId?: string; rootPath?: string }>);
   for (const row of rows) {
     if (!row.rootPath) continue;
     const otherRoot = resolve(row.rootPath);
@@ -444,40 +572,74 @@ function makeRelative(rootPath: string, filePath: string): string {
 }
 
 async function readNfoFile(filePath: string, warnings: string[]): Promise<ParsedNfo | undefined> {
-  try {
-    const metadata = await lstat(filePath);
-    if (!metadata.isFile() || metadata.size > maxNfoBytes) {
-      warnings.push("NFO 文件过大或不可用，已使用文件名回退");
+  const cached = scanCaches?.nfo.get(filePath);
+  if (cached) {
+    profileCount("nfoCacheHits");
+    return cached;
+  }
+  profileCount("nfoFiles");
+  const operation = (async (): Promise<ParsedNfo | undefined> => {
+    try {
+      const metadata = await profileAsync("lstat", () => lstat(filePath), "lstat");
+      if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > maxNfoBytes) {
+        const warning = "NFO 文件过大或不可用，已使用文件名回退";
+        warnings.push(warning);
+        nfoMetadataCache.set(filePath, { size: Number(metadata.size), modifiedAtMs: Number(metadata.mtimeMs), warning });
+        return undefined;
+      }
+      const cachedMetadata = nfoMetadataCache.get(filePath);
+      if (cachedMetadata && cachedMetadata.size === Number(metadata.size) && cachedMetadata.modifiedAtMs === Number(metadata.mtimeMs) && !cachedMetadata.warning) {
+        profileCount("nfoMetadataCacheHits");
+        return cachedMetadata.value;
+      }
+      const xml = await profileAsync("nfo", () => readFile(filePath, "utf8"), "readFile");
+      const value = profileSync("nfo", () => parseNfo(xml));
+      nfoMetadataCache.set(filePath, { size: Number(metadata.size), modifiedAtMs: Number(metadata.mtimeMs), value });
+      return value;
+    } catch {
+      const warning = "NFO 无法解析，已使用文件名回退";
+      warnings.push(warning);
+      // Failed reads are not cached: a transient share error should be retried.
       return undefined;
     }
-    const xml = await readFile(filePath, "utf8");
-    return parseNfo(xml);
-  } catch {
-    warnings.push("NFO 无法解析，已使用文件名回退");
-    return undefined;
-  }
+  })();
+  if (scanCaches) scanCaches.nfo.set(filePath, operation);
+  return operation;
 }
 
 async function artworkPath(rootPath: string, nfoDirectory: string, candidate: string): Promise<string | undefined> {
   const trimmed = candidate.trim();
   if (!trimmed || isAbsolute(trimmed) || /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) return undefined;
   const filePath = resolve(nfoDirectory, trimmed);
-  try {
-    const metadata = await lstat(filePath);
-    if (!metadata.isFile() || metadata.isSymbolicLink() || !supportedArtworkExtensions.has(extname(filePath).toLowerCase())) return undefined;
-    return await canonicalPathWithin(rootPath, filePath);
-  } catch {
-    return undefined;
+  const cacheKey = `${rootPath}\u0000${filePath}`;
+  const cached = scanCaches?.artwork.get(cacheKey);
+  if (cached) {
+    profileCount("artworkCacheHits");
+    return cached;
   }
+  profileCount("artworkCandidates");
+  const operation = (async (): Promise<string | undefined> => {
+    try {
+      const metadata = await profileAsync("lstat", () => lstat(filePath), "lstat");
+      if (!metadata.isFile() || metadata.isSymbolicLink() || !supportedArtworkExtensions.has(extname(filePath).toLowerCase())) return undefined;
+      const safePath = await canonicalPathWithin(rootPath, filePath, rootPath);
+      if (safePath) profileCount("artworkMatches");
+      return safePath;
+    } catch {
+      return undefined;
+    }
+  })();
+  if (scanCaches) scanCaches.artwork.set(cacheKey, operation);
+  return operation;
 }
 
-async function conventionalArtwork(rootPath: string, directory: string, baseName: string): Promise<Array<{ kind: "poster" | "fanart"; filePath: string }>> {
+async function conventionalArtwork(rootPath: string, directory: string, baseName: string, knownEntries?: Dirent[]): Promise<Array<{ kind: "poster" | "fanart"; filePath: string }>> {
   const candidates: Array<{ kind: "poster" | "fanart"; names: string[] }> = [
     { kind: "poster", names: [`${baseName}-poster`, `${baseName}.poster`, "poster", "folder", "cover"] },
     { kind: "fanart", names: [`${baseName}-fanart`, `${baseName}.fanart`, "fanart", "background"] },
   ];
   const output: Array<{ kind: "poster" | "fanart"; filePath: string }> = [];
-  const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+  const entries = knownEntries ?? await profileAsync("artwork", () => readdir(directory, { withFileTypes: true }), "readdir").catch(() => []);
   for (const candidate of candidates) {
     const match = entries.find((entry) => {
       if (!entry.isFile() || entry.isSymbolicLink()) return false;
@@ -485,7 +647,7 @@ async function conventionalArtwork(rootPath: string, directory: string, baseName
       return candidate.names.some((name) => stem.toLowerCase() === name.toLowerCase()) && supportedArtworkExtensions.has(extname(entry.name).toLowerCase());
     });
     if (match) {
-      const filePath = await artworkPath(rootPath, directory, match.name);
+      const filePath = await profileAsync("artwork", () => artworkPath(rootPath, directory, match.name), undefined, false);
       if (filePath) output.push({ kind: candidate.kind, filePath });
     }
   }
@@ -496,11 +658,11 @@ async function discoverMedia(
   rootPath: string,
   sourceId: string,
   filePath: string,
+  fileMetadata: { size: number; mtimeMs: number },
   entries: Array<{ name: string; isFile(): boolean; isSymbolicLink(): boolean }>,
   showContext: { directory: string; metadata?: ParsedNfo; artwork: Array<{ kind: "poster" | "fanart"; filePath: string }> } | undefined,
   warnings: string[],
 ): Promise<DiscoveredMedia> {
-  const fileStat = await stat(filePath);
   const relativePath = makeRelative(rootPath, filePath);
   const fileName = basename(filePath);
   const baseName = basename(fileName, extname(fileName));
@@ -523,15 +685,18 @@ async function discoverMedia(
   const displayTitle = episode ? metadataTitle(nfo, baseName) : metadataTitle(nfo, collectionTitle);
   const artworkFiles: Array<{ kind: "poster" | "fanart"; filePath: string }> = [];
   for (const reference of nfo?.artwork ?? []) {
-    const resolved = await artworkPath(rootPath, dirname(filePath), reference.path);
+    const resolved = await profileAsync("artwork", () => artworkPath(rootPath, dirname(filePath), reference.path), undefined, false);
     if (resolved) artworkFiles.push({ kind: reference.kind, filePath: resolved });
   }
   if (showContext?.artwork.length) artworkFiles.push(...showContext.artwork);
-  if (!artworkFiles.length) artworkFiles.push(...await conventionalArtwork(rootPath, collectionDirectory, baseName));
+  if (!artworkFiles.length) {
+    const knownEntries = collectionDirectory === dirname(filePath) ? entries as Dirent[] : undefined;
+    artworkFiles.push(...await conventionalArtwork(rootPath, collectionDirectory, baseName, knownEntries));
+  }
   return {
     relativePath,
-    sizeBytes: Number(fileStat.size),
-    modifiedAtMs: Number(fileStat.mtimeMs),
+    sizeBytes: Number(fileMetadata.size),
+    modifiedAtMs: Number(fileMetadata.mtimeMs),
     mediaKind: episode ? "episode" : kind,
     displayTitle,
     ...(seasonNumber !== undefined ? { seasonNumber } : {}),
@@ -555,23 +720,23 @@ function upsertCollection(metadata: CollectionMetadata, timestamp: number, prefe
   const db = requireDatabase();
   const existing = preferredCollectionId
     ? { collectionId: preferredCollectionId }
-    : db.prepare(`
+    : profileSync("database", () => db.prepare(`
     SELECT collection_id AS collectionId
     FROM collections
     WHERE identity_key = ? OR (identity_key IS NULL AND source_id = ? AND relative_path = ?)
     LIMIT 1
-  `).get(metadata.identityKey, metadata.sourceId, metadata.relativePath) as { collectionId?: string } | undefined;
+  `).get(metadata.identityKey, metadata.sourceId, metadata.relativePath) as { collectionId?: string } | undefined);
   const collectionId = existing?.collectionId ?? makeId("collection");
   if (existing?.collectionId) {
-    db.prepare(`
+    profileSync("database", () => db.prepare(`
       UPDATE collections SET title = ?, kind = ?, year = ?, plot = ?, genre_json = ?, rating = ?, identity_key = ?, source_id = ?, relative_path = ?, updated_at = ?
       WHERE collection_id = ?
-    `).run(metadata.title, metadata.kind, metadata.year ?? null, metadata.plot ?? null, JSON.stringify(metadata.genres), metadata.rating ?? null, metadata.identityKey, metadata.sourceId, metadata.relativePath, timestamp, collectionId);
+    `).run(metadata.title, metadata.kind, metadata.year ?? null, metadata.plot ?? null, JSON.stringify(metadata.genres), metadata.rating ?? null, metadata.identityKey, metadata.sourceId, metadata.relativePath, timestamp, collectionId));
   } else {
-    db.prepare(`
+    profileSync("database", () => db.prepare(`
       INSERT INTO collections (collection_id, title, kind, year, plot, genre_json, rating, identity_key, source_id, relative_path, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(collectionId, metadata.title, metadata.kind, metadata.year ?? null, metadata.plot ?? null, JSON.stringify(metadata.genres), metadata.rating ?? null, metadata.identityKey, metadata.sourceId, metadata.relativePath, timestamp, timestamp);
+    `).run(collectionId, metadata.title, metadata.kind, metadata.year ?? null, metadata.plot ?? null, JSON.stringify(metadata.genres), metadata.rating ?? null, metadata.identityKey, metadata.sourceId, metadata.relativePath, timestamp, timestamp));
   }
   return collectionId;
 }
@@ -594,59 +759,78 @@ async function upsertArtwork(
   const timestamp = now();
   for (const candidate of artwork) {
     try {
-      const info = await lstat(candidate.filePath);
+      const info = await profileAsync("lstat", () => lstat(candidate.filePath), "lstat");
       const relativePath = makeRelative(rootPath, candidate.filePath);
       const fingerprint = artworkFingerprint(sourceId, relativePath, Number(info.size), Number(info.mtimeMs));
-      db.prepare("DELETE FROM artwork WHERE collection_id = ? AND media_id = ? AND kind = ?").run(collectionId, mediaId, candidate.kind);
-      db.prepare(`
+      const existing = profileSync("database", () => db.prepare("SELECT relative_path AS relativePath, source_fingerprint AS sourceFingerprint FROM artwork WHERE collection_id = ? AND media_id = ? AND kind = ? ORDER BY updated_at DESC LIMIT 1").get(collectionId, mediaId, candidate.kind) as { relativePath?: string; sourceFingerprint?: string } | undefined);
+      if (existing?.relativePath === relativePath && existing.sourceFingerprint === fingerprint.sourceFingerprint) {
+        profileCount("artworkDatabaseCacheHits");
+        continue;
+      }
+      profileSync("database", () => db.prepare("DELETE FROM artwork WHERE collection_id = ? AND media_id = ? AND kind = ?").run(collectionId, mediaId, candidate.kind));
+      profileSync("database", () => db.prepare(`
         INSERT INTO artwork (artwork_id, collection_id, media_id, source_id, relative_path, kind, source_fingerprint, cache_key, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(makeId("artwork"), collectionId, mediaId, sourceId, relativePath, candidate.kind, fingerprint.sourceFingerprint, fingerprint.cacheKey, timestamp);
+      `).run(makeId("artwork"), collectionId, mediaId, sourceId, relativePath, candidate.kind, fingerprint.sourceFingerprint, fingerprint.cacheKey, timestamp));
     } catch {
       // Artwork is optional. A missing or inaccessible image never removes a playable item.
     }
   }
 }
 
-async function upsertMedia(rootPath: string, discovered: DiscoveredMedia): Promise<{ item: LocalMediaItem; created: boolean }> {
+async function upsertMedia(rootPath: string, discovered: DiscoveredMedia, includeItem = true): Promise<{ item?: LocalMediaItem; created: boolean }> {
   const db = requireDatabase();
   const timestamp = now();
-  const existing = db.prepare(`
-    SELECT media_id AS mediaId, collection_id AS collectionId
-    FROM media_files
-    WHERE source_id = ? AND relative_path = ? AND size_bytes = ? AND modified_at_ms = ?
-  `).get(discovered.collection.sourceId, discovered.relativePath, discovered.sizeBytes, discovered.modifiedAtMs) as { mediaId?: string; collectionId?: string } | undefined;
-  const collectionId = upsertCollection(discovered.collection, timestamp, existing?.collectionId);
-  let mediaId: string;
-  let created = false;
-  if (existing?.mediaId) {
-    mediaId = String(existing.mediaId);
-    db.prepare(`
-      UPDATE media_files SET collection_id = ?, display_title = ?, media_kind = ?, season_number = ?, episode_number = ?, available = 1, updated_at = ?
-      WHERE media_id = ?
-    `).run(collectionId, discovered.displayTitle, discovered.mediaKind, discovered.seasonNumber ?? null, discovered.episodeNumber ?? null, timestamp, mediaId);
-  } else {
-    db.prepare("UPDATE media_files SET available = 0, updated_at = ? WHERE source_id = ? AND relative_path = ? AND available = 1").run(timestamp, discovered.collection.sourceId, discovered.relativePath);
-    mediaId = makeId("media");
-    created = true;
-    db.prepare(`
-      INSERT INTO media_files (media_id, collection_id, source_id, relative_path, display_title, media_kind, size_bytes, modified_at_ms, season_number, episode_number, available, added_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-    `).run(mediaId, collectionId, discovered.collection.sourceId, discovered.relativePath, discovered.displayTitle, discovered.mediaKind, discovered.sizeBytes, discovered.modifiedAtMs, discovered.seasonNumber ?? null, discovered.episodeNumber ?? null, timestamp, timestamp);
+  profileSync("database", () => db.exec("BEGIN IMMEDIATE"));
+  try {
+    const existing = profileSync("database", () => db.prepare(`
+      SELECT media_id AS mediaId, collection_id AS collectionId
+      FROM media_files
+      WHERE source_id = ? AND relative_path = ? AND size_bytes = ? AND modified_at_ms = ?
+    `).get(discovered.collection.sourceId, discovered.relativePath, discovered.sizeBytes, discovered.modifiedAtMs) as { mediaId?: string; collectionId?: string } | undefined);
+    const collectionId = upsertCollection(discovered.collection, timestamp, existing?.collectionId);
+    let mediaId: string;
+    let created = false;
+    if (existing?.mediaId) {
+      mediaId = String(existing.mediaId);
+      profileSync("database", () => db.prepare(`
+        UPDATE media_files SET collection_id = ?, display_title = ?, media_kind = ?, season_number = ?, episode_number = ?, available = 1, updated_at = ?
+        WHERE media_id = ?
+      `).run(collectionId, discovered.displayTitle, discovered.mediaKind, discovered.seasonNumber ?? null, discovered.episodeNumber ?? null, timestamp, mediaId));
+    } else {
+      profileSync("database", () => db.prepare("UPDATE media_files SET available = 0, updated_at = ? WHERE source_id = ? AND relative_path = ? AND available = 1").run(timestamp, discovered.collection.sourceId, discovered.relativePath));
+      mediaId = makeId("media");
+      created = true;
+      profileSync("database", () => db.prepare(`
+        INSERT INTO media_files (media_id, collection_id, source_id, relative_path, display_title, media_kind, size_bytes, modified_at_ms, season_number, episode_number, available, added_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+      `).run(mediaId, collectionId, discovered.collection.sourceId, discovered.relativePath, discovered.displayTitle, discovered.mediaKind, discovered.sizeBytes, discovered.modifiedAtMs, discovered.seasonNumber ?? null, discovered.episodeNumber ?? null, timestamp, timestamp));
+    }
+    await upsertArtwork(collectionId, mediaId, discovered.collection.sourceId, rootPath, discovered.artwork);
+    const row = includeItem
+      ? profileSync("database", () => db.prepare(`
+        SELECT media_files.media_id AS mediaId, media_files.collection_id AS collectionId, media_files.source_id AS sourceId,
+          media_files.display_title AS displayTitle, media_files.media_kind AS mediaKind,
+          media_files.size_bytes AS sizeBytes, media_files.modified_at_ms AS modifiedAtMs,
+          media_files.season_number AS seasonNumber, media_files.episode_number AS episodeNumber,
+          media_files.available, sources.available AS sourceAvailable,
+          collections.title, collections.kind, collections.year, collections.plot,
+          collections.genre_json AS genreJson, collections.rating
+        FROM media_files JOIN collections USING (collection_id) JOIN sources USING (source_id)
+        WHERE media_files.media_id = ?
+      `).get(mediaId) as Record<string, unknown>)
+      : undefined;
+    profileSync("database", () => db.exec("COMMIT"));
+    return { ...(row ? { item: toPublicItem(row) } : {}), created };
+  } catch (error) {
+    profileError(error);
+    try {
+      profileSync("database", () => db.exec("ROLLBACK"));
+    } catch {
+      // Preserve the original scan error when rollback itself is unavailable.
+    }
+    throw error;
   }
-  await upsertArtwork(collectionId, mediaId, discovered.collection.sourceId, rootPath, discovered.artwork);
-  const row = db.prepare(`
-    SELECT media_files.media_id AS mediaId, media_files.collection_id AS collectionId, media_files.source_id AS sourceId,
-      media_files.display_title AS displayTitle, media_files.media_kind AS mediaKind,
-      media_files.size_bytes AS sizeBytes, media_files.modified_at_ms AS modifiedAtMs,
-      media_files.season_number AS seasonNumber, media_files.episode_number AS episodeNumber,
-      media_files.available, sources.available AS sourceAvailable,
-      collections.title, collections.kind, collections.year, collections.plot,
-      collections.genre_json AS genreJson, collections.rating
-    FROM media_files JOIN collections USING (collection_id) JOIN sources USING (source_id)
-    WHERE media_files.media_id = ?
-  `).get(mediaId) as Record<string, unknown>;
-  return { item: toPublicItem(row), created };
 }
 
 function sourceSummaries(): LocalSourceSummary[] {
@@ -896,13 +1080,13 @@ function addScanRun(sourceId: string, scanId: string): number {
   const db = requireDatabase();
   const row = db.prepare("SELECT COALESCE(MAX(generation), 0) AS generation FROM scan_runs WHERE source_id = ?").get(sourceId) as { generation?: number } | undefined;
   const generation = Number(row?.generation ?? 0) + 1;
-  db.prepare("INSERT INTO scan_runs (scan_id, source_id, generation, completed, started_at) VALUES (?, ?, ?, 0, ?)").run(scanId, sourceId, generation, now());
+  profileSync("database", () => db.prepare("INSERT INTO scan_runs (scan_id, source_id, generation, completed, started_at) VALUES (?, ?, ?, 0, ?)").run(scanId, sourceId, generation, now()));
   return generation;
 }
 
 function finishScan(scanId: string, completed: boolean, error?: string): void {
   const db = requireDatabase();
-  db.prepare("UPDATE scan_runs SET completed = ?, error = ?, completed_at = ? WHERE scan_id = ?").run(completed ? 1 : 0, error ?? null, now(), scanId);
+  profileSync("database", () => db.prepare("UPDATE scan_runs SET completed = ?, error = ?, completed_at = ? WHERE scan_id = ?").run(completed ? 1 : 0, error ?? null, now(), scanId));
 }
 
 interface ScanCounters {
@@ -940,19 +1124,21 @@ async function scanDirectory(
   showContext: { directory: string; metadata?: ParsedNfo; artwork: Array<{ kind: "poster" | "fanart"; filePath: string }> } | undefined,
 ): Promise<boolean> {
   if (cancellation.requested) throw new LocalWorkerError("storage", "scan-cancelled");
-  const safeCurrentDirectory = await canonicalPathWithin(rootPath, currentDirectory);
+  profileCount("directories");
+  const safeCurrentDirectory = await canonicalPathWithin(rootPath, currentDirectory, rootPath);
   if (!safeCurrentDirectory) {
     counters.warnings.push("来源目录已不可用，已保留此前索引");
     return false;
   }
-  let entries;
+  let entries: Dirent[];
   try {
-    entries = (await readdir(safeCurrentDirectory, { withFileTypes: true })).sort((left, right) => left.name.localeCompare(right.name));
+    entries = await profileAsync("enumeration", () => readdir(safeCurrentDirectory, { withFileTypes: true }), "readdir");
+    profileSync("enumeration", () => entries.sort((left, right) => left.name.localeCompare(right.name)));
   } catch {
     counters.warnings.push("部分目录无法读取，已保留此前索引");
     return false;
   }
-  if (!(await canonicalPathWithin(rootPath, safeCurrentDirectory))) {
+  if (!(await canonicalPathWithin(rootPath, safeCurrentDirectory, rootPath))) {
     counters.warnings.push("来源目录已不可用，已保留此前索引");
     return false;
   }
@@ -962,10 +1148,10 @@ async function scanDirectory(
     const metadata = await readNfoFile(join(safeCurrentDirectory, tvshow.name), counters.warnings);
     const artworkFiles: Array<{ kind: "poster" | "fanart"; filePath: string }> = [];
     for (const candidate of metadata?.artwork ?? []) {
-      const artworkFile = await artworkPath(rootPath, safeCurrentDirectory, candidate.path);
+      const artworkFile = await profileAsync("artwork", () => artworkPath(rootPath, safeCurrentDirectory, candidate.path), undefined, false);
       if (artworkFile) artworkFiles.push({ kind: candidate.kind, filePath: artworkFile });
     }
-    if (!artworkFiles.length) artworkFiles.push(...await conventionalArtwork(rootPath, safeCurrentDirectory, basename(safeCurrentDirectory)));
+    if (!artworkFiles.length) artworkFiles.push(...await conventionalArtwork(rootPath, safeCurrentDirectory, basename(safeCurrentDirectory), entries));
     localShowContext = { directory: safeCurrentDirectory, metadata, artwork: artworkFiles };
   }
   for (const entry of entries) {
@@ -973,12 +1159,12 @@ async function scanDirectory(
     const child = join(safeCurrentDirectory, entry.name);
     if (entry.isSymbolicLink()) continue;
     if (entry.isDirectory()) {
-      const directoryMetadata = await lstat(child).catch(() => undefined);
+      const directoryMetadata = await profileAsync("lstat", () => lstat(child), "lstat").catch(() => undefined);
       if (!directoryMetadata) {
         counters.warnings.push("来源目录已不可用，已保留此前索引");
         return false;
       }
-      const safeChild = await canonicalPathWithin(rootPath, child);
+      const safeChild = await canonicalPathWithin(rootPath, child, rootPath);
       if (!safeChild) {
         counters.warnings.push("已跳过越过片库目录边界的链接");
         continue;
@@ -988,21 +1174,22 @@ async function scanDirectory(
       continue;
     }
     if (!entry.isFile() || !supportedVideoExtensions.has(extname(entry.name).toLowerCase())) continue;
-    const fileMetadata = await lstat(child).catch(() => undefined);
+    profileCount("videoCandidates");
+    const fileMetadata = await profileAsync("lstat", () => lstat(child), "lstat").catch(() => undefined);
     if (!fileMetadata) {
       counters.warnings.push("来源文件已不可用，已保留此前索引");
       return false;
     }
     if (!fileMetadata.isFile() || fileMetadata.isSymbolicLink()) continue;
-    const safeChild = await canonicalPathWithin(rootPath, child);
+    const safeChild = await canonicalPathWithin(rootPath, child, rootPath);
     if (!safeChild) {
       counters.warnings.push("已跳过越过片库目录边界的链接");
       continue;
     }
     counters.scannedFiles += 1;
     try {
-      const discovered = await discoverMedia(rootPath, sourceId, safeChild, entries, localShowContext, counters.warnings);
-      const result = await upsertMedia(rootPath, discovered);
+      const discovered = await discoverMedia(rootPath, sourceId, safeChild, fileMetadata, entries, localShowContext, counters.warnings);
+      const result = await upsertMedia(rootPath, discovered, false);
       if (result.created) counters.importedFiles += 1;
       else counters.updatedFiles += 1;
       counters.seenRelativePaths.add(discovered.relativePath);
@@ -1017,8 +1204,11 @@ async function scanDirectory(
 
 async function scanRoot(rootPath: string): Promise<LocalScanResult> {
   if (activeScan) throw new LocalWorkerError("invalid-input", "已有本地片库扫描正在进行");
+  const profiler = beginScanProfiler();
+  scanProfiler = profiler;
+  scanCaches = { nfo: new Map(), artwork: new Map() };
   const requestedRoot = resolve(rootPath);
-  const canonicalRoot = await realpath(requestedRoot).catch(() => undefined);
+  const canonicalRoot = await profileAsync("realpath", () => realpath(requestedRoot), "realpath").catch(() => undefined);
   const sourceRoot = canonicalRoot ?? requestedRoot;
   await assertNoOverlappingSource(sourceRoot);
   const source = ensureSource(sourceRoot);
@@ -1027,45 +1217,50 @@ async function scanRoot(rootPath: string): Promise<LocalScanResult> {
   scanCancellation.set(scanId, cancellation);
   const counters: ScanCounters = { scannedFiles: 0, importedFiles: 0, updatedFiles: 0, warnings: [], seenRelativePaths: new Set() };
   addScanRun(source.sourceId, scanId);
+  let profileStatus: ScanProfileReport["status"] = "error";
   try {
     if (!canonicalRoot) {
       const db = requireDatabase();
-      db.prepare("UPDATE sources SET available = 0, updated_at = ? WHERE source_id = ?").run(now(), source.sourceId);
+      profileSync("database", () => db.prepare("UPDATE sources SET available = 0, updated_at = ? WHERE source_id = ?").run(now(), source.sourceId));
       const result: LocalScanResult = { ...progressFor(scanId, source.sourceId, "unavailable", counters), warnings: [], error: "来源不可用，已保留此前索引和播放历史" };
       finishScan(scanId, false, result.error);
       emitProgress(result);
+      profileStatus = "unavailable";
       return result;
     }
-    const rootStat = await lstat(canonicalRoot);
+    const rootStat = await profileAsync("lstat", () => lstat(canonicalRoot), "lstat");
     if (!rootStat.isDirectory()) throw new LocalWorkerError("invalid-input", "选择的片库目录不可用");
     const db = requireDatabase();
-    db.prepare("UPDATE sources SET available = 1, updated_at = ? WHERE source_id = ?").run(now(), source.sourceId);
+    profileSync("database", () => db.prepare("UPDATE sources SET available = 1, updated_at = ? WHERE source_id = ?").run(now(), source.sourceId));
     emitProgress(progressFor(scanId, source.sourceId, "running", counters));
     const traversalComplete = await scanDirectory(canonicalRoot, canonicalRoot, source.sourceId, scanId, cancellation, counters, undefined);
     if (cancellation.requested) throw new LocalWorkerError("storage", "scan-cancelled");
     if (traversalComplete) {
       if (counters.seenRelativePaths.size === 0) {
-        db.prepare("UPDATE media_files SET available = 0, updated_at = ? WHERE source_id = ?").run(now(), source.sourceId);
+        profileSync("database", () => db.prepare("UPDATE media_files SET available = 0, updated_at = ? WHERE source_id = ?").run(now(), source.sourceId));
       } else {
         const placeholders = [...counters.seenRelativePaths].map(() => "?").join(",");
-        db.prepare(`UPDATE media_files SET available = 0, updated_at = ? WHERE source_id = ? AND relative_path NOT IN (${placeholders})`).run(now(), source.sourceId, ...counters.seenRelativePaths);
+        profileSync("database", () => db.prepare(`UPDATE media_files SET available = 0, updated_at = ? WHERE source_id = ? AND relative_path NOT IN (${placeholders})`).run(now(), source.sourceId, ...counters.seenRelativePaths));
       }
       finishScan(scanId, true);
       const result: LocalScanResult = { ...progressFor(scanId, source.sourceId, "completed", counters), warnings: [...counters.warnings] };
       emitProgress(result);
+      profileStatus = "completed";
       return result;
     }
     const error = "部分目录无法读取，已保留此前索引和播放历史";
-    db.prepare("UPDATE sources SET available = 0, updated_at = ? WHERE source_id = ?").run(now(), source.sourceId);
+    profileSync("database", () => db.prepare("UPDATE sources SET available = 0, updated_at = ? WHERE source_id = ?").run(now(), source.sourceId));
     finishScan(scanId, false, error);
     const result: LocalScanResult = { ...progressFor(scanId, source.sourceId, "partial", counters), warnings: [...counters.warnings], error };
     emitProgress(result);
+    profileStatus = "partial";
     return result;
   } catch (error) {
     if (error instanceof LocalWorkerError && error.message === "scan-cancelled") {
       const result: LocalScanResult = { ...progressFor(scanId, source.sourceId, "cancelled", counters), warnings: [...counters.warnings], error: "扫描已取消，已保留此前索引和播放历史" };
       finishScan(scanId, false, result.error);
       emitProgress(result);
+      profileStatus = "cancelled";
       return result;
     }
     const code = localLibraryErrorCode(error, "storage");
@@ -1074,6 +1269,9 @@ async function scanRoot(rootPath: string): Promise<LocalScanResult> {
     throw new LocalWorkerError(code, safeMessage);
   } finally {
     scanCancellation.delete(scanId);
+    await finishScanProfiler(profiler, profileStatus, counters);
+    if (scanProfiler === profiler) scanProfiler = undefined;
+    scanCaches = undefined;
   }
 }
 
@@ -1103,6 +1301,7 @@ async function importVideo(filePath: string, rootPath: string): Promise<LocalMed
   };
   const result = await upsertMedia(paths.root, discovered);
   db.prepare("UPDATE sources SET available = 1, updated_at = ? WHERE source_id = ?").run(now(), source.sourceId);
+  if (!result.item) throw new LocalWorkerError("storage", "本地视频导入结果不可用");
   return result.item;
 }
 
