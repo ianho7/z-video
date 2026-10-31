@@ -14,3 +14,7 @@ The final source's full default test runner was attempted before review repair a
 Final C ordinary-file package readiness was tested after repair. Prior user-view CUA evidence covers the earlier candidate's empty state, source index, cards/details and playback dispatch only; it is not final native decoded-pixel/overlay acceptance. Personal/UNC folders were not provided/inspected. macOS, hardware decode, DWM, overlay parity, signing, installer/updater and public redistribution license provenance remain unverified. The package is a personal-use Windows test candidate.
 
 Task-created worktrees can be removed after merged/source-and-evidence checks; commits/branches and the independent C package remain. Original completion note paths retain evidence provenance; small run logs have been preserved under root ignored .scratch/local-library/runs/ and .scratch/electron-migration/runs/local-library/.
+
+## 2026-11-01 replacement candidate
+
+The package at the same C-drive executable path has been rebuilt from source 90c18c6 with the audio-without-visible-video and scan fixes. Complete directory: 233 files / 503,167,969 bytes / zero reparse points. Actual native decoded frames and controls now have owned-fixture Sky/Win32 evidence; final narrow review PASS. This supersedes the earlier pending-pixel state for that fixture, not all codecs/hardware/UNC claims. Details: fixes/delivery.md and fixes/review-final.md. Real user NAS scan duration was not measured.
