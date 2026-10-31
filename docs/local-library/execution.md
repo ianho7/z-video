@@ -9,3 +9,7 @@ Each implementer uses its own codex/local-* branch and .worktrees/local-* checko
 All GUI checks use isolated profiles, bounded owned-child lifetimes and regular-file logs (avoid prior EPIPE console pipe incident). Never run installed official client/NAS write operations or scan private shares. Use owned local fixtures; actual read-only personal/share validation remains a separately scoped acceptance task. Do not claim it passed from synthetic tests.
 
 Source paths in renderer remain opaque. No ZSpace login/session/API at default startup. Keep old encrypted sessions untouched. Default media access is read-only. No global Rust/cache/old-worktree cleanup. Windows first, no macOS or overlay parity claims. Package size/resource measurements must be factual.
+
+## Published tracker
+
+Parent spec: https://github.com/ianho7/z-video/issues/22 . Tickets: 01/#23, 02/#24, 03/#25, 04/#26, 05/#27. Dependency graph: #23 -> {#24,#25} -> #26 -> #27. First implementer: visible local_foundation, gpt-5.6-luna/max, worktree .worktrees/local-01. The API EOF during issue creation was reconciled with a read-only remote inventory before retry; no duplicate issue was created.
