@@ -132,6 +132,7 @@ export class MpvNativePlayer implements PlayerEngine {
 
   stop(): void {
     this.clearTimers();
+    this.host?.hide();
     const api = this.api;
     const handle = this.handle;
     this.handle = undefined;

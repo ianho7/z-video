@@ -107,6 +107,27 @@
         </section>
       </main>
     </div>
+    <section class="player-view" data-view="player" hidden aria-label="播放器">
+      <main class="player-shell">
+        <div class="player-surface" aria-label="原生视频区域">
+          <p id="player-surface-message" class="player-surface-message">正在准备原生播放器…</p>
+        </div>
+        <div class="player-controls" aria-label="播放控制">
+          <div class="player-control-row">
+            <button id="player-close-button" class="secondary-button" type="button">返回片库</button>
+            <button id="player-toggle-button" class="primary-button" type="button" disabled>播放</button>
+            <label class="seek-control" for="player-seek"><span class="sr-only">播放进度</span><input id="player-seek" type="range" min="0" max="0" value="0" step="0.1" disabled /></label>
+            <span id="player-time" class="player-time" aria-live="off">00:00 / 00:00</span>
+            <button id="player-fullscreen-button" class="secondary-button" type="button" disabled>全屏</button>
+          </div>
+          <div class="player-control-row player-secondary-row">
+            <label for="player-audio-track">音轨</label><select id="player-audio-track" disabled><option value="">自动</option></select>
+            <label for="player-subtitle-track">字幕</label><select id="player-subtitle-track" disabled><option value="">关闭</option></select>
+            <span id="player-status" class="status" role="status" aria-live="polite"></span>
+          </div>
+        </div>
+      </main>
+    </section>
     <script type="module" src="renderer.js"></script>
   </body>
 </html>
