@@ -26,3 +26,9 @@ Actual Windows safeStorage fresh-process recovery can be proved with synthetic c
 ## Tracker and completion
 
 GitHub repository: `ianho7/z-video`, label `ready-for-agent`. Published specification: #15. Tickets 01-05: #16, #17, #18, #19, #20 respectively. Native sub-issue and blocked-by relationships are configured. Track implementation done, locally verified, and fully accepted separately. Missing real NAS evidence prevents full acceptance and PR-ready claims.
+
+## Final local candidate (2026-10-31)
+
+Integration source: ae53280; repairs: cc2188c and bacdcbd. Standards and Spec follow-up reviews both pass, with separate reports. Final build and package-local native dependency/production-renderer readiness checks passed. Refer to final-local-evidence.md for exact scope, paths and measurements. The final follow-up window smoke covers cross-classification Continue Watching and pending-search/detail navigation; its small logs are preserved under root runs/spec-followup-window-20261031-082146-6948.
+
+The seven task-created implementation worktrees were individually verified clean and fully merged, then removed. Their branches/commits, root portable package, root node_modules and copied run logs remain. Old unrelated worktrees and global Rust/Cargo installations were not changed. Draft PR #21 and migration issues remain pending real NAS/visual/hardware acceptance; control-strip placement is awaiting user direction and is not silently accepted.

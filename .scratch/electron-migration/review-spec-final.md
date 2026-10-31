@@ -1,0 +1,8 @@
+# Electron migration Spec final review
+
+Commit reviewed: `bacdcbd28c4fa14a2733d9507748064654bc66b7`, relative to repair baseline `cc2188c`. Verdict: **PASS** for the Spec axis. The two residual findings in `review-spec-followup.md` are closed; no source blocker remains in this repair scope.
+
+- **Continue Watching classification context — fixed.** `src/renderer/library.ts:304-310` records the detail's supplied `classificationId`, and `:383-387` uses that context for playback instead of the visible library tab. The fixture intentionally supplies a `tv` continue item while the visible tab is `movie`, then asserts both detail lookup and playback command classification (`tests/window-smoke.ts:160-184`). This satisfies “点击继续观看进入对应详情与选集” and “恢复正确位置” (`docs/design/spec-03-browsing-flow.md:19-20`).
+- **Search debounce/detail race — fixed.** `src/renderer/library.ts:304-309` cancels the pending 250 ms timer before entering detail. The fixture types a query, immediately opens a card, waits 350 ms, and asserts detail remains visible (`tests/window-smoke.ts:186-205`). This satisfies “查询输入及时反馈，后台请求防抖、支持Enter立即提交；旧结果失效” (`docs/design/spec-03-browsing-flow.md:31`) while preserving the detail flow.
+
+The prior fixes remain unchanged and their focused owner/window evidence is recorded in `.scratch/electron-migration/review-fixes-completion.md:9-18,22-26`. Follow-up compilation and the single bounded window smoke passed, with evidence recorded at `:33-37`; no checks were rerun for this review. Real NAS, hardware/DWM/overlay, macOS, license provenance and restart read-back remain explicitly pending acceptance boundaries (`.scratch/electron-migration/review-fixes-completion.md:29-31`), not source defects.

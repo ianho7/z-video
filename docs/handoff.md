@@ -2,7 +2,7 @@
 
 ## Electron cutover handoff（2026-10-31）
 
-审查修复已集成至 `18a8fbe`（修复提交 `cc2188c`）。最终本地测试包重新构建并通过生产 renderer 就绪和包内 Koffi/libmpv 检查；完整 portable 目录为 `111` files、`502,125,408` bytes（约 `478.86 MiB`），其中 manifest 的内容小计不包含 manifest/README 自身。最终构建、日志路径和验证范围见 `.scratch/electron-migration/final-local-evidence.md`。下面的首轮资源采样保留为历史记录，不代表整个 Electron 进程树内存，也不是最终包的完整目录计数。
+审查修复已集成至 `ae53280`（修复提交 `cc2188c`、`bacdcbd`），Standards 与 Spec 复核均通过。最终本地测试包重新构建并通过生产 renderer 就绪和包内 Koffi/libmpv 检查；完整 portable 目录为 `111` files、`502,125,744` bytes（约 `478.86 MiB`），其中 manifest 的内容小计不包含 manifest/README 自身。最终构建、日志路径和验证范围见 `.scratch/electron-migration/final-local-evidence.md`。下面的首轮资源采样保留为历史记录，不代表整个 Electron 进程树内存，也不是最终包的完整目录计数。
 
 当前默认入口是 Electron 45 + TypeScript：`npm run start`、`npm run build`、`npm run package`。Windows portable 包默认输出到 `.scratch/electron-migration/05-package/z-video-win32-x64/`，包内使用 Electron runtime、Koffi Windows x64 prebuild 和一份 `vendor/mpv/libmpv-2.dll`；`resources/app` 不含 Rust、测试、reference、source maps 或开发依赖。`npm run verify:package` 会在隔离 cwd 和 fresh `--user-data-dir` 下验证包内 EXE 启动，并用 Electron Node runtime 加载包内 Koffi 与 libmpv。
 
