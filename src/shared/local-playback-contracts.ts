@@ -1,4 +1,4 @@
-import { isOpaqueMediaId, type LocalPlaybackState } from "./local-library-contracts";
+import { isOpaqueMediaId, type LocalPlaybackState } from "./local-library-contracts.js";
 
 export type LocalPlaybackMediaId = LocalPlaybackState["mediaId"];
 
@@ -66,4 +66,3 @@ export function isLocalPlaybackControlCommand(value: unknown): value is LocalPla
 export function assertLocalPlaybackMediaId(value: unknown): asserts value is LocalPlaybackMediaId {
   if (!isOpaqueMediaId(value)) throw new Error("mediaId 格式无效");
 }
-
