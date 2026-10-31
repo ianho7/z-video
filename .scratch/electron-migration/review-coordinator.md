@@ -13,6 +13,10 @@ Reviewed code snapshot: `deae61a`. These supplement, rather than merge or rerank
 
 A Node-only two-localhost-server probe on 2026-10-31 sent a synthetic custom `token` and Cookie to origin A, which redirected to origin B. Node fetch forwarded `token` but removed Cookie (`tokenForwarded=true`, `cookieForwarded=false`). Therefore the Standards image-secret repair must cover redirects as well as initially absolute external URLs. Never forward NAS secrets to a different origin; use a public HTTP owner regression with synthetic values. No private NAS or actual credentials were accessed.
 
+## Failed-load progress proof
+
+A Node-only probe against the existing public `PlaybackCoordinator` on 2026-10-31 supplied an external engine that emitted a synthetic load error during `start`, without ever emitting ready or position. Opening a synthetic NAS Episode and then closing reported `positionSec=0` once. No HTTP request or actual NAS write was performed. A failed media load must not overwrite existing NAS history: allow progress persistence only after valid playback observation, and stop reporting on fatal load failure. Cover this at the existing coordinator seam without adding a new lifecycle framework.
+
 ## Repair discipline
 
 One implementer handles these and all actionable independent findings. Preserve existing implementation/evidence; use TDD at the already approved owning seams. Keep external NAS/hardware/DWM/overlay/license acceptance gaps distinct from source defects. Do not add speculative frameworks or global exception swallowing. Automatic GUI tests must use isolated profiles, bounded owned-child lifetimes and regular log files so failures cannot reopen the EPIPE popup loop.
