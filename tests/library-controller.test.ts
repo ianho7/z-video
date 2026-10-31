@@ -26,6 +26,7 @@ class FixtureGateway implements NasGateway {
   detailCalls: string[] = [];
   imageCalls: string[] = [];
   unauthorized = false;
+  reportedCount?: number;
 
   async login(_request: { serverUrl: string; username: string; password: string }, _proof?: MfaProof) { return session; }
   async getClassifications(_session: AuthenticatedSession): Promise<ClassificationResult[]> { return [{ id: "movie", name: "电影", count: 3, isSystem: true, isEnabled: true }]; }
@@ -40,7 +41,7 @@ class FixtureGateway implements NasGateway {
       { collectionId: "c03", title: "回到光里", coverPath: "", backgroundPath: "", releaseYear: "", videoType: "tv", episodeCount: 3 },
       { collectionId: "c04", title: "半影", coverPath: "/private/c04.jpg", backgroundPath: "", releaseYear: "2024", videoType: "movie", score: "8.6" },
     ];
-    return { count: list.length, list: list.slice(start - 1, start - 1 + limit) };
+    return { count: this.reportedCount ?? list.length, list: list.slice(start - 1, start - 1 + limit) };
   }
   async getCollectionDetail(_session: AuthenticatedSession, collectionId: string, _classificationId: string): Promise<NasCollectionDetail> {
     this.detailCalls.push(collectionId);
@@ -133,4 +134,13 @@ test("an unauthorized library request clears the session instead of returning an
   assert.equal(result.state.status, "logged-out");
   assert.equal(store.cleared, true);
   assert.equal(sessions.getAuthenticatedSession(), undefined);
+});
+
+test("an invalidly huge server count does not become unbounded pagination metadata", async () => {
+  const gateway = new FixtureGateway();
+  gateway.reportedCount = Number.MAX_SAFE_INTEGER;
+  const { library } = await authenticatedController(gateway);
+  const result = await library.listCollections({ classificationId: "movie", page: 1, pageSize: 50 });
+  assert.equal(result.page?.totalCount, undefined);
+  assert.equal(result.page?.totalPages, undefined);
 });

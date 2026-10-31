@@ -19,6 +19,10 @@ export interface PlaybackIdentity {
 export interface PlaybackTarget {
   source: string;
   videoId: string;
+  /** Main-resolved NAS history for this exact Episode. Renderer hints are ignored. */
+  resumePositionSec?: number;
+  /** Main-only session binding used to reject late progress from an old Account. */
+  sessionKey?: string;
   durationSec?: number;
   audioIndex?: number;
   subtitleIndex?: number;
@@ -38,7 +42,7 @@ export interface PlaybackCoordinatorOptions {
   resolve?: (command: Extract<PlaybackCommand, { type: "open" }>) => Promise<PlaybackTarget>;
   reportProgress?: (identity: PlaybackIdentity, target: PlaybackTarget, snapshot: PlaybackProgressSnapshot) => Promise<void>;
   rememberPlayback?: (identity: PlaybackIdentity) => Promise<void>;
-  onUnauthorized?: (error: unknown) => Promise<void> | void;
+  onUnauthorized?: (error: unknown, sessionKey?: string) => Promise<void> | void;
 }
 
 /**
@@ -63,6 +67,8 @@ interface ActivePlayback {
   episodeId: string;
   identity?: PlaybackIdentity;
   target?: PlaybackTarget;
+  progressEnabled: boolean;
+  loadFailed: boolean;
   positionSec: number;
   durationSec?: number;
   audioIndex: number;
@@ -90,6 +96,8 @@ export class PlaybackCoordinator {
     this.active = {
       generation,
       episodeId,
+      progressEnabled: false,
+      loadFailed: false,
       positionSec: 0,
       local: true,
       audioIndex: 0,
@@ -192,12 +200,14 @@ export class PlaybackCoordinator {
       return;
     }
     if (generation !== this.generation || this.activeEpisodeId !== episodeId) return;
-    const position = command.startPositionSec !== undefined && Number.isFinite(command.startPositionSec) && command.startPositionSec >= 0 ? command.startPositionSec : undefined;
+    const position = target.resumePositionSec !== undefined && Number.isFinite(target.resumePositionSec) && target.resumePositionSec >= 0 ? target.resumePositionSec : undefined;
     this.active = {
       generation,
       episodeId,
       identity: { collectionId: command.collectionId, classificationId: command.classificationId, episodeId },
       target,
+      progressEnabled: false,
+      loadFailed: false,
       positionSec: position ?? 0,
       durationSec: target.durationSec,
       audioIndex: target.audioIndex ?? 0,
@@ -210,14 +220,12 @@ export class PlaybackCoordinator {
         this.onEngineEvent(episodeId, event);
       });
       if (!this.isCurrent(generation, episodeId)) return;
-      try {
-        await this.options.rememberPlayback?.({ collectionId: command.collectionId, classificationId: command.classificationId, episodeId });
-      } catch {
-        this.emit({ type: "error", episodeId, message: "无法保存播放上下文，进度仍由 NAS 管理。" });
-      }
-      this.startProgressTimer(generation, episodeId);
     } catch {
-      if (this.isCurrent(generation, episodeId)) this.emit({ type: "error", episodeId, message: "NAS 媒体加载失败。" });
+      if (this.isCurrent(generation, episodeId)) {
+        if (this.active) this.active.loadFailed = true;
+        this.clearProgressTimer();
+        this.emit({ type: "error", episodeId, message: "NAS 媒体加载失败。" });
+      }
     }
   }
 
@@ -234,11 +242,15 @@ export class PlaybackCoordinator {
   }
 
   private async flushProgress(active: ActivePlayback | undefined, generation: number): Promise<void> {
-    if (!active?.identity || !active.target || !this.options.reportProgress) return;
+    if (!active?.identity || !active.target || !active.progressEnabled || active.loadFailed || !this.options.reportProgress) return;
     try {
       await this.options.reportProgress(active.identity, active.target, this.snapshot(active));
     } catch (error) {
-      if (isUnauthorizedError(error)) await this.options.onUnauthorized?.(error);
+      if (isStalePlaybackError(error)) return;
+      if (isUnauthorizedError(error)) {
+        await this.options.onUnauthorized?.(error, active.target.sessionKey);
+        return;
+      }
       if (generation === this.generation) this.emit({ type: "error", episodeId: active.episodeId, message: "播放进度保存失败，NAS 未确认写入。" });
     }
   }
@@ -253,21 +265,22 @@ export class PlaybackCoordinator {
 
   private async reportCurrentProgress(generation: number, episodeId: string): Promise<void> {
     const active = this.active;
-    if (!active || !active.identity || !active.target || !this.isCurrent(generation, episodeId) || !this.options.reportProgress) return;
+    if (!active || !active.identity || !active.target || !active.progressEnabled || active.loadFailed || !this.isCurrent(generation, episodeId) || !this.options.reportProgress) return;
     try {
       await this.options.reportProgress(active.identity, active.target, this.snapshot(active));
     } catch (error) {
       if (isUnauthorizedError(error)) {
-        await this.stopAfterUnauthorized(generation, episodeId, error);
+        await this.stopAfterUnauthorized(generation, episodeId, error, active.target.sessionKey);
         return;
       }
+      if (isStalePlaybackError(error)) return;
       if (this.isCurrent(generation, episodeId)) this.emit({ type: "error", episodeId, message: "播放进度保存失败，NAS 未确认写入。" });
     }
   }
 
-  private async stopAfterUnauthorized(generation: number, episodeId: string, error: unknown): Promise<void> {
+  private async stopAfterUnauthorized(generation: number, episodeId: string, error: unknown, sessionKey?: string): Promise<void> {
     if (!this.isCurrent(generation, episodeId)) return;
-    await this.options.onUnauthorized?.(error);
+    await this.options.onUnauthorized?.(error, sessionKey);
     if (!this.isCurrent(generation, episodeId)) return;
     this.generation += 1;
     this.active = undefined;
@@ -293,6 +306,7 @@ export class PlaybackCoordinator {
   }
 
   private async handleResolutionError(episodeId: string, error: unknown): Promise<void> {
+    if (isStalePlaybackError(error)) return;
     if (isUnauthorizedError(error)) {
       await this.options.onUnauthorized?.(error);
       this.emit({ type: "error", episodeId, message: "登录已失效，请重新登录。" });
@@ -306,7 +320,9 @@ export class PlaybackCoordinator {
     if (!active || active.episodeId !== episodeId) return;
     switch (event.type) {
       case "ready":
+        if (active.loadFailed) return;
         active.durationSec = event.durationSec ?? active.durationSec;
+        this.enableProgress(active);
         if (!active.local) {
           if (active.target?.audioIndex !== undefined) void Promise.resolve(this.engine.setAudioTrack(String(active.target.audioIndex))).catch(() => undefined);
           if (active.target?.subtitleIndex !== undefined) void Promise.resolve(this.engine.setSubtitleTrack(active.target.subtitleIndex < 0 ? null : String(active.target.subtitleIndex))).catch(() => undefined);
@@ -317,6 +333,8 @@ export class PlaybackCoordinator {
         this.emit({ type: "state", state: event.state });
         break;
       case "position":
+        if (active.loadFailed) return;
+        this.enableProgress(active);
         active.positionSec = Number.isFinite(event.positionSec) ? Math.max(0, event.positionSec) : active.positionSec;
         active.durationSec = event.durationSec ?? active.durationSec;
         this.emit({
@@ -331,6 +349,8 @@ export class PlaybackCoordinator {
         this.emit({ type: "tracks", audio: event.audio, subtitles: event.subtitles });
         break;
       case "error":
+        active.loadFailed = true;
+        this.clearProgressTimer();
         this.emit({ type: "error", episodeId, message: active.local ? "本地媒体加载失败。" : "NAS 媒体加载失败。" });
         break;
       case "closed":
@@ -356,6 +376,15 @@ export class PlaybackCoordinator {
     if (event.subtitles.length > 0 && !selectedSubtitle && active.target?.subtitleIndex !== undefined && active.target.subtitleIndex < 0) active.subtitleIndex = -1;
   }
 
+  private enableProgress(active: ActivePlayback): void {
+    if (active.local || active.progressEnabled || active.loadFailed || !active.identity) return;
+    active.progressEnabled = true;
+    void Promise.resolve(this.options.rememberPlayback?.(active.identity)).catch(() => {
+      if (this.isCurrent(active.generation, active.episodeId)) this.emit({ type: "error", episodeId: active.episodeId, message: "无法保存播放上下文，进度仍由 NAS 管理。" });
+    });
+    this.startProgressTimer(active.generation, active.episodeId);
+  }
+
   private updateTrackIndex(kind: "audio" | "subtitle", trackId: string | null): void {
     if (!this.active) return;
     if (kind === "subtitle" && trackId === null) {
@@ -379,4 +408,9 @@ function isUnauthorizedError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const value = error as { kind?: unknown; status?: unknown };
   return value.kind === "unauthorized" || value.status === 401 || value.status === 403;
+}
+
+function isStalePlaybackError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  return (error as { kind?: unknown }).kind === "stale";
 }

@@ -15,6 +15,7 @@ interface RequestRecord {
   method: string;
   path: string;
   body: string;
+  headers: Record<string, string | string[] | undefined>;
 }
 
 async function startFixtureServer(plans: PlannedResponse[]) {
@@ -23,7 +24,7 @@ async function startFixtureServer(plans: PlannedResponse[]) {
   const server = createServer(async (request: IncomingMessage, response: ServerResponse) => {
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
-    requests.push({ method: request.method ?? "", path: request.url ?? "", body: Buffer.concat(chunks).toString("utf8") });
+    requests.push({ method: request.method ?? "", path: request.url ?? "", headers: request.headers, body: Buffer.concat(chunks).toString("utf8") });
     const plan = plans[index++];
     response.writeHead(plan?.status ?? 200, { "content-type": "application/json", ...(plan?.headers ?? {}) });
     response.end(JSON.stringify(plan?.body ?? { code: "UNPLANNED" }));
@@ -145,6 +146,34 @@ test("collection detail maps seasons and reads legacy history only when v2 omits
   assert.equal(formBody(fixture.requests[1].body).get("collection_id"), "series-01");
 });
 
+test("path-only episodes receive an opaque selection handle instead of exposing the media path", async (t) => {
+  const fixture = await startFixtureServer([
+    {
+      body: {
+        code: 200,
+        data: {
+          collection_id: "series-path-only",
+          title: "路径保护",
+          video_type: "tv",
+          list: [{
+            season_number: 1,
+            version_list: [{ episode: 1, title: "仅路径剧集", file_path: "/private/secret/episode-a.mkv" }],
+          }],
+          history: { last_video_id: "/private/secret/episode-a.mkv", play_duration: 12 },
+        },
+      },
+    },
+  ]);
+  t.after(() => fixture.close());
+
+  const detail = await new NasApiClient().getCollectionDetail(session(fixture.baseUrl), "series-path-only", "movie");
+  const episode = detail.seasons[0]?.episodes[0];
+  assert(episode);
+  assert.match(episode.episodeId, /^episode-path-/);
+  assert.equal(episode.episodeId.includes("/private/"), false);
+  assert.equal(episode.filePath, "/private/secret/episode-a.mkv");
+});
+
 test("collection detail preserves success without fabricating history when the legacy read fails", async (t) => {
   const fixture = await startFixtureServer([
     {
@@ -172,4 +201,36 @@ test("image fetch returns a data URL while diagnostics expose only the stable im
   assert.equal(image.mimeType, "image/jpeg");
   assert.match(image.dataUrl, /^data:image\/jpeg;base64,/);
   assert.equal(fixture.requests[0].path, "/private/cover.jpg?app=video&plat=pc");
+});
+
+test("image fetch rejects a direct external URL before sending NAS credentials", async (t) => {
+  const origin = await startFixtureServer([]);
+  const external = await startFixtureServer([{ status: 200, body: "external" }]);
+  t.after(() => Promise.all([origin.close(), external.close()]));
+
+  await assert.rejects(
+    () => new NasApiClient().fetchImage(session(origin.baseUrl), `${external.baseUrl}/direct.jpg`),
+    (error: unknown) => error instanceof NasError && error.kind === "malformed",
+  );
+  assert.equal(origin.requests.length, 0);
+  assert.equal(external.requests.length, 0);
+});
+
+test("image fetch blocks a cross-origin redirect without forwarding NAS credentials", async (t) => {
+  const external = await startFixtureServer([{ status: 200, body: "external" }]);
+  const origin = await startFixtureServer([{
+    status: 302,
+    headers: { location: `${external.baseUrl}/redirected.jpg` },
+    body: "redirect",
+  }]);
+  t.after(() => Promise.all([origin.close(), external.close()]));
+
+  await assert.rejects(
+    () => new NasApiClient().fetchImage(session(origin.baseUrl), "/redirect.jpg"),
+    (error: unknown) => error instanceof NasError && error.kind === "malformed",
+  );
+  assert.equal(origin.requests.length, 1);
+  assert.equal(origin.requests[0]?.headers.token, "fixture-session");
+  assert.equal(String(origin.requests[0]?.headers.cookie).includes("fixture-sign"), true);
+  assert.equal(external.requests.length, 0);
 });

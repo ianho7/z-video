@@ -3,8 +3,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { once } from "node:events";
 import test from "node:test";
 
-import { NasApiClient } from "../src/main/nas-client";
-import { SessionController, type PersistedSession, type SessionStore } from "../src/main/session-controller";
+import { NasApiClient, type AuthenticatedSession, NasError, type ClassificationResult, type MfaProof } from "../src/main/nas-client";
+import { SessionController, type NasGateway, type PersistedSession, type SessionStore } from "../src/main/session-controller";
 
 const FIXTURE_PUBLIC_KEY =
   "MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBALKZ8KjQHGuJZx7HK65jCfI+UW7q/ts6HscZzFC0iwFeQjlj5XCKn2/iDsJwjssh0wR7oQNtt0fsAcoEE8VF9C8CAwEAAQ==";
@@ -45,6 +45,36 @@ class MemorySessionStore implements SessionStore {
 
   async clear(): Promise<void> {
     this.saved = undefined;
+  }
+}
+
+class SwitchingGateway implements NasGateway {
+  deferAccountA = false;
+  pendingAccountA?: { reject: (error: unknown) => void };
+
+  async login(request: { serverUrl: string; username: string; password: string }): Promise<AuthenticatedSession> {
+    return {
+      baseUrl: request.serverUrl,
+      username: request.username,
+      token: `token-${request.username}`,
+      nasId: `nas-${request.username}`,
+    };
+  }
+
+  async getClassifications(session: AuthenticatedSession): Promise<ClassificationResult[]> {
+    if (session.username === "account-a" && this.deferAccountA) {
+      this.deferAccountA = false;
+      return new Promise((_resolve, reject) => {
+        this.pendingAccountA = { reject };
+      });
+    }
+    return [{ id: "movie", name: "电影", count: 1, isSystem: true, isEnabled: true }];
+  }
+
+  async sendMfaCode(): Promise<void> {}
+
+  async verifyMfaCode(): Promise<MfaProof> {
+    throw new Error("MFA not used in this test");
   }
 }
 
@@ -133,4 +163,23 @@ test("remembered playback context persists only collection, classification and e
   const afterRestart = new SessionController(new NasApiClient(), store);
   assert.equal((await afterRestart.restore()).status, "authenticated");
   assert.deepEqual(afterRestart.getLastPlayback(), { collectionId: "collection-01", classificationId: "movie", episodeId: "episode-01" });
+});
+
+test("late classifications from account A cannot invalidate the current account B", async () => {
+  const gateway = new SwitchingGateway();
+  const controller = new SessionController(gateway, new MemorySessionStore());
+
+  assert.equal((await controller.login({ serverUrl: "http://nas-a", username: "account-a", password: "a", remember: false })).status, "authenticated");
+  gateway.deferAccountA = true;
+  const accountARead = controller.listClassifications();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const accountBState = await controller.login({ serverUrl: "http://nas-b", username: "account-b", password: "b", remember: false });
+  assert.equal(accountBState.status, "authenticated");
+  gateway.pendingAccountA?.reject(new NasError("unauthorized", "account A expired", undefined, 401));
+
+  const lateResult = await accountARead;
+  assert.equal(lateResult.state.status, "authenticated");
+  assert.equal(lateResult.state.identity?.username, "account-b");
+  assert.equal(controller.getPublicState().identity?.username, "account-b");
 });

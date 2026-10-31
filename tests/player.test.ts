@@ -5,11 +5,13 @@ import type { PlaybackEvent } from "../src/shared/contracts";
 import { PlaybackCoordinator, type PlayerEngine, type PlayerEngineEvent } from "../src/main/player";
 
 class FakePlayerEngine implements PlayerEngine {
-  readonly starts: Array<{ path: string; onEvent: (event: PlayerEngineEvent) => void }> = [];
+  readonly starts: Array<{ path: string; startPositionSec: number | undefined; onEvent: (event: PlayerEngineEvent) => void }> = [];
   readonly calls: string[] = [];
+  startEvent?: PlayerEngineEvent;
 
-  start(path: string, _startPositionSec: number | undefined, onEvent: (event: PlayerEngineEvent) => void): void {
-    this.starts.push({ path, onEvent });
+  start(path: string, startPositionSec: number | undefined, onEvent: (event: PlayerEngineEvent) => void): void {
+    this.starts.push({ path, startPositionSec, onEvent });
+    if (this.startEvent) onEvent(this.startEvent);
   }
 
   stop(): void {
@@ -187,6 +189,40 @@ test("stale NAS stream resolution cannot start or report the replaced Episode", 
   assert.deepEqual(progress, []);
   assert.equal(events.some((event) => event.type === "error" && event.episodeId === "episode-01"), false);
   await coordinator.handle({ type: "close" });
+});
+
+test("NAS playback uses matching main-resolved history instead of renderer resume seconds", async () => {
+  const engine = new FakePlayerEngine();
+  const events: PlaybackEvent[] = [];
+  const coordinator = new PlaybackCoordinator(engine, (event) => events.push(event), () => undefined, {
+    resolve: async () => ({ source: "http://127.0.0.1:5055/stream", videoId: "video-02", resumePositionSec: 42 }),
+  });
+
+  await coordinator.handle({
+    type: "open",
+    collectionId: "collection-01",
+    classificationId: "movie",
+    episodeId: "episode-02",
+    startPositionSec: 900,
+  });
+
+  assert.equal(engine.starts[0]?.startPositionSec, 42);
+  assert.deepEqual(events[0], { type: "loading", episodeId: "episode-02" });
+});
+
+test("a native load error does not write an initial zero progress", async () => {
+  const engine = new FakePlayerEngine();
+  engine.startEvent = { type: "error", message: "synthetic load failure" };
+  const progress: unknown[] = [];
+  const coordinator = new PlaybackCoordinator(engine, () => undefined, () => undefined, {
+    resolve: async () => ({ source: "http://127.0.0.1:5055/stream", videoId: "video-01" }),
+    reportProgress: async (identity, _target, snapshot) => { progress.push({ identity, snapshot }); },
+  });
+
+  await coordinator.handle({ type: "open", collectionId: "collection-01", classificationId: "movie", episodeId: "episode-01" });
+  await coordinator.handle({ type: "close" });
+
+  assert.deepEqual(progress, []);
 });
 
 test("native closed events flush the active NAS identity before closing", async () => {

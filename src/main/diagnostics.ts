@@ -70,6 +70,30 @@ export async function recordNasRequest(
   }
 }
 
+export async function recordUiOperation(
+  operation: string,
+  result: "success" | "error",
+  startedAt: number,
+  details: DiagnosticDetails = {},
+): Promise<void> {
+  const event = {
+    timestamp_utc: new Date().toISOString(),
+    event_type: "ui.operation",
+    operation,
+    phase: "complete",
+    result,
+    duration_ms: Math.max(0, Date.now() - startedAt),
+    details: { ...details },
+  };
+  const target = logPath();
+  try {
+    await mkdir(dirname(target), { recursive: true });
+    await appendFile(target, `${JSON.stringify(event)}\n`, "utf8");
+  } catch {
+    // Diagnostics must never change the UI result or block the main process.
+  }
+}
+
 export function diagnosticLogPath(): string {
   return logPath();
 }
