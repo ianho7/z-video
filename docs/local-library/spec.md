@@ -59,10 +59,18 @@ Graph: 1 -> {2,3} -> 4 -> 5. If implementation is approved, use separate worktre
 
 Use test-audit and acceptance-design gates before authoring tests; reuse still-valid native engine evidence. Proposed 2,000-item and 20,000-item synthetic metadata inventories check scaling of query/scan/window state; they do not prove real NAS latency or video decoding. A representative real folder is required before claiming practical NFO compatibility or UNC playback; read-only access scope must be chosen before scanning personal media.
 
+## Ticket 05 delivery evidence
+
+The Windows candidate now defaults to `.scratch/local-library/package/z-video-win32-x64/` and packages the utility worker, Electron's built-in `node:sqlite`, `fast-xml-parser@5.11.2` plus its runtime dependency closure, Koffi's Windows x64 prebuild, and libmpv. `npm run verify:package` runs from the package directory with a fresh user-data profile, checks the packaged native/XML probe, waits for `window.renderer-ready`, and performs a production `window.zVideo.localLibrary.list()` query through the packaged worker/SQLite IPC boundary.
+
+The owned scale smoke indexes 2,000 and 20,000 files, issues a list query while each scan is running, then deletes the 20,000-file source and verifies `unavailable` status while its indexed rows remain. The 2026-10-31 run measured 2,970 ms / 29,808 ms scan time, 1 ms / 3 ms concurrent list latency, and a 10,670,080-byte SQLite file. Resource measurements are recorded separately under `.scratch/local-library/runs/`; they are not performance budgets.
+
+The package generator never falls back to symlink/junction: it attempts same-volume hard links and otherwise performs regular copies, propagating `ENOSPC` instead of manufacturing a non-portable candidate. The D: default target had only about 33 MB free during this run, so the final standalone regular-copy candidate was generated at the authorized C: path with 0 reparse points; its libmpv redistribution license notice remains unconfirmed. No real personal/UNC share, NAS, macOS, hardware decode, DWM, or overlay-parity acceptance is claimed.
+
 ## Limits and rollout
 
 Most fragile assumption: files already contain enough NFO/artwork to recreate the desired library. Design survives missing files by filename/placeholder fallback; online scraping is a separate opt-in future feature. Existing NAS history/manual corrections are not automatically migrated. Cross-device progress, cloud accounts, writable metadata, automatic watchers, complex editions and additional platforms remain outside first release.
 
-Keep previous branch and use separate local-library data directory; do not read/clear old encrypted NAS sessions. Rollback uses the previous app/branch without touching media files. Cache can grow up to its defined budget; Electron/libmpv still dominate the portable package, so no smaller installation size is promised. No credentials or OS SMB-policy changes are required by the app; inaccessible shares remain inaccessible until the user arranges OS access.
+Keep previous branch and use separate local-library data directory; do not read/clear old encrypted NAS sessions. Rollback uses the previous app/branch without touching media files. Cache can grow up to its defined budget; Electron/libmpv still dominate the candidate package, so no smaller installation size is promised. No credentials or OS SMB-policy changes are required by the app; inaccessible shares remain inaccessible until the user arranges OS access.
 
 Approved: replace the old NAS-client product scope with this account-free local-library scope, Windows first, read-only media, local-only progress. Proceed through the approved task graph.

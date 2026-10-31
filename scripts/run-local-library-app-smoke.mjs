@@ -23,7 +23,18 @@ const child = spawn(electronBinary, ["--disable-gpu", entry], {
   stdio: ["ignore", logFd, logFd],
   windowsHide: true,
 });
-const timeout = setTimeout(() => child.kill(), 20_000);
+async function stopOwnedProcess() {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill();
+  await Promise.race([once(child, "exit"), new Promise((resolve) => setTimeout(resolve, 1_000))]);
+  if (child.exitCode !== null || !child.pid) return;
+  await new Promise((resolve) => {
+    const killer = spawn("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+    killer.once("error", resolve);
+    killer.once("exit", resolve);
+  });
+}
+const timeout = setTimeout(() => { void stopOwnedProcess(); }, 20_000);
 const [code, signal] = await once(child, "exit");
 clearTimeout(timeout);
 closeSync(logFd);

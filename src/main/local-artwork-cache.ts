@@ -11,7 +11,6 @@ interface CacheEntry {
   mimeType: string;
   lastUsed: number;
 }
-
 /** Main-owned artwork cache. Renderer receives only a data URL, never a path. */
 export class LocalArtworkCache {
   private readonly memory = new Map<string, CacheEntry>();
