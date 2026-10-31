@@ -144,9 +144,8 @@ function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
     setPlayerControlsEnabled(false);
     setPlayerStatus("");
     if (playerSurfaceMessage) playerSurfaceMessage.textContent = "正在准备原生播放器…";
+    closeDetail();
     setMessage("本地播放已关闭。");
-    void loadLibrary();
-    void loadContinueWatching();
     return;
   }
   showPlayer(true);

@@ -79,6 +79,25 @@ async function runFirstProcess(): Promise<void> {
       while (Date.now() < pauseDeadline && !events.some((event) => event.type === "state" && event.state === "paused")) {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
+      const hiddenResizeHoldMs = Number(${JSON.stringify(Number(process.env.Z_VIDEO_LOCAL_PLAYBACK_HIDDEN_RESIZE_HOLD_MS ?? 0))});
+      if (Number.isFinite(hiddenResizeHoldMs) && hiddenResizeHoldMs > 0) {
+        const retry = await window.zVideo.localPlayback.open("media_33333333-3333-4333-8333-333333333333");
+        if (!retry.opened) throw new Error("production local playback retry did not enter the missing-media path");
+        const retryDeadline = Date.now() + 5_000;
+        while (Date.now() < retryDeadline && !events.some((event) => event.type === "error" && event.mediaId === "media_33333333-3333-4333-8333-333333333333")) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        if (!events.some((event) => event.type === "error" && event.mediaId === "media_33333333-3333-4333-8333-333333333333")) {
+          throw new Error("production local playback retry did not report the missing-media error");
+        }
+        window.resizeTo(window.outerWidth + 2, window.outerHeight + 2);
+        await new Promise((resolve) => setTimeout(resolve, hiddenResizeHoldMs));
+      }
+      await window.zVideo.localPlayback.command({ type: "fullscreen", enabled: true });
+      const visualHoldMs = Number(${JSON.stringify(Number(process.env.Z_VIDEO_LOCAL_PLAYBACK_HOLD_MS ?? 0))});
+      if (Number.isFinite(visualHoldMs) && visualHoldMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, visualHoldMs));
+      }
       await window.zVideo.localPlayback.command({ type: "close" });
       const closeDeadline = Date.now() + 5_000;
       while (Date.now() < closeDeadline && (!events.some((event) => event.type === "closed") || document.querySelector('[data-view="player"]')?.hidden !== true)) {
@@ -92,6 +111,7 @@ async function runFirstProcess(): Promise<void> {
         positionSec: observed.positionSec,
         durationSec: observed.durationSec,
         playerLayout,
+        fullscreenCommandIssued: true,
         events,
         fixturePathLeaked: JSON.stringify(events).includes(${JSON.stringify(fixturePath)}),
       };
@@ -106,6 +126,7 @@ async function runFirstProcess(): Promise<void> {
         controlsHeight: number;
         toggleEnabled: boolean;
       };
+      fullscreenCommandIssued: boolean;
       events: LocalPlaybackEvent[];
       fixturePathLeaked: boolean;
     };
@@ -115,6 +136,8 @@ async function runFirstProcess(): Promise<void> {
     assert.ok(result.events.some((event) => event.type === "ready"));
     assert.ok(result.events.some((event) => event.type === "state" && event.state === "paused"));
     assert.ok(result.events.some((event) => event.type === "closed"));
+    assert.equal(result.fullscreenCommandIssued, true);
+    assert.equal(window.isFullScreen(), false, "closing local playback must leave the BrowserWindow out of fullscreen");
     await writeFile(resultPath, JSON.stringify(result), "utf8");
   } finally {
     dialog.showOpenDialog = originalShowOpenDialog;

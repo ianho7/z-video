@@ -52,8 +52,9 @@ function createCoordinator(
   engine: FakeLocalEngine,
   store: MemoryPlaybackStore,
   events: LocalPlaybackEvent[],
+  fullscreenCalls: boolean[] = [],
 ): LocalPlaybackCoordinator {
-  return new LocalPlaybackCoordinator(engine, (event) => events.push(event), () => undefined, store);
+  return new LocalPlaybackCoordinator(engine, (event) => events.push(event), (enabled) => fullscreenCalls.push(enabled), store);
 }
 
 test("local playback resolves by opaque mediaId, restores state, and flushes observed native progress", async () => {
@@ -166,4 +167,26 @@ test("switching files flushes the first media and fresh open restores its commit
   await secondCoordinator.open(mediaOne);
   assert.equal(secondEngine.starts[0]?.startPositionSec, 8);
   await secondCoordinator.close();
+});
+
+test("local close and native shutdown leave fullscreen disabled", async () => {
+  const engine = new FakeLocalEngine();
+  const store = new MemoryPlaybackStore();
+  store.paths.set(mediaOne, "first.mp4");
+  const events: LocalPlaybackEvent[] = [];
+  const fullscreenCalls: boolean[] = [];
+  const coordinator = createCoordinator(engine, store, events, fullscreenCalls);
+
+  await coordinator.open(mediaOne);
+  await coordinator.handle({ type: "fullscreen", enabled: true });
+  fullscreenCalls.length = 0;
+  await coordinator.close();
+  assert.deepEqual(fullscreenCalls, [false]);
+
+  fullscreenCalls.length = 0;
+  await coordinator.open(mediaOne);
+  engine.starts[1].onEvent({ type: "closed" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(fullscreenCalls, [false]);
+  assert.equal(events.at(-1)?.type, "closed");
 });

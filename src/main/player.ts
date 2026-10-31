@@ -180,6 +180,7 @@ export class LocalPlaybackCoordinator {
     const mediaId = previous?.mediaId;
     this.active = undefined;
     this.clearProgressTimer();
+    this.setWindowFullscreen(false);
     await this.flushProgress(previous, generation);
     if (generation !== this.generation) return;
     await this.engine.stop();
@@ -285,6 +286,7 @@ export class LocalPlaybackCoordinator {
     this.generation += 1;
     this.active = undefined;
     this.clearProgressTimer();
+    this.setWindowFullscreen(false);
     await this.flushProgress(active, this.generation);
     await this.engine.destroy?.();
     if (this.generation === generation + 1) this.emit({ type: "closed", mediaId: active.mediaId });
@@ -452,6 +454,7 @@ export class PlaybackCoordinator {
     this.active = undefined;
     this.activeEpisodeId = undefined;
     this.clearProgressTimer();
+    this.setWindowFullscreen(false);
     await this.flushProgress(previous, generation);
     if (generation !== this.generation) return;
     await this.engine.stop();
@@ -560,6 +563,7 @@ export class PlaybackCoordinator {
     this.active = undefined;
     this.activeEpisodeId = undefined;
     this.clearProgressTimer();
+    this.setWindowFullscreen(false);
     await this.engine.stop();
     await this.engine.destroy?.();
     this.emit({ type: "error", episodeId, message: "登录已失效，请重新登录。" });
@@ -638,6 +642,7 @@ export class PlaybackCoordinator {
     this.active = undefined;
     this.activeEpisodeId = undefined;
     this.clearProgressTimer();
+    this.setWindowFullscreen(false);
     await this.flushProgress(active, generation);
     if (generation === this.generation) this.emit({ type: "closed", episodeId: active.episodeId });
   }

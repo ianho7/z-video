@@ -124,6 +124,7 @@ export class MpvNativePlayer implements PlayerEngine {
       this.eventTimer = setInterval(() => this.pumpEvents(), 25);
       this.stateTimer = setInterval(() => this.syncState(), 250);
       this.host.resize();
+      this.host.show();
     } catch (error) {
       await this.stop();
       throw error;
