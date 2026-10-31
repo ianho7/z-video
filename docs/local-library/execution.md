@@ -15,3 +15,5 @@ Ticket 01 handoff contract: `docs/local-library/contracts.md` and `src/shared/lo
 ## Published tracker
 
 Parent spec: https://github.com/ianho7/z-video/issues/22 . Tickets: 01/#23, 02/#24, 03/#25, 04/#26, 05/#27. Dependency graph: #23 -> {#24,#25} -> #26 -> #27. First implementer: visible local_foundation, gpt-5.6-luna/max, worktree .worktrees/local-01. The API EOF during issue creation was reconciled with a read-only remote inventory before retry; no duplicate issue was created.
+
+Draft PR: https://github.com/ianho7/z-video/pull/28 (base codex/electron-integration). Ticket01 merged at 4cae8fe. Tickets02/03 are running in .worktrees/local-02 and .worktrees/local-03. Metadata implementer owns shared database/worker files; playback implementer requests persistence operations rather than editing the same owner concurrently. Native GitHub sub-issue and blocked-by relationships are recorded. Coordinator rechecked the prior environment-blocked legacy owners with proper loopback/temp permissions: 21/21 pass; details in completions/01.md.
