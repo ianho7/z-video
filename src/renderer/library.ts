@@ -53,6 +53,7 @@ let detailOpen = false;
 let navigationSaveTimer: number | undefined;
 let searchDebounceTimer: number | undefined;
 let renderedSessionKey = "";
+let activeDetailClassificationId = "";
 
 function escapeHtml(value: string | number | undefined): string {
   return String(value ?? "").replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character] ?? character);
@@ -276,6 +277,7 @@ async function loadCollections(): Promise<void> {
   const epoch = ++requestEpoch;
   detailOpen = false;
   activeDetail = undefined;
+  activeDetailClassificationId = "";
   renderLoading();
   updateToolbar();
   try {
@@ -302,6 +304,9 @@ async function loadCollections(): Promise<void> {
 async function openDetail(collectionId: string, classificationId = navigation.library.classificationId, episodeId?: string): Promise<void> {
   const id = collectionId.trim();
   if (!id || !classificationId) return;
+  if (searchDebounceTimer !== undefined) window.clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = undefined;
+  activeDetailClassificationId = classificationId;
   navigation = { ...navigation, view: "detail", detail: { collectionId: id, ...(episodeId ? { episodeId } : {}), focusCollectionId: id } };
   saveNavigation();
   const epoch = ++requestEpoch;
@@ -378,7 +383,7 @@ async function sendPlaybackCommand(type: "play" | "resume"): Promise<void> {
   const command: PlaybackCommand = {
     type: "open",
     collectionId: activeDetail.collectionId,
-    classificationId: navigation.library.classificationId,
+    classificationId: activeDetailClassificationId || navigation.library.classificationId,
     episodeId: selectedEpisodeId,
   };
   if (!window.zVideo.player) {
@@ -489,6 +494,7 @@ export function setLibrarySessionState(state: PublicSessionState): void {
     activePage = undefined;
     activeDetail = undefined;
     detailOpen = false;
+    activeDetailClassificationId = "";
     navigation = { ...navigation, view: "library", detail: undefined };
   }
   sessionState = state;
