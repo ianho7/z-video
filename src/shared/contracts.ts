@@ -13,6 +13,11 @@ import type {
   LocalScanResult,
   LocalSourceSummary,
 } from "./local-library-contracts";
+import type {
+  LocalPlaybackApi,
+  LocalPlaybackControlCommand,
+  LocalPlaybackEvent,
+} from "./local-playback-contracts";
 
 export type {
   LocalLibraryApi,
@@ -29,6 +34,7 @@ export type {
   LocalScanResult,
   LocalSourceSummary,
 } from "./local-library-contracts";
+export type { LocalPlaybackApi, LocalPlaybackControlCommand, LocalPlaybackEvent } from "./local-playback-contracts";
 
 /**
  * Renderer-safe contracts shared by the Electron main, preload and renderer.
@@ -254,6 +260,7 @@ export type PlaybackEvent =
 
 export interface ElectronApi {
   localLibrary: LocalLibraryApi;
+  localPlayback: LocalPlaybackApi;
   appearance: {
     onState(listener: (state: WindowAppearanceState) => void): () => void;
   };
