@@ -11,3 +11,7 @@ All GUI checks use isolated profiles, bounded owned-child lifetimes and regular-
 Source paths in renderer remain opaque. No ZSpace login/session/API at default startup. Keep old encrypted sessions untouched. Default media access is read-only. No global Rust/cache/old-worktree cleanup. Windows first, no macOS or overlay parity claims. Package size/resource measurements must be factual.
 
 Ticket 01 handoff contract: `docs/local-library/contracts.md` and `src/shared/local-library-contracts.ts` are the source of truth for schema v1, `local-library:*` IPC, opaque `media_<UUID>` identity, and `LocalPlaybackState`/`LocalPlaybackTarget`. Ticket 02 and 03 must coordinate changes through integration rather than redefining these fields independently.
+
+## Published tracker
+
+Parent spec: https://github.com/ianho7/z-video/issues/22 . Tickets: 01/#23, 02/#24, 03/#25, 04/#26, 05/#27. Dependency graph: #23 -> {#24,#25} -> #26 -> #27. First implementer: visible local_foundation, gpt-5.6-luna/max, worktree .worktrees/local-01. The API EOF during issue creation was reconciled with a read-only remote inventory before retry; no duplicate issue was created.
