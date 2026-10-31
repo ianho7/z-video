@@ -6,17 +6,40 @@ import { NasApiClient } from "./nas-client";
 import { createElectronSecureSessionStore } from "./secure-session-store";
 import { SessionController } from "./session-controller";
 import { createMainWindow } from "./window";
+import { MainPlaybackHost, type PlaybackHost } from "./player-host";
 
 let mainWindow: ReturnType<typeof createMainWindow> | undefined;
+let playbackHost: PlaybackHost | undefined;
 
 async function bootstrap(): Promise<void> {
   await app.whenReady();
   const nas = new NasApiClient();
   const controller = new SessionController(nas, createElectronSecureSessionStore());
-  registerIpcHandlers(controller, new LibraryController(controller, nas));
+  const playbackBridge: PlaybackHost = {
+    chooseLocalFile: () => playbackHost?.chooseLocalFile() ?? Promise.resolve({ opened: false }),
+    chooseSubtitleFile: () => playbackHost?.chooseSubtitleFile() ?? Promise.resolve({ loaded: false }),
+    handle: (command) => playbackHost?.handle(command) ?? Promise.resolve(),
+    close: () => playbackHost?.close() ?? Promise.resolve(),
+  };
+  const library = new LibraryController(controller, nas);
   mainWindow = createMainWindow();
+  playbackHost = new MainPlaybackHost(mainWindow);
+  registerIpcHandlers(controller, library, playbackBridge);
+  mainWindow.once("closed", () => {
+    void playbackHost?.close();
+    playbackHost = undefined;
+    mainWindow = undefined;
+  });
   app.on("activate", () => {
-    if (!mainWindow || mainWindow.isDestroyed()) mainWindow = createMainWindow();
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      mainWindow = createMainWindow();
+      playbackHost = new MainPlaybackHost(mainWindow);
+      mainWindow.once("closed", () => {
+        void playbackHost?.close();
+        playbackHost = undefined;
+        mainWindow = undefined;
+      });
+    }
   });
 }
 

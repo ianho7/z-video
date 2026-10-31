@@ -48,6 +48,20 @@ Ticket 03 owns the one native playback engine behind `PlaybackCommand` and
 `PlaybackEvent`. Main resolves the selected `episodeId` to a server-provided
 stream and keeps the private media address out of renderer DTOs and logs.
 
+Ticket 03 adds the `player:choose-local-file`, `player:choose-subtitle-file`,
+`player:command` and `player:event` channels. The preload exposes these as
+`window.zVideo.player`; the renderer can request a main-owned media/subtitle
+file picker, send validated playback intent, and subscribe to renderer-safe
+`PlaybackEvent` values. The selected file paths remain in main and are
+consumed by the libmpv adapter only. The
+current local-sample route uses a Win32 child host (`wid`) inside the existing
+BrowserWindow, with a semantic HTML control strip immediately below the native
+surface. Controls are keyboard/accessibility usable, but HTML controls are not
+painted over the native child surface; that visual-parity gap is explicit while
+the feasibility note's Windows shared-texture compositor route remains only a
+candidate pending independent runtime proof. The main-owned subtitle picker
+also keeps external subtitle paths out of the renderer.
+
 ## Ticket 02 additions
 
 Ticket 02 adds the following renderer-safe library operations through the

@@ -6,6 +6,8 @@ import type {
   NavigationContext,
   LoginInput,
   OperationOutcome,
+  PlaybackCommand,
+  PlaybackEvent,
   PublicSessionState,
   DiscoveryCancelOutcome,
   DiscoveryOutcome,
@@ -20,6 +22,10 @@ const IPC_CHANNELS = {
   verifyMfa: "session:verify-mfa",
   logout: "session:logout",
   listClassifications: "library:list-classifications",
+  playerChooseLocalFile: "player:choose-local-file",
+  playerChooseSubtitleFile: "player:choose-subtitle-file",
+  playerCommand: "player:command",
+  playerEvent: "player:event",
   listCollections: "library:list-collections",
   getCollectionDetail: "library:get-detail",
   listContinueWatching: "library:list-continue-watching",
@@ -46,6 +52,17 @@ const api: ElectronApi = {
     loadImage: (input: { collectionId: string; kind: "cover" | "background" }) => ipcRenderer.invoke(IPC_CHANNELS.loadImage, input),
     getNavigation: () => ipcRenderer.invoke(IPC_CHANNELS.getNavigation) as Promise<NavigationContext>,
     setNavigation: (context: NavigationContext) => ipcRenderer.invoke(IPC_CHANNELS.setNavigation, context) as Promise<NavigationContext>,
+  },
+  player: {
+    chooseLocalFile: () => ipcRenderer.invoke(IPC_CHANNELS.playerChooseLocalFile) as Promise<{ opened: boolean }>,
+    chooseSubtitleFile: () => ipcRenderer.invoke(IPC_CHANNELS.playerChooseSubtitleFile) as Promise<{ loaded: boolean }>,
+    command: (command: PlaybackCommand) => ipcRenderer.invoke(IPC_CHANNELS.playerCommand, command) as Promise<void>,
+    send: (command: PlaybackCommand) => ipcRenderer.invoke(IPC_CHANNELS.playerCommand, command) as Promise<void>,
+    onEvent: (listener: (event: PlaybackEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, value: PlaybackEvent) => listener(value);
+      ipcRenderer.on(IPC_CHANNELS.playerEvent, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.playerEvent, handler);
+    },
   },
   discovery: {
     start: () => ipcRenderer.invoke(IPC_CHANNELS.discoveryStart) as Promise<DiscoveryOutcome>,

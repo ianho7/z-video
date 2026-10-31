@@ -80,16 +80,20 @@ async function run(): Promise<void> {
       nodeProcess: typeof process,
       discoveryApi: typeof window.zVideo.discovery === 'object',
       loginView: document.querySelector('[data-view="login"]')?.hidden === false,
-      serverInput: Boolean(document.querySelector('#server-url'))
+      serverInput: Boolean(document.querySelector('#server-url')),
+      playerBridge: typeof window.zVideo.player === 'object',
+      playerControls: Boolean(document.querySelector('#player-seek') && document.querySelector('#player-audio-track') && document.querySelector('#player-subtitle-file-button'))
     })`,
     true,
-  )) as { bridge: boolean; nodeRequire: string; nodeProcess: string; discoveryApi: boolean; loginView: boolean; serverInput: boolean };
+  )) as { bridge: boolean; nodeRequire: string; nodeProcess: string; discoveryApi: boolean; loginView: boolean; serverInput: boolean; playerBridge: boolean; playerControls: boolean };
   assert.equal(initial.bridge, true);
   assert.equal(initial.nodeRequire, "undefined");
   assert.equal(initial.nodeProcess, "undefined");
   assert.equal(initial.discoveryApi, true);
   assert.equal(initial.loginView, true);
   assert.equal(initial.serverInput, true);
+  assert.equal(initial.playerBridge, true);
+  assert.equal(initial.playerControls, true);
 
   await window.webContents.executeJavaScript(
     `document.querySelector('#discover-button').click()`,

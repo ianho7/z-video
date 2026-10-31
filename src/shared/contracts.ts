@@ -210,7 +210,7 @@ export type PlaybackEvent =
   | { type: "ready"; episodeId: string; durationSec?: number }
   | { type: "state"; state: "playing" | "paused" | "buffering" | "ended" }
   | { type: "position"; episodeId: string; positionSec: number; durationSec?: number }
-  | { type: "tracks"; audio: Array<{ id: string; label: string }>; subtitles: Array<{ id: string; label: string }> }
+  | { type: "tracks"; audio: Array<{ id: string; label: string; selected?: boolean }>; subtitles: Array<{ id: string; label: string; selected?: boolean }> }
   | { type: "error"; episodeId?: string; message: string }
   | { type: "closed"; episodeId?: string };
 
@@ -235,8 +235,12 @@ export interface ElectronApi {
     start(): Promise<DiscoveryOutcome>;
     cancel(): Promise<DiscoveryCancelOutcome>;
   };
-  /** Added by the native-player ticket; optional until its IPC owner lands. */
-  player?: {
+  player: {
+    chooseLocalFile(): Promise<{ opened: boolean }>;
+    chooseSubtitleFile(): Promise<{ loaded: boolean }>;
+    command(command: PlaybackCommand): Promise<void>;
+    /** Compatibility alias used by the library detail renderer's open intent. */
     send(command: PlaybackCommand): Promise<void>;
+    onEvent(listener: (event: PlaybackEvent) => void): () => void;
   };
 }
