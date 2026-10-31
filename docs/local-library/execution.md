@@ -21,3 +21,5 @@ Draft PR: https://github.com/ianho7/z-video/pull/28 (base codex/electron-integra
 ## Final local-library candidate (2026-10-31)
 
 Implementation and review repairs complete at 8a2b104; both independent review axes PASS. Final C-drive ordinary-file package contains 233 files / 503,148,872 bytes with zero reparse points and passes production renderer/SQLite/native/XML checks. Exact executable and evidence: docs/local-library/final-delivery.md. Native two-process local resume and owned scale/offline proofs are reused; no private/share/macOS/hardware/overlay claim is added. Final default-runner legacy fixture flake is recorded truthfully rather than marked all-pass.
+
+All six task-created worktrees (local-01 through local-05 and local-review-fixes) have now been removed after ancestry/clean-or-known-preserved-evidence checks. Windows long-path cleanup was confined to the same verified task directory. Root dependencies, branches/commits, independent C package and preserved logs remain. Final D free space observed: 443,228,160 bytes; no unrelated cache/toolchain/worktree was deleted.
