@@ -8,9 +8,14 @@
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.renderer.json && node scripts/copy-renderer-assets.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "test": "npm run build && node scripts/run-tests.mjs",
-    "test:window": "npm run build && electron dist/tests/window-smoke.js",
+    "test:window": "npm run build && node scripts/run-window-smoke.mjs",
+    "test:appearance-window": "npm run build && node scripts/run-appearance-window-smoke.mjs",
     "test:player-window": "npm run build && electron dist/tests/player-window-smoke.js",
     "test:nas-player-window": "npm run build && electron dist/tests/nas-player-window-smoke.js",
+    "test:safe-storage-process": "npm run build && node scripts/run-safe-storage-process-smoke.mjs",
+    "package": "npm run build && node scripts/package-windows.mjs",
+    "verify:package": "node scripts/verify-windows-package.mjs",
+    "measure:windows": "node scripts/measure-windows-resources.mjs",
     "start": "npm run build && electron ."
   },
   "devDependencies": {

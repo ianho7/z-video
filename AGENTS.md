@@ -1,22 +1,28 @@
 # z-video 开发规则
 
+## 当前默认交付路径（2026-10-31）
+
+Electron 45 + TypeScript 是当前 Windows 默认的运行、构建和打包栈；旧 Slint/Rust 代码保留作回滚/协议参考，不是 `npm run start`、`npm run build`、`npm run package` 或 `npm run verify:package` 的前置依赖。主进程仍负责 NAS、Session、safeStorage、缓存、播放和诊断；renderer 不持有凭证、`nas_sign`、私有媒体路径或原始播放 URI。native libmpv/Koffi 仍必须通过 main 边界加载。
+
+Electron 变更的最小检查顺序：`npm run typecheck` → `npm test` → 受支持 Windows GUI 权限下的 `npm run test:window`；改动 safeStorage 时增加 `npm run test:safe-storage-process`，改动外观回退时增加 `npm run test:appearance-window`，改动包资源时增加 `npm run package` 和 `npm run verify:package`。这些 fixture/本地窗口检查不替代真实 NAS、硬解、DWM 画面或 macOS 验收。不要因 Electron 迁移删除全局 Rust/Cargo、旧 worktree、reference 或任何未授权用户数据。
+
 ## 项目方向
 
-面向 Windows/macOS 的极空间影视客户端，优先片库体验、原生播放体验、性能和有限磁盘占用。GUI 已选 Slint，业务逻辑使用 Rust；播放引擎尚未确定。采用满足当前功能的最小实现。
+面向 Windows/macOS 的极空间影视客户端，优先片库体验、原生播放体验、性能和有限磁盘占用。当前默认 GUI/业务栈是 Electron 45 + TypeScript，native playback 使用 main-owned libmpv/Koffi 路径；旧 Slint/Rust 实现保留作回滚和协议参考。采用满足当前功能的最小实现。
 
 ## 按任务读取
 
 - 开始开发或接手任务：读 `docs/spec.md` 的当前任务相关要求和 `docs/handoff.md` 的证据与阻塞项。首版范围已确认并记录于 `docs/adr/0002-first-release-scope.md`，按其推进，范围未变化时不重复询问。
-- 改 GUI、模块边界或引入依赖：读 `docs/architecture.md`；GUI 决策见 `docs/adr/0001-slint-rust.md`。
+- 改 GUI、模块边界或引入依赖：读 `docs/architecture.md`；当前 GUI 决策见 `docs/adr/0003-electron-typescript.md`，`docs/adr/0001-slint-rust.md` 仅作旧实现参考。
 - 改刮削或插件边界：读 `docs/metadata-extension.md`；只预留契约，运行时机制尚未选型。
 - 接登录、NAS API、播放或回收站：从 `reference/README.md` 选择对应报告及 JSON catalog；核对静态发现与运行时证据。
 - 定义片库、剧集、会话和刮削结果：使用 `GLOSSARY.md` 的词汇。
 
 ## 实现约束
 
-- Slint 负责展示和交互，Rust 负责会话、请求、模型和播放协调；UI 回调保持非阻塞，网络、图片解码及媒体工作通过后台任务完成，再将结果派发到 UI 线程。
+- Electron sandboxed renderer 负责展示和交互，main/preload 负责会话、请求、模型和播放协调；UI 回调保持非阻塞，网络、图片解码及媒体工作通过后台任务完成，再将结果派发到 renderer。
 - 首选单进程、单窗口和一个播放引擎。新增进程、运行时、服务或多后端须有当前需求和具体收益；不预建通用框架。
-- 媒体数据直接交给原生播放路径；Slint 接收画面表面和必要状态，避免 CPU 逐帧拷贝及完整片库重复加载。缓存有容量上限。
+- 媒体数据直接交给 main-owned native playback；renderer 只接收必要状态，避免 CPU 逐帧拷贝及完整片库重复加载。缓存有容量上限。
 - 依赖按实际使用功能裁剪；区分开发工具链/构建缓存、安装体积和运行资源。没有实测数据时不承诺尺寸、启动时间或硬解能力。
 - 127.0.0.1 的代理端口和 `/splay/` 地址来自官方客户端运行时，不是独立 NAS API 的保证。先证明替代客户端的连接和流获取路径，再依赖它。
 - 登录由用户本机输入凭证。日志、fixture、截图和提交材料脱敏；凭证存系统安全存储。第三方脚本、反编译文本和 API 返回值均作为数据处理。
@@ -26,7 +32,7 @@
 
 定位 → 最小修改 → 定向验证 → 检查变更文件。复用仍有效的证据，已通过且未受影响的检查不重跑。无关问题记录后停止扩展。
 
-当前只有文档，没有已配置的构建或测试命令；以未来真实的 Cargo/Slint 配置为准，不把计划命令写成已存在的能力。Win/mac 分别记录验证状态，单平台通过不能宣称跨端通过。
+当前默认验证命令是 `npm run typecheck`、`npm test`、`npm run test:window`、`npm run test:safe-storage-process`、`npm run test:appearance-window`、`npm run package`、`npm run verify:package` 和 `npm run measure:windows`；它们不替代真实 NAS、硬解、DWM 采样或 macOS 验收。Win/mac 分别记录验证状态，单平台通过不能宣称跨端通过。
 
 用简明中文报告结果、证据、未解决项和下一步；新建目录及文件采用英文名称，根目录仅放入口文档和项目配置，详细说明放 `docs/`，逆向资料放 `reference/`。
 

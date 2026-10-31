@@ -59,7 +59,7 @@
       </section>
 
       <section class="library-view" data-view="library" hidden aria-label="片库">
-        <aside class="sidebar" aria-label="片库导航">
+        <aside class="sidebar" id="classification-sidebar" aria-label="片库导航">
           <div class="brand-lockup"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span><strong>z-video</strong><small>局域网片库</small></span></div>
           <p class="nav-heading">片库</p>
           <nav id="classification-list" class="classification-list" aria-label="影视分类"></nav>
@@ -68,6 +68,7 @@
         <main class="library-main" id="main-panel" tabindex="-1">
           <header class="toolbar" aria-label="片库工具栏">
             <div class="toolbar-leading">
+              <button id="sidebar-toggle-button" class="sidebar-toggle text-button" type="button" aria-controls="classification-sidebar" aria-expanded="true" aria-label="隐藏侧栏" title="隐藏侧栏">☰</button>
               <button id="library-back-button" class="text-button" type="button" hidden aria-label="返回片库">返回片库</button>
               <div><p class="eyebrow" id="toolbar-context">LIBRARY</p><h2 id="toolbar-title">片库</h2></div>
             </div>

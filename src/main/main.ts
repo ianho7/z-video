@@ -10,6 +10,29 @@ import { MainPlaybackHost, type PlaybackHost } from "./player-host";
 
 let mainWindow: ReturnType<typeof createMainWindow> | undefined;
 let playbackHost: PlaybackHost | undefined;
+let playbackClose: Promise<void> | undefined;
+let quitting = false;
+
+function closePlaybackHost(): Promise<void> {
+  if (playbackClose) return playbackClose;
+  const host = playbackHost;
+  playbackHost = undefined;
+  playbackClose = Promise.resolve(host?.close()).catch((error: unknown) => {
+    console.error("z-video playback shutdown failed", error instanceof Error ? error.message : "unknown error");
+  }).finally(() => {
+    playbackClose = undefined;
+  });
+  return playbackClose;
+}
+
+function attachWindowLifecycle(window: ReturnType<typeof createMainWindow>): void {
+  window.once("closed", () => {
+    mainWindow = undefined;
+    // macOS keeps the app process after the last window closes. Windows
+    // reaches this cleanup through before-quit after window-all-closed.
+    if (process.platform === "darwin") void closePlaybackHost();
+  });
+}
 
 async function bootstrap(): Promise<void> {
   await app.whenReady();
@@ -29,11 +52,7 @@ async function bootstrap(): Promise<void> {
     onProgressSaved: (identity) => library.invalidateDetail(identity.collectionId, identity.classificationId),
   });
   registerIpcHandlers(controller, library, playbackBridge);
-  mainWindow.once("closed", () => {
-    void playbackHost?.close();
-    playbackHost = undefined;
-    mainWindow = undefined;
-  });
+  attachWindowLifecycle(mainWindow);
   app.on("activate", () => {
     if (!mainWindow || mainWindow.isDestroyed()) {
       mainWindow = createMainWindow();
@@ -42,11 +61,7 @@ async function bootstrap(): Promise<void> {
         nas,
         onProgressSaved: (identity) => library.invalidateDetail(identity.collectionId, identity.classificationId),
       });
-      mainWindow.once("closed", () => {
-        void playbackHost?.close();
-        playbackHost = undefined;
-        mainWindow = undefined;
-      });
+      attachWindowLifecycle(mainWindow);
     }
   });
 }
@@ -54,6 +69,13 @@ async function bootstrap(): Promise<void> {
 void bootstrap().catch((error: unknown) => {
   console.error("z-video failed to start", error instanceof Error ? error.message : "unknown error");
   app.exit(1);
+});
+
+app.on("before-quit", (event) => {
+  if (quitting) return;
+  event.preventDefault();
+  quitting = true;
+  void closePlaybackHost().finally(() => app.quit());
 });
 
 app.on("window-all-closed", () => {

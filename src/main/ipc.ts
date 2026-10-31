@@ -17,10 +17,10 @@ export function registerIpcHandlers(
   discovery = new DiscoveryController(),
 ): void {
   ipcMain.handle(IPC_CHANNELS.restore, () => controller.restore());
-  ipcMain.handle(IPC_CHANNELS.login, (_event, value: unknown) => controller.login(parseLoginInput(value)));
-  ipcMain.handle(IPC_CHANNELS.sendMfa, (_event, value: unknown) => controller.sendMfaCode(parseOptionalString(value)));
-  ipcMain.handle(IPC_CHANNELS.verifyMfa, (_event, value: unknown) => controller.verifyMfa(parseRequiredString(value, "验证码")));
-  ipcMain.handle(IPC_CHANNELS.logout, () => controller.logout());
+  ipcMain.handle(IPC_CHANNELS.login, async (_event, value: unknown) => ({ state: await controller.login(parseLoginInput(value)) }));
+  ipcMain.handle(IPC_CHANNELS.sendMfa, async (_event, value: unknown) => ({ state: await controller.sendMfaCode(parseOptionalString(value)) }));
+  ipcMain.handle(IPC_CHANNELS.verifyMfa, async (_event, value: unknown) => ({ state: await controller.verifyMfa(parseRequiredString(value, "验证码")) }));
+  ipcMain.handle(IPC_CHANNELS.logout, async () => ({ state: await controller.logout() }));
   ipcMain.handle(IPC_CHANNELS.listClassifications, () => controller.listClassifications());
   if (player) {
     ipcMain.handle(IPC_CHANNELS.playerChooseLocalFile, () => player.chooseLocalFile());
