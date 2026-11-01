@@ -6,6 +6,9 @@ export type LocalPlaybackControlCommand =
   | { type: "play" }
   | { type: "pause" }
   | { type: "seek"; positionSec: number }
+  | { type: "set-volume"; volume: number }
+  | { type: "set-muted"; muted: boolean }
+  | { type: "set-speed"; speed: number }
   | { type: "set-audio-track"; trackId: string }
   | { type: "set-subtitle-track"; trackId: string | null }
   | { type: "fullscreen"; enabled: boolean }
@@ -17,11 +20,19 @@ export interface LocalPlaybackTrack {
   selected?: boolean;
 }
 
+export interface LocalPlaybackSettings {
+  volume: number;
+  muted: boolean;
+  speed: number;
+}
+
 export type LocalPlaybackEvent =
   | { type: "loading"; mediaId: LocalPlaybackMediaId }
   | { type: "ready"; mediaId: LocalPlaybackMediaId; durationSec?: number }
   | { type: "state"; mediaId: LocalPlaybackMediaId; state: "playing" | "paused" | "buffering" | "ended" }
   | { type: "position"; mediaId: LocalPlaybackMediaId; positionSec: number; durationSec?: number }
+  | ({ type: "settings"; mediaId: LocalPlaybackMediaId } & LocalPlaybackSettings)
+  | { type: "control-error"; mediaId: LocalPlaybackMediaId; message: string }
   | { type: "tracks"; mediaId: LocalPlaybackMediaId; audio: LocalPlaybackTrack[]; subtitles: LocalPlaybackTrack[] }
   | { type: "error"; mediaId?: LocalPlaybackMediaId; message: string }
   | { type: "closed"; mediaId?: LocalPlaybackMediaId };
@@ -33,6 +44,7 @@ export interface LocalPlaybackOpenResult {
 export interface LocalPlaybackApi {
   open(mediaId: string): Promise<LocalPlaybackOpenResult>;
   command(command: LocalPlaybackControlCommand): Promise<void>;
+  chooseSubtitleFile(): Promise<{ loaded: boolean }>;
   onEvent(listener: (event: LocalPlaybackEvent) => void): () => void;
 }
 
@@ -52,6 +64,12 @@ export function isLocalPlaybackControlCommand(value: unknown): value is LocalPla
       return true;
     case "seek":
       return typeof record.positionSec === "number" && Number.isFinite(record.positionSec) && record.positionSec >= 0;
+    case "set-volume":
+      return typeof record.volume === "number" && Number.isFinite(record.volume) && record.volume >= 0 && record.volume <= 100;
+    case "set-muted":
+      return typeof record.muted === "boolean";
+    case "set-speed":
+      return typeof record.speed === "number" && Number.isFinite(record.speed) && record.speed >= 0.25 && record.speed <= 3;
     case "set-audio-track":
       return typeof record.trackId === "string" && record.trackId.trim().length > 0;
     case "set-subtitle-track":

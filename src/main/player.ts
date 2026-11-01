@@ -6,6 +6,8 @@ export type PlayerEngineEvent =
   | { type: "ready"; durationSec?: number }
   | { type: "state"; state: "playing" | "paused" | "buffering" | "ended" }
   | { type: "position"; positionSec: number; durationSec?: number }
+  | { type: "settings"; volume: number; muted: boolean; speed: number }
+  | { type: "control-error"; message: string }
   | { type: "tracks"; audio: Array<{ id: string; label: string; selected?: boolean }>; subtitles: Array<{ id: string; label: string; selected?: boolean }> }
   | { type: "error"; message: string }
   | { type: "closed" };
@@ -58,6 +60,9 @@ export interface PlayerEngine {
   play(): void | Promise<void>;
   pause(): void | Promise<void>;
   seek(positionSec: number): void | Promise<void>;
+  setVolume(volume: number): void | Promise<void>;
+  setMuted(muted: boolean): void | Promise<void>;
+  setSpeed(speed: number): void | Promise<void>;
   setAudioTrack(trackId: string): void | Promise<void>;
   setSubtitleTrack(trackId: string | null): void | Promise<void>;
   addSubtitleFile(path: string): void | Promise<void>;
@@ -163,6 +168,15 @@ export class LocalPlaybackCoordinator {
         // Do not persist the requested value until libmpv reports time-pos.
         await this.engine.seek(command.positionSec);
         break;
+      case "set-volume":
+        await this.engine.setVolume(command.volume);
+        break;
+      case "set-muted":
+        await this.engine.setMuted(command.muted);
+        break;
+      case "set-speed":
+        await this.engine.setSpeed(command.speed);
+        break;
       case "set-audio-track":
         await this.engine.setAudioTrack(command.trackId);
         active.audioTrackId = command.trackId;
@@ -171,6 +185,27 @@ export class LocalPlaybackCoordinator {
         await this.engine.setSubtitleTrack(command.trackId);
         active.subtitleTrackId = command.trackId;
         break;
+    }
+  }
+
+  async chooseExternalSubtitle(pickFile: () => Promise<string | undefined>): Promise<{ loaded: boolean }> {
+    const active = this.active;
+    if (!active || active.loadFailed) return { loaded: false };
+    const { generation, mediaId } = active;
+    let path: string | undefined;
+    try {
+      path = await pickFile();
+    } catch {
+      if (this.isCurrent(generation, mediaId)) this.emit({ type: "control-error", mediaId, message: "无法打开字幕选择器。" });
+      return { loaded: false };
+    }
+    if (!path || !this.isCurrent(generation, mediaId)) return { loaded: false };
+    try {
+      await this.engine.addSubtitleFile(path);
+      return { loaded: true };
+    } catch {
+      if (this.isCurrent(generation, mediaId)) this.emit({ type: "control-error", mediaId, message: "外部字幕加载失败。" });
+      return { loaded: false };
     }
   }
 
@@ -265,6 +300,12 @@ export class LocalPlaybackCoordinator {
         this.emit({ type: "position", mediaId, positionSec: position, ...(active.durationSec === undefined ? {} : { durationSec: active.durationSec }) });
         break;
       }
+      case "settings":
+        this.emit({ type: "settings", mediaId, volume: event.volume, muted: event.muted, speed: event.speed });
+        break;
+      case "control-error":
+        this.emit({ type: "control-error", mediaId, message: event.message });
+        break;
       case "tracks":
         this.applyTrackPreferences(active, event);
         this.updateSelectedTracks(active, event);

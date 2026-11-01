@@ -30,6 +30,18 @@ class FakePlayerEngine implements PlayerEngine {
     this.calls.push(`seek:${positionSec}`);
   }
 
+  setVolume(volume: number): void {
+    this.calls.push(`volume:${volume}`);
+  }
+
+  setMuted(muted: boolean): void {
+    this.calls.push(`muted:${muted}`);
+  }
+
+  setSpeed(speed: number): void {
+    this.calls.push(`speed:${speed}`);
+  }
+
   setAudioTrack(trackId: string): void {
     this.calls.push(`audio:${trackId}`);
   }

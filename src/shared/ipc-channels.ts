@@ -13,6 +13,7 @@ export const IPC_CHANNELS = {
   localLibraryScanProgress: "local-library:scan-progress",
   localPlaybackOpen: "local-playback:open",
   localPlaybackCommand: "local-playback:command",
+  localPlaybackChooseSubtitleFile: "local-playback:choose-subtitle-file",
   localPlaybackEvent: "local-playback:event",
   restore: "session:restore",
   login: "session:login",

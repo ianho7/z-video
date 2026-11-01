@@ -1,6 +1,6 @@
 # Local library contracts
 
-Status: Ticket 01 foundation contract, accepted 2026-10-31. Owners: `src/main/local-library-worker.ts`, `src/main/local-library-database.ts`, `src/main/local-library-ipc.ts`, and `src/shared/local-library-contracts.ts`.
+Status: Schema v1 foundation plus local playback IPC, accepted 2026-10-31 and extended 2026-11-01. Schema owners: `src/main/local-library-worker.ts`, `src/main/local-library-database.ts`, and `src/shared/local-library-contracts.ts`; playback owners: `src/main/player.ts`, `src/main/mpv-player.ts`, `src/main/player-host.ts`, and `src/shared/local-playback-contracts.ts`.
 
 ## Schema v1
 
@@ -30,6 +30,24 @@ Channels are defined in `src/shared/ipc-channels.ts` and exposed through `window
 Renderer-visible `LocalMediaItem` fields are `mediaId`, `sourceId`, `collectionId`, title, kind, optional year/plot/genres/rating/season/episode, artwork cache keys, size, modified time, and availability. Source summaries use a basename or a fixed drive/folder label; they never fall back to an absolute root. Absolute paths, UNC paths, source-relative paths, database rows, credentials, NAS signs, and raw playback URIs are never part of the public DTO. Worker, SQLite, filesystem and IPC errors are reduced to stable renderer-safe messages before entering state, scan results, or rejected IPC promises.
 
 Ticket 02 adds main-owned `scanFolder`, `cancelScan`, and bounded `onScanProgress` operations. A scan result reports counts, warnings, and `completed`/`cancelled`/`partial`/`unavailable` status without exposing a root path. A successful traversal is the only operation allowed to mark unseen files unavailable; cancellation, permission errors, and disconnected roots preserve existing rows and playback state. If a source becomes unreadable during traversal, the scan remains partial and the source is reported unavailable until a later successful refresh.
+
+## Local playback IPC
+
+`window.zVideo.localPlayback` is the renderer's only playback bridge. `local-playback:open` accepts an opaque `mediaId`; main resolves its private path through the local-library owner and passes it directly to libmpv. `local-playback:command` accepts play, pause, seek, audio/subtitle track, fullscreen, close, and these settings controls:
+
+- `set-volume`: finite number from 0 through 100.
+- `set-muted`: boolean.
+- `set-speed`: finite number from 0.25 through 3.
+
+`local-playback:event` may emit `{ type: "settings", mediaId, volume, muted, speed }`. These values are read from libmpv's `volume`, `mute`, and `speed` properties; the renderer does not treat a requested value as applied until this event arrives. The main-owned player keeps the latest settings in memory for the lifetime of the window and reapplies them when another media item starts. They are not written to SQLite.
+
+Non-fatal playback-control or subtitle failures use `{ type: "control-error", mediaId, message }`; they do not mark the media load as failed or disable playback controls.
+
+`local-playback:choose-subtitle-file` opens a main-owned picker limited to SRT, ASS, SSA, VTT, and SUB. The selected path remains in main and is passed to libmpv through `addSubtitleFile`; it is never sent through preload or a renderer event. Cancellation, no active playback, or a playback switch while the picker is open returns `{ loaded: false }` without loading a subtitle into the replacement media. A current selection returns `{ loaded: true }` after libmpv accepts it.
+
+Playback events, including settings, contain only the active opaque `mediaId` and renderer-safe values. Settings and subtitle selection do not change schema v1 or add persisted preferences.
+
+Native track labels are display text only. Main removes path components from libmpv-provided title/language metadata before emitting them and never reads `external-filename` into a renderer DTO.
 
 ## Identity
 

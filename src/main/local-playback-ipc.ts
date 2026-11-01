@@ -12,9 +12,11 @@ import type { LocalPlaybackHost } from "./player-host";
 export function registerLocalPlaybackIpcHandlers(host: LocalPlaybackHost): () => void {
   ipcMain.handle(IPC_CHANNELS.localPlaybackOpen, (_event, value: unknown) => withUiOperation("local-playback.open", () => host.open(parseMediaId(value))));
   ipcMain.handle(IPC_CHANNELS.localPlaybackCommand, (_event, value: unknown) => withUiOperation("local-playback.command", () => host.handle(parseControlCommand(value))));
+  ipcMain.handle(IPC_CHANNELS.localPlaybackChooseSubtitleFile, () => withUiOperation("local-playback.choose-subtitle-file", () => host.chooseSubtitleFile()));
   return () => {
     ipcMain.removeHandler(IPC_CHANNELS.localPlaybackOpen);
     ipcMain.removeHandler(IPC_CHANNELS.localPlaybackCommand);
+    ipcMain.removeHandler(IPC_CHANNELS.localPlaybackChooseSubtitleFile);
   };
 }
 

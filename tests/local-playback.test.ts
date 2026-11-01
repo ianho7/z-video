@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { LocalPlaybackEvent, LocalPlaybackStore } from "../src/shared/local-playback-contracts";
+import { isLocalPlaybackControlCommand, type LocalPlaybackEvent, type LocalPlaybackStore } from "../src/shared/local-playback-contracts";
 import type { LocalPlaybackState } from "../src/shared/local-library-contracts";
 import { LocalPlaybackCoordinator, type PlayerEngine, type PlayerEngineEvent } from "../src/main/player";
 
@@ -12,6 +12,7 @@ class FakeLocalEngine implements PlayerEngine {
   readonly starts: Array<{ path: string; startPositionSec: number | undefined; onEvent: (event: PlayerEngineEvent) => void }> = [];
   readonly calls: string[] = [];
   startError?: Error;
+  subtitleError?: Error;
 
   start(path: string, startPositionSec: number | undefined, onEvent: (event: PlayerEngineEvent) => void): void {
     this.starts.push({ path, startPositionSec, onEvent });
@@ -22,9 +23,15 @@ class FakeLocalEngine implements PlayerEngine {
   play(): void { this.calls.push("play"); }
   pause(): void { this.calls.push("pause"); }
   seek(positionSec: number): void { this.calls.push(`seek:${positionSec}`); }
+  setVolume(volume: number): void { this.calls.push(`volume:${volume}`); }
+  setMuted(muted: boolean): void { this.calls.push(`muted:${muted}`); }
+  setSpeed(speed: number): void { this.calls.push(`speed:${speed}`); }
   setAudioTrack(trackId: string): void { this.calls.push(`audio:${trackId}`); }
   setSubtitleTrack(trackId: string | null): void { this.calls.push(`subtitle:${trackId ?? "off"}`); }
-  addSubtitleFile(path: string): void { this.calls.push(`subtitle-file:${path}`); }
+  addSubtitleFile(path: string): void {
+    if (this.subtitleError) throw this.subtitleError;
+    this.calls.push(`subtitle-file:${path}`);
+  }
 }
 
 class MemoryPlaybackStore implements LocalPlaybackStore {
@@ -91,6 +98,71 @@ test("local playback resolves by opaque mediaId, restores state, and flushes obs
     updatedAtMs: store.saves[0].updatedAtMs,
   });
   assert.equal(events.some((event) => JSON.stringify(event).includes("C:\\\\private")), false);
+  await coordinator.close();
+});
+
+test("local playback controls stay within the supported settings ranges and report engine state", async () => {
+  const engine = new FakeLocalEngine();
+  const store = new MemoryPlaybackStore();
+  store.paths.set(mediaOne, "first.mp4");
+  const events: LocalPlaybackEvent[] = [];
+  const coordinator = createCoordinator(engine, store, events);
+
+  assert.equal(isLocalPlaybackControlCommand({ type: "set-volume", volume: 0 }), true);
+  assert.equal(isLocalPlaybackControlCommand({ type: "set-volume", volume: 100 }), true);
+  assert.equal(isLocalPlaybackControlCommand({ type: "set-volume", volume: 101 }), false);
+  assert.equal(isLocalPlaybackControlCommand({ type: "set-muted", muted: true }), true);
+  assert.equal(isLocalPlaybackControlCommand({ type: "set-muted", muted: "yes" }), false);
+  assert.equal(isLocalPlaybackControlCommand({ type: "set-speed", speed: 0.25 }), true);
+  assert.equal(isLocalPlaybackControlCommand({ type: "set-speed", speed: 3 }), true);
+  assert.equal(isLocalPlaybackControlCommand({ type: "set-speed", speed: 3.01 }), false);
+
+  await coordinator.open(mediaOne);
+  await coordinator.handle({ type: "set-volume", volume: 42 });
+  await coordinator.handle({ type: "set-muted", muted: true });
+  await coordinator.handle({ type: "set-speed", speed: 1.5 });
+  engine.starts[0].onEvent({ type: "settings", volume: 42, muted: true, speed: 1.5 });
+  engine.starts[0].onEvent({ type: "control-error", message: "播放控制失败。" });
+  engine.starts[0].onEvent({ type: "position", positionSec: 8, durationSec: 20 });
+  await coordinator.handle({ type: "pause" });
+
+  assert.deepEqual(engine.calls, ["stop", "volume:42", "muted:true", "speed:1.5", "pause"]);
+  assert.equal(events.some((event) => event.type === "error"), false);
+  assert.deepEqual(events.find((event) => event.type === "settings"), { type: "settings", mediaId: mediaOne, volume: 42, muted: true, speed: 1.5 });
+  assert.deepEqual(events.find((event) => event.type === "control-error"), { type: "control-error", mediaId: mediaOne, message: "播放控制失败。" });
+  assert.equal(store.saves.length, 1);
+  await coordinator.close();
+});
+
+test("external subtitle selection is canceled normally and cannot cross a playback generation", async () => {
+  const engine = new FakeLocalEngine();
+  const store = new MemoryPlaybackStore();
+  store.paths.set(mediaOne, "first.mp4");
+  store.paths.set(mediaTwo, "second.mp4");
+  const events: LocalPlaybackEvent[] = [];
+  const coordinator = createCoordinator(engine, store, events);
+
+  await coordinator.open(mediaOne);
+  assert.deepEqual(await coordinator.chooseExternalSubtitle(async () => undefined), { loaded: false });
+  assert.deepEqual(await coordinator.chooseExternalSubtitle(async () => "C:\\private\\captions.srt"), { loaded: true });
+  assert.equal(engine.calls.includes("subtitle-file:C:\\private\\captions.srt"), true);
+  assert.equal(JSON.stringify(events).includes("captions.srt"), false);
+  engine.subtitleError = new Error("C:\\private\\captions.srt failed to load");
+  assert.deepEqual(await coordinator.chooseExternalSubtitle(async () => "C:\\private\\broken.srt"), { loaded: false });
+  assert.deepEqual(events.find((event) => event.type === "control-error"), { type: "control-error", mediaId: mediaOne, message: "外部字幕加载失败。" });
+  assert.equal(JSON.stringify(events).includes("captions.srt"), false);
+  engine.subtitleError = undefined;
+
+  const loadedSubtitles = engine.calls.filter((call) => call.startsWith("subtitle-file:")).length;
+  let selectSubtitle!: (path: string) => void;
+  const selection = coordinator.chooseExternalSubtitle(() => new Promise((resolve) => { selectSubtitle = resolve; }));
+  await coordinator.open(mediaTwo);
+  selectSubtitle("C:\\private\\captions.srt");
+
+  assert.deepEqual(await selection, { loaded: false });
+  assert.equal(engine.calls.filter((call) => call.startsWith("subtitle-file:")).length, loadedSubtitles);
+  assert.equal(JSON.stringify(events).includes("captions.srt"), false);
+  assert.equal(events.some((event) => event.type === "error"), false);
   await coordinator.close();
 });
 

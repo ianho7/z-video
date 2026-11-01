@@ -33,6 +33,7 @@ const IPC_CHANNELS = {
   localLibraryScanProgress: "local-library:scan-progress",
   localPlaybackOpen: "local-playback:open",
   localPlaybackCommand: "local-playback:command",
+  localPlaybackChooseSubtitleFile: "local-playback:choose-subtitle-file",
   localPlaybackEvent: "local-playback:event",
   restore: "session:restore",
   login: "session:login",
@@ -83,6 +84,7 @@ const api: ElectronApi = {
   localPlayback: {
     open: (mediaId: string) => ipcRenderer.invoke(IPC_CHANNELS.localPlaybackOpen, mediaId),
     command: (command: LocalPlaybackControlCommand) => ipcRenderer.invoke(IPC_CHANNELS.localPlaybackCommand, command) as Promise<void>,
+    chooseSubtitleFile: () => ipcRenderer.invoke(IPC_CHANNELS.localPlaybackChooseSubtitleFile) as Promise<{ loaded: boolean }>,
     onEvent: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, value: Parameters<typeof listener>[0]) => listener(value);
       ipcRenderer.on(IPC_CHANNELS.localPlaybackEvent, handler);

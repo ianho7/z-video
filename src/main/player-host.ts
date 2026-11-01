@@ -28,6 +28,7 @@ export interface PlaybackHost {
 export interface LocalPlaybackHost {
   open(mediaId: string): Promise<LocalPlaybackOpenResult>;
   handle(command: LocalPlaybackControlCommand): Promise<void>;
+  chooseSubtitleFile(): Promise<{ loaded: boolean }>;
   close(): Promise<void>;
 }
 
@@ -183,6 +184,7 @@ export class MainLocalPlaybackHost implements LocalPlaybackHost {
   constructor(
     private readonly window: BrowserWindow,
     store: LocalPlaybackStore,
+    private readonly fileDialog: PlaybackFileDialog = dialog,
   ) {
     const engine = new MpvNativePlayer(window);
     this.coordinator = new LocalPlaybackCoordinator(
@@ -204,6 +206,18 @@ export class MainLocalPlaybackHost implements LocalPlaybackHost {
 
   handle(command: LocalPlaybackControlCommand): Promise<void> {
     return this.coordinator.handle(command);
+  }
+
+  chooseSubtitleFile(): Promise<{ loaded: boolean }> {
+    if (this.closed || this.window.isDestroyed()) return Promise.resolve({ loaded: false });
+    return this.coordinator.chooseExternalSubtitle(async () => {
+      const result = await this.fileDialog.showOpenDialog(this.window, {
+        title: "加载外部字幕",
+        properties: ["openFile"],
+        filters: [{ name: "字幕文件", extensions: ["srt", "ass", "ssa", "vtt", "sub"] }],
+      });
+      return result.canceled ? undefined : result.filePaths[0];
+    });
   }
 
   async close(): Promise<void> {
