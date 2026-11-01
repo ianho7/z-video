@@ -40,6 +40,7 @@ async function runFirstProcess(): Promise<void> {
       if (imported.status !== "imported") throw new Error("owned fixture import was not accepted");
       const events = [];
       const unsubscribe = window.zVideo.localPlayback.onEvent((event) => events.push(event));
+      window.__localPlaybackSmoke = { events, unsubscribe };
       const opened = await window.zVideo.localPlayback.open(imported.item.mediaId);
       if (!opened.opened) throw new Error("production local playback open returned false");
       const readyDeadline = Date.now() + 20_000;
@@ -93,25 +94,11 @@ async function runFirstProcess(): Promise<void> {
         window.resizeTo(window.outerWidth + 2, window.outerHeight + 2);
         await new Promise((resolve) => setTimeout(resolve, hiddenResizeHoldMs));
       }
-      await window.zVideo.localPlayback.command({ type: "fullscreen", enabled: true });
-      const visualHoldMs = Number(${JSON.stringify(Number(process.env.Z_VIDEO_LOCAL_PLAYBACK_HOLD_MS ?? 0))});
-      if (Number.isFinite(visualHoldMs) && visualHoldMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, visualHoldMs));
-      }
-      await window.zVideo.localPlayback.command({ type: "close" });
-      const closeDeadline = Date.now() + 5_000;
-      while (Date.now() < closeDeadline && (!events.some((event) => event.type === "closed") || document.querySelector('[data-view="player"]')?.hidden !== true)) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      unsubscribe();
-      const closedLayout = document.querySelector('[data-view="player"]')?.hidden === true;
-      if (!closedLayout) throw new Error("production renderer did not return to the library after local close");
       return {
         mediaId: imported.item.mediaId,
         positionSec: observed.positionSec,
         durationSec: observed.durationSec,
         playerLayout,
-        fullscreenCommandIssued: true,
         events,
         fixturePathLeaked: JSON.stringify(events).includes(${JSON.stringify(fixturePath)}),
       };
@@ -126,7 +113,6 @@ async function runFirstProcess(): Promise<void> {
         controlsHeight: number;
         toggleEnabled: boolean;
       };
-      fullscreenCommandIssued: boolean;
       events: LocalPlaybackEvent[];
       fixturePathLeaked: boolean;
     };
@@ -135,10 +121,65 @@ async function runFirstProcess(): Promise<void> {
     assert.equal(result.fixturePathLeaked, false);
     assert.ok(result.events.some((event) => event.type === "ready"));
     assert.ok(result.events.some((event) => event.type === "state" && event.state === "paused"));
-    assert.ok(result.events.some((event) => event.type === "closed"));
-    assert.equal(result.fullscreenCommandIssued, true);
+
+    const fullscreenShortcutHandled = await window.webContents.executeJavaScript(`(() => {
+      const event = new KeyboardEvent("keydown", { key: "f", code: "KeyF", bubbles: true, cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    })()`, true) as boolean;
+    assert.equal(fullscreenShortcutHandled, true, "renderer should handle the F fullscreen shortcut");
+    const fullscreenDeadline = Date.now() + 5_000;
+    while (Date.now() < fullscreenDeadline && !window.isFullScreen()) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(window.isFullScreen(), true, "F shortcut should enter fullscreen");
+
+    const focusedEscapeHandled = await window.webContents.executeJavaScript(`(() => {
+      document.querySelector("#player-speed")?.focus();
+      const event = new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    })()`, true) as boolean;
+    assert.equal(focusedEscapeHandled, false, "form-control focus should retain native Escape handling");
+    assert.equal(window.isFullScreen(), true, "Escape on a form control should not exit fullscreen");
+
+    await window.webContents.executeJavaScript('document.querySelector(".player-surface")?.focus()', true);
+    const escapeShortcutHandled = await window.webContents.executeJavaScript(`(() => {
+      const event = new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    })()`, true) as boolean;
+    assert.equal(escapeShortcutHandled, true, "renderer should handle Escape while the player surface is focused");
+    const exitFullscreenDeadline = Date.now() + 5_000;
+    while (Date.now() < exitFullscreenDeadline && window.isFullScreen()) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(window.isFullScreen(), false, "Escape shortcut should exit fullscreen");
+
+    const closeFullscreenShortcutHandled = await window.webContents.executeJavaScript(`(() => {
+      const event = new KeyboardEvent("keydown", { key: "f", code: "KeyF", bubbles: true, cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    })()`, true) as boolean;
+    assert.equal(closeFullscreenShortcutHandled, true, "renderer should handle F before closing local playback");
+    const closeFullscreenDeadline = Date.now() + 5_000;
+    while (Date.now() < closeFullscreenDeadline && !window.isFullScreen()) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(window.isFullScreen(), true, "local playback should be closed while fullscreen is active");
+
+    const visualHoldMs = Number(process.env.Z_VIDEO_LOCAL_PLAYBACK_HOLD_MS ?? 0);
+    if (Number.isFinite(visualHoldMs) && visualHoldMs > 0) await new Promise((resolve) => setTimeout(resolve, visualHoldMs));
+    const closed = await window.webContents.executeJavaScript(`(async () => {
+      await window.zVideo.localPlayback.command({ type: "close" });
+      const closeDeadline = Date.now() + 5_000;
+      const smoke = window.__localPlaybackSmoke;
+      while (Date.now() < closeDeadline && (!smoke.events.some((event) => event.type === "closed") || document.querySelector('[data-view="player"]')?.hidden !== true)) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      const closedLayout = document.querySelector('[data-view="player"]')?.hidden === true;
+      if (!closedLayout) throw new Error("production renderer did not return to the library after local close");
+      smoke.unsubscribe();
+      return { closedLayout, events: smoke.events };
+    })()`, true) as { closedLayout: boolean; events: LocalPlaybackEvent[] };
+    assert.equal(closed.closedLayout, true);
+    assert.ok(closed.events.some((event) => event.type === "closed"));
     assert.equal(window.isFullScreen(), false, "closing local playback must leave the BrowserWindow out of fullscreen");
-    await writeFile(resultPath, JSON.stringify(result), "utf8");
+    await writeFile(resultPath, JSON.stringify({ ...result, events: closed.events }), "utf8");
   } finally {
     dialog.showOpenDialog = originalShowOpenDialog;
   }

@@ -97,5 +97,21 @@ button:disabled { cursor: wait; opacity: .55; }
 #player-seek { width: 100%; accent-color: #d7f36b; }
 .player-time { min-width: 110px; color: #9fa7a0; font-variant-numeric: tabular-nums; font-size: 12px; text-align: right; }
 .player-secondary-row select { min-width: 120px; padding: 6px 8px; border: 1px solid #363d38; border-radius: 6px; color: #e8ece5; background: #191d1b; }
-.player-secondary-row .status { flex: 1 1 auto; min-height: 0; margin: 0 0 0 auto; }
+.player-speed-control, .player-volume-control { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 7px; white-space: nowrap; }
+.player-speed-control select { min-width: 76px; padding: 6px 7px; border: 1px solid #363d38; border-radius: 6px; color: #e8ece5; background: #191d1b; }
+#player-volume { width: 88px; margin: 0; accent-color: #d7f36b; }
+#player-mute-button { min-width: 66px; white-space: nowrap; }
+#player-subtitle-file-button { white-space: nowrap; }
+.player-secondary-row .status { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden; margin: 0 0 0 auto; text-overflow: ellipsis; white-space: nowrap; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+@media (max-width: 980px) {
+  .player-controls { padding-right: 18px; padding-left: 18px; }
+  .player-control-row { gap: 8px; }
+  .player-controls > .player-control-row > button { padding-right: 10px; padding-left: 10px; }
+  .seek-control { min-width: 90px; }
+  .player-time { min-width: 80px; font-size: 11px; }
+  .player-secondary-row select { min-width: 92px; padding-right: 6px; padding-left: 6px; }
+  .player-speed-control select { min-width: 70px; padding-right: 5px; padding-left: 5px; }
+  #player-volume { width: 72px; }
+}
