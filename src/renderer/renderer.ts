@@ -192,14 +192,15 @@ function handlePlayerShortcut(event: KeyboardEvent): void {
   if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
   if (isPlayerFormControl(event.target) || isPlayerFormControl(document.activeElement)) return;
 
-  if (event.code === "Escape" && playerFullscreen) {
+  const shortcut = event.key === " " ? "Space" : event.key && event.key !== "Unidentified" ? event.key : event.code;
+  if (shortcut === "Escape" && playerFullscreen) {
     event.preventDefault();
     setPlayerFullscreen(false);
     return;
   }
-  if (event.code === "Space" && (isPlayerButton(event.target) || isPlayerButton(document.activeElement))) return;
+  if (shortcut === "Space" && (isPlayerButton(event.target) || isPlayerButton(document.activeElement))) return;
 
-  switch (event.code) {
+  switch (shortcut) {
     case "Space":
       event.preventDefault();
       void sendLocalPlaybackCommand({ type: playerState === "playing" ? "pause" : "play" });
@@ -208,7 +209,7 @@ function handlePlayerShortcut(event: KeyboardEvent): void {
     case "ArrowRight": {
       event.preventDefault();
       const current = Number(playerSeek?.value ?? 0);
-      const direction = event.code === "ArrowRight" ? 1 : -1;
+      const direction = shortcut === "ArrowRight" ? 1 : -1;
       const next = Math.max(0, current + direction * 5);
       const positionSec = playerDurationSec > 0 ? Math.min(playerDurationSec, next) : next;
       void sendLocalPlaybackCommand({ type: "seek", positionSec });
@@ -218,7 +219,7 @@ function handlePlayerShortcut(event: KeyboardEvent): void {
     case "ArrowDown": {
       event.preventDefault();
       const current = Number(playerVolume?.value ?? 100);
-      const direction = event.code === "ArrowUp" ? 1 : -1;
+      const direction = shortcut === "ArrowUp" ? 1 : -1;
       const volume = Math.max(0, Math.min(100, current + direction * 5));
       if (playerVolume) playerVolume.value = String(volume);
       void sendLocalPlaybackCommand({ type: "set-volume", volume }).then((sent) => {

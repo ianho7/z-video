@@ -41,6 +41,9 @@ if (first.mediaId !== second.mediaId) throw new Error("fresh process changed the
 if (!(second.positionSec >= Math.max(6, first.positionSec - 0.75))) {
   throw new Error(`fresh process resume was not near the committed position: first=${first.positionSec} second=${second.positionSec}`);
 }
+if (second.positionSec > first.positionSec + 2.5) {
+  throw new Error(`fresh process resumed too far past the committed position: first=${first.positionSec} second=${second.positionSec}`);
+}
 console.log(`PASS: production local playback persisted observed native position and restored it in a fresh Electron process (mediaId=${first.mediaId}, first=${first.positionSec.toFixed(2)}s, second=${second.positionSec.toFixed(2)}s, logs=${firstLog},${secondLog}, profile=${profile})`);
 
 async function runStage(stage, resultPath) {

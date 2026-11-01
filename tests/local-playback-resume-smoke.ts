@@ -35,6 +35,10 @@ async function runFirstProcess(): Promise<void> {
   try {
     require("../src/main/main.js");
     const window = await waitForProductionWindow();
+    window.setSize(900, 640);
+    const actualWindowSize = window.getSize();
+    const actualContentSize = window.getContentSize();
+    assert.ok(actualWindowSize[0] >= 900 && actualWindowSize[1] >= 640, "production BrowserWindow should honor the 900×640 minimum size");
     const result = await window.webContents.executeJavaScript(`(async () => {
       const imported = await window.zVideo.localLibrary.openVideo();
       if (imported.status !== "imported") throw new Error("owned fixture import was not accepted");
@@ -122,6 +126,69 @@ async function runFirstProcess(): Promise<void> {
     assert.ok(result.events.some((event) => event.type === "ready"));
     assert.ok(result.events.some((event) => event.type === "state" && event.state === "paused"));
 
+    const spaceShortcut = await window.webContents.executeJavaScript(`(() => {
+      const smoke = window.__localPlaybackSmoke;
+      const position = smoke.events.filter((event) => event.type === "position").at(-1);
+      const event = new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true });
+      const eventIndex = smoke.events.length;
+      window.dispatchEvent(event);
+      return { defaultPrevented: event.defaultPrevented, key: event.key, code: event.code, eventIndex, positionSec: position?.positionSec ?? 0 };
+    })()`, true) as { defaultPrevented: boolean; key: string; code: string; eventIndex: number; positionSec: number };
+    assert.equal(spaceShortcut.defaultPrevented, true, "renderer should handle a key-only Space shortcut");
+    assert.equal(spaceShortcut.key, " ");
+    assert.equal(spaceShortcut.code, "", "Space smoke must omit the physical code");
+    let spacePlayedAndAdvanced = false;
+    const spaceDeadline = Date.now() + 5_000;
+    while (Date.now() < spaceDeadline && !spacePlayedAndAdvanced) {
+      spacePlayedAndAdvanced = await window.webContents.executeJavaScript(`(() => {
+        const events = window.__localPlaybackSmoke.events.slice(${JSON.stringify(spaceShortcut.eventIndex)});
+        const playing = events.some((event) => event.type === "state" && event.state === "playing");
+        const position = events.filter((event) => event.type === "position").at(-1);
+        return playing && position?.positionSec > ${JSON.stringify(spaceShortcut.positionSec + 0.25)};
+      })()`, true) as boolean;
+      if (!spacePlayedAndAdvanced) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.equal(spacePlayedAndAdvanced, true, "key-only Space should start native playback and advance observed time");
+
+    const pauseStartIndex = await window.webContents.executeJavaScript(`(async () => {
+      const eventIndex = window.__localPlaybackSmoke.events.length;
+      await window.zVideo.localPlayback.command({ type: "pause" });
+      return eventIndex;
+    })()`, true) as number;
+    let pausedAgain = false;
+    const pauseAgainDeadline = Date.now() + 5_000;
+    while (Date.now() < pauseAgainDeadline && !pausedAgain) {
+      pausedAgain = await window.webContents.executeJavaScript(`window.__localPlaybackSmoke.events.slice(${JSON.stringify(pauseStartIndex)}).some((event) => event.type === "state" && event.state === "paused")`, true) as boolean;
+      if (!pausedAgain) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.equal(pausedAgain, true, "native playback should pause before the arrow seek proof");
+
+    const arrowShortcut = await window.webContents.executeJavaScript(`(() => {
+      const smoke = window.__localPlaybackSmoke;
+      const position = smoke.events.filter((event) => event.type === "position").at(-1);
+      const duration = position?.durationSec ?? 0;
+      const event = new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true });
+      const eventIndex = smoke.events.length;
+      window.dispatchEvent(event);
+      return { defaultPrevented: event.defaultPrevented, key: event.key, code: event.code, eventIndex, positionSec: position?.positionSec ?? 0, targetSec: Math.min(duration, (position?.positionSec ?? 0) + 4.5) };
+    })()`, true) as { defaultPrevented: boolean; key: string; code: string; eventIndex: number; positionSec: number; targetSec: number };
+    assert.equal(arrowShortcut.defaultPrevented, true, "renderer should handle a key-only ArrowRight shortcut");
+    assert.equal(arrowShortcut.key, "ArrowRight");
+    assert.equal(arrowShortcut.code, "", "ArrowRight smoke must omit the physical code");
+    let arrowSeekObserved = false;
+    const arrowDeadline = Date.now() + 5_000;
+    while (Date.now() < arrowDeadline && !arrowSeekObserved) {
+      arrowSeekObserved = await window.webContents.executeJavaScript(`(() => {
+        const events = window.__localPlaybackSmoke.events;
+        const afterArrow = events.slice(${JSON.stringify(arrowShortcut.eventIndex)});
+        const position = afterArrow.filter((event) => event.type === "position").at(-1);
+        const state = events.filter((event) => event.type === "state").at(-1);
+        return position?.positionSec >= ${JSON.stringify(arrowShortcut.targetSec)} && state?.state === "paused";
+      })()`, true) as boolean;
+      if (!arrowSeekObserved) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.equal(arrowSeekObserved, true, "key-only ArrowRight should seek native playback by 5 seconds and preserve pause");
+
     const fullscreenShortcutHandled = await window.webContents.executeJavaScript(`(() => {
       const event = new KeyboardEvent("keydown", { key: "f", code: "KeyF", bubbles: true, cancelable: true });
       window.dispatchEvent(event);
@@ -179,7 +246,9 @@ async function runFirstProcess(): Promise<void> {
     assert.equal(closed.closedLayout, true);
     assert.ok(closed.events.some((event) => event.type === "closed"));
     assert.equal(window.isFullScreen(), false, "closing local playback must leave the BrowserWindow out of fullscreen");
-    await writeFile(resultPath, JSON.stringify({ ...result, events: closed.events }), "utf8");
+    const finalPosition = closed.events.filter((event) => event.type === "position").at(-1);
+    assert.ok(finalPosition && finalPosition.type === "position", "close should retain a final observed native position");
+    await writeFile(resultPath, JSON.stringify({ ...result, initialPositionSec: result.positionSec, positionSec: finalPosition.positionSec, requestedWindowSize: [900, 640], actualWindowSize, actualContentSize, events: closed.events }), "utf8");
   } finally {
     dialog.showOpenDialog = originalShowOpenDialog;
   }
