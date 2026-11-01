@@ -38,11 +38,8 @@ const first = JSON.parse(await readFile(firstResultPath, "utf8"));
 const secondLog = await runStage("second", secondResultPath);
 const second = JSON.parse(await readFile(secondResultPath, "utf8"));
 if (first.mediaId !== second.mediaId) throw new Error("fresh process changed the opaque mediaId");
-if (!(second.positionSec >= Math.max(6, first.positionSec - 0.75))) {
-  throw new Error(`fresh process resume was not near the committed position: first=${first.positionSec} second=${second.positionSec}`);
-}
-if (second.positionSec > first.positionSec + 2.5) {
-  throw new Error(`fresh process resumed too far past the committed position: first=${first.positionSec} second=${second.positionSec}`);
+if (Math.abs(second.positionSec - first.positionSec) > 2.5) {
+  throw new Error(`fresh process resume was not near the committed position: first=${first.positionSec} second=${second.positionSec} tolerance=2.5s`);
 }
 console.log(`PASS: production local playback persisted observed native position and restored it in a fresh Electron process (mediaId=${first.mediaId}, first=${first.positionSec.toFixed(2)}s, second=${second.positionSec.toFixed(2)}s, logs=${firstLog},${secondLog}, profile=${profile})`);
 

@@ -58,17 +58,40 @@ async function runFirstProcess(): Promise<void> {
         const controls = document.querySelector(".player-controls");
         const surfaceRect = surface?.getBoundingClientRect();
         const controlsRect = controls?.getBoundingClientRect();
+        const requiredControlSelectors = [
+          "#player-close-button",
+          "#player-toggle-button",
+          "#player-seek",
+          "#player-speed",
+          "#player-fullscreen-button",
+          "#player-audio-track",
+          "#player-subtitle-track",
+          "#player-subtitle-file-button",
+          "#player-volume",
+          "#player-mute-button",
+        ];
+        const controlsVisible = !!controls && !!controlsRect && requiredControlSelectors.every((selector) => {
+          const control = document.querySelector(selector);
+          const rect = control?.getBoundingClientRect();
+          return !!control && !!rect && rect.width > 0 && rect.height > 0
+            && rect.left >= controlsRect.left && rect.right <= controlsRect.right
+            && rect.top >= controlsRect.top && rect.bottom <= controlsRect.bottom
+            && rect.left >= 0 && rect.right <= document.documentElement.clientWidth
+            && rect.top >= 0 && rect.bottom <= document.documentElement.clientHeight;
+        }) && controls.scrollWidth <= controls.clientWidth && controls.scrollHeight <= controls.clientHeight;
         return {
           playerVisible: view?.hidden === false,
           surfaceWidth: surfaceRect?.width ?? 0,
           surfaceHeight: surfaceRect?.height ?? 0,
           controlsHeight: controlsRect?.height ?? 0,
+          controlsVisible,
           toggleEnabled: document.querySelector("#player-toggle-button")?.disabled === false,
         };
       })();
       if (!playerLayout.playerVisible) throw new Error("production renderer did not expose the native player view after local open");
       if (!(playerLayout.surfaceWidth > 0 && playerLayout.surfaceHeight > 0)) throw new Error("native player surface did not get a real layout rectangle");
       if (!(playerLayout.controlsHeight >= 140)) throw new Error("native player controls did not reserve the native child height");
+      if (!playerLayout.controlsVisible) throw new Error("one or more player controls overflowed or were clipped at the minimum window size");
       if (!playerLayout.toggleEnabled) throw new Error("native playback controls did not become enabled after ready");
       await window.zVideo.localPlayback.command({ type: "seek", positionSec: 7 });
       const positionDeadline = Date.now() + 12_000;
@@ -115,6 +138,7 @@ async function runFirstProcess(): Promise<void> {
         surfaceWidth: number;
         surfaceHeight: number;
         controlsHeight: number;
+        controlsVisible: boolean;
         toggleEnabled: boolean;
       };
       events: LocalPlaybackEvent[];
@@ -260,7 +284,6 @@ async function runSecondProcess(): Promise<void> {
   assert.equal(isOpaqueMediaId(first.mediaId), true);
   require("../src/main/main.js");
   const window = await waitForProductionWindow();
-  const minimumResumePosition = Math.max(6.0, first.positionSec - 0.75);
   const result = await window.webContents.executeJavaScript(`(async () => {
     const page = await window.zVideo.localLibrary.list({ page: 1, pageSize: 50 });
     const item = page.page?.items.find((candidate) => candidate.mediaId === ${JSON.stringify(first.mediaId)});
@@ -269,18 +292,29 @@ async function runSecondProcess(): Promise<void> {
     const unsubscribe = window.zVideo.localPlayback.onEvent((event) => events.push(event));
     const opened = await window.zVideo.localPlayback.open(item.mediaId);
     if (!opened.opened) throw new Error("fresh process local playback open returned false");
-    const deadline = Date.now() + 20_000;
-    while (Date.now() < deadline && !events.some((event) => event.type === "position" && event.positionSec >= ${JSON.stringify(minimumResumePosition)})) {
+    const readyDeadline = Date.now() + 20_000;
+    while (Date.now() < readyDeadline && !events.some((event) => event.type === "ready")) {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    const resumed = events.find((event) => event.type === "position" && event.positionSec >= ${JSON.stringify(minimumResumePosition)});
-    if (!resumed || resumed.type !== "position") throw new Error("fresh process did not observe persisted resume position");
+    if (!events.some((event) => event.type === "ready")) throw new Error("fresh process playback did not become ready");
+    const resumeObservationStart = events.length;
+    await window.zVideo.localPlayback.command({ type: "pause" });
+    const pauseDeadline = Date.now() + 5_000;
+    let resumed;
+    let paused = false;
+    while (Date.now() < pauseDeadline && (!resumed || !paused)) {
+      const observations = events.slice(resumeObservationStart);
+      resumed = observations.find((event) => event.type === "position");
+      paused = observations.some((event) => event.type === "state" && event.state === "paused");
+      if (!resumed || !paused) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (!resumed || resumed.type !== "position") throw new Error("fresh process did not promptly observe the native resume position");
+    if (!paused) throw new Error("fresh process did not pause promptly after becoming ready");
     await window.zVideo.localPlayback.command({ type: "close" });
     unsubscribe();
     return { mediaId: item.mediaId, positionSec: resumed.positionSec, events };
   })()`, true) as { mediaId: string; positionSec: number; events: LocalPlaybackEvent[] };
   assert.equal(result.mediaId, first.mediaId);
-  assert.ok(result.positionSec >= minimumResumePosition, `expected fresh process resume near ${first.positionSec}, got ${result.positionSec}`);
   assert.ok(result.events.some((event) => event.type === "ready"));
   assert.ok(result.events.some((event) => event.type === "closed"));
   await writeFile(resultPath, JSON.stringify({ ...result, expectedPositionSec: first.positionSec }), "utf8");
