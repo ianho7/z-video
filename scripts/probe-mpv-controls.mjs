@@ -47,7 +47,7 @@ function assertMpvSuccess(result, operation) {
 const handle = create();
 if (!handle) throw new Error("mpv_create failed.");
 try {
-  for (const [name, value] of [["config", "no"], ["terminal", "no"], ["idle", "yes"], ["vo", "null"], ["ao", "null"]]) {
+  for (const [name, value] of [["config", "no"], ["terminal", "no"], ["idle", "yes"], ["keep-open", "yes"], ["vo", "null"], ["ao", "null"]]) {
     assertMpvSuccess(setOption(handle, name, value), `option ${name}`);
   }
   assertMpvSuccess(initialize(handle), "initialize");
@@ -69,6 +69,13 @@ try {
   }
   assert.equal(loaded, true, "sample video did not reach file-loaded");
 
+  const duration = Number(read(handle, "duration"));
+  assertMpvSuccess(setProperty(handle, "time-pos", String(Math.max(0, duration - 0.15))), "seek near EOF");
+  assertMpvSuccess(setProperty(handle, "pause", "no"), "unpause near EOF");
+  for (let attempt = 0; attempt < 100 && (read(handle, "eof-reached") !== "yes" || read(handle, "pause") !== "yes"); attempt += 1) waitEvent(handle, 0.1);
+  assert.equal(read(handle, "eof-reached"), "yes", "sample video did not reach EOF");
+  assert.equal(read(handle, "pause"), "yes", "keep-open should pause at EOF");
+
   const before = Number(read(handle, "track-list/count"));
   assertMpvSuccess(command(handle, ["sub-add", join(root, "tests", "fixtures", "test_subtitle.srt"), "select", null]), "sub-add");
   let selected = false;
@@ -80,7 +87,18 @@ try {
     if (!selected) waitEvent(handle, 0.1);
   }
   assert.equal(selected, true, "external subtitle was not selected");
-  console.log(`PASS libmpv properties volume=0..100 mute=yes/no speed=0.25..3; subtitle tracks ${before} -> ${read(handle, "track-list/count")} (selected)`);
+
+  assertMpvSuccess(setProperty(handle, "time-pos", "0"), "seek back from EOF");
+  for (let attempt = 0; attempt < 100 && read(handle, "eof-reached") !== "no"; attempt += 1) waitEvent(handle, 0.1);
+  assert.equal(read(handle, "eof-reached"), "no", "seeking back should clear EOF state");
+  assertMpvSuccess(setProperty(handle, "pause", "no"), "replay after EOF");
+  let resumed = false;
+  for (let attempt = 0; attempt < 20 && !resumed; attempt += 1) {
+    waitEvent(handle, 0.1);
+    resumed = Number(read(handle, "time-pos")) > 0.15;
+  }
+  assert.equal(resumed, true, "play after EOF did not resume from the beginning");
+  console.log(`PASS libmpv settings ranges; keep-open EOF -> seek 0 -> replay; external subtitle selected at EOF (tracks ${before} -> ${read(handle, "track-list/count")})`);
 } finally {
   terminate(handle);
 }

@@ -145,6 +145,7 @@ export class MpvNativePlayer implements PlayerEngine {
       this.setOption("osc", "no");
       this.setOption("input-default-bindings", "no");
       this.setOption("input-vo-keyboard", "no");
+      this.setOption("keep-open", "yes");
       this.setOption("vo", "gpu");
       this.setOption("gpu-api", "d3d11");
       this.setOption("hwdec", "auto-safe");
@@ -185,6 +186,7 @@ export class MpvNativePlayer implements PlayerEngine {
   }
 
   play(): void {
+    if (this.readProperty("eof-reached") === "yes") this.setProperty("time-pos", "0");
     this.setProperty("pause", "no");
   }
 
@@ -300,9 +302,10 @@ export class MpvNativePlayer implements PlayerEngine {
     if (!this.handle) return;
     const paused = this.readProperty("pause") === "yes";
     const idle = this.readProperty("idle-active") === "yes";
+    const eofReached = this.readProperty("eof-reached") === "yes";
     const position = this.readNumber("time-pos");
     const duration = this.readNumber("duration");
-    const state = idle ? "ended" : paused ? "paused" : "playing";
+    const state = idle || eofReached ? "ended" : paused ? "paused" : "playing";
     if (force || this.lastState !== state) {
       this.lastState = state;
       this.emit({ type: "state", state });

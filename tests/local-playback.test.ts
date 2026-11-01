@@ -134,6 +134,24 @@ test("local playback controls stay within the supported settings ranges and repo
   await coordinator.close();
 });
 
+test("native EOF state marks the observed local playback as watched", async () => {
+  const engine = new FakeLocalEngine();
+  const store = new MemoryPlaybackStore();
+  store.paths.set(mediaOne, "first.mp4");
+  const events: LocalPlaybackEvent[] = [];
+  const coordinator = createCoordinator(engine, store, events);
+
+  await coordinator.open(mediaOne);
+  engine.starts[0].onEvent({ type: "position", positionSec: 29, durationSec: 30 });
+  engine.starts[0].onEvent({ type: "state", state: "ended" });
+  await coordinator.close();
+
+  assert.deepEqual(events.find((event) => event.type === "state"), { type: "state", mediaId: mediaOne, state: "ended" });
+  assert.equal(store.saves.length, 1);
+  assert.equal(store.saves[0]?.positionSec, 29);
+  assert.equal(store.saves[0]?.watched, true);
+});
+
 test("external subtitle selection is canceled normally and cannot cross a playback generation", async () => {
   const engine = new FakeLocalEngine();
   const store = new MemoryPlaybackStore();

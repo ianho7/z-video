@@ -20,21 +20,24 @@ Ownership:
 
 ## Verification record
 
-Implementation commit: `b93ab32bcef0c8cc2986d460c01b15c230221c4f` (`codex/player-core`). Commands were run from the worktree root:
+Initial implementation commit: `b93ab32bcef0c8cc2986d460c01b15c230221c4f` (`codex/player-core`). The EOF follow-up was verified from the same worktree root with:
 
 | Command | Result |
 |---|---|
 | `npm run typecheck` | PASS |
 | `npm run build` | PASS |
-| `node --test dist/tests/local-playback.test.js dist/tests/player.test.js dist/tests/mpv-player.test.js` | PASS, 17/17 |
+| `node --test dist/tests/local-playback.test.js dist/tests/player.test.js dist/tests/mpv-player.test.js` | PASS, 18/18 |
+| `node scripts/probe-mpv-controls.mjs` | PASS against Windows libmpv |
 | `git diff --check` | PASS |
 
-The tests cover control range validation and settings event routing, non-fatal control errors, subtitle cancellation and generation changes, and path-safe native track DTOs. The test output was captured on command stdout; no separate log file was written. Node emitted a `MODULE_TYPELESS_PACKAGE_JSON` warning while loading the existing shared local-library contract, but all tests passed.
+The focused tests cover control range validation and settings event routing, non-fatal control errors, subtitle cancellation and generation changes, path-safe native track DTOs, and the coordinator's watched-state handling when native playback reports `ended`. The test output was captured on command stdout; no separate log file was written. Node emitted a `MODULE_TYPELESS_PACKAGE_JSON` warning while loading the existing shared local-library contract, but all tests passed.
 
-The successful native probe was run headlessly from the worktree with a PowerShell here-string piped to `node -`, Koffi, and `D:\project\z-video\vendor\mpv\libmpv-2.dll`. It created libmpv with `config=no`, `terminal=no`, `idle=yes`, `vo=null`, and `ao=null`; set and read volume `0`/`100`, mute `yes`/`no`, and speed `0.25`/`3`; loaded `assets/test_video.mp4`; and selected `tests/fixtures/test_subtitle.srt` through `sub-add`. Actual stdout:
+The native probe command was `node scripts/probe-mpv-controls.mjs`, run headlessly from the worktree root. It loaded Koffi and `D:\project\z-video\vendor\mpv\libmpv-2.dll`, created libmpv with `config=no`, `terminal=no`, `idle=yes`, `keep-open=yes`, `vo=null`, and `ao=null`; set and read volume `0`/`100`, mute `yes`/`no`, and speed `0.25`/`3`; loaded `assets/test_video.mp4`; drove it to EOF; selected `tests/fixtures/test_subtitle.srt` through `sub-add` while at EOF; then sought to zero and confirmed playback advanced after unpausing. Actual stdout:
 
 ```text
-PASS libmpv properties volume=0..100 mute=yes/no speed=0.25..3; subtitle tracks 2 -> 3 (selected)
+PASS libmpv settings ranges; keep-open EOF -> seek 0 -> replay; external subtitle selected at EOF (tracks 2 -> 3)
 ```
 
-The equivalent replayable probe is `scripts/probe-mpv-controls.mjs`; run it from the worktree with `node scripts/probe-mpv-controls.mjs`. It was saved after the successful inline run and has not been rerun. The native probe also observed that libmpv's `external-filename` contains the fixture path while the fallback `title` is only `test_subtitle.srt`; the application does not read or forward `external-filename`. No native probe log was persisted; its output was stdout only.
+No separate probe log was persisted; output was captured on command stdout. `MpvNativePlayer` now keeps the native file open at EOF, reports the observed `eof-reached` property as `ended` so watched progress still commits, and seeks to zero before unpausing when play is requested at EOF. A normal seek only sets `time-pos`, preserving the current pause state. Explicit stop and close still terminate the native player.
+
+The probe also observed that libmpv's `external-filename` contains the fixture path while the fallback `title` is only `test_subtitle.srt`; the application does not read or forward `external-filename`.
