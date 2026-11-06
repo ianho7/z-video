@@ -43,10 +43,12 @@ export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, 
     const filePath = selection.filePaths[0];
     return database.importVideo(filePath, dirname(filePath));
   }));
-  ipcMain.handle(IPC_CHANNELS.localLibraryList, (_event, value: unknown) => withUiOperation("local-library.list", async () => ({
-    state: database.getState(),
-    page: await database.list(parseLocalLibraryQuery(value)),
-  })));
+  ipcMain.handle(IPC_CHANNELS.localLibraryList, (_event, value: unknown) => withUiOperation("local-library.list", async () => {
+    const page = await database.list(parseLocalLibraryQuery(value));
+    // State is read after the page so scan-time queries include committed rows
+    // and their current source summary without refreshing on every progress event.
+    return { state: await database.refreshState(), page };
+  }));
   ipcMain.handle(IPC_CHANNELS.localLibraryGet, (_event, value: unknown) => withUiOperation("local-library.get", async () => {
     const mediaId = parseMediaId(value);
     const detail = await database.getDetail(mediaId);

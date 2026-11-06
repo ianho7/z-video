@@ -65,6 +65,8 @@ export interface LocalMediaDetail {
   collectionKind?: "movie" | "show" | "unclassified";
   /** All files in the same local collection, ordered by season/episode. */
   episodes: LocalMediaItem[];
+  /** Saved local progress for the selected media, when one exists. */
+  playback?: LocalPlaybackState;
 }
 
 export interface LocalContinueWatchingItem {

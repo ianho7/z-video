@@ -186,6 +186,9 @@ async function run(): Promise<void> {
     assert.equal(detail?.collectionKind, "show");
     assert.equal(detail?.episodes.length, 1);
     assert.equal(detail?.episodes[0]?.mediaId, episodeId);
+    assert.equal(detail?.playback?.mediaId, episodeId);
+    assert.equal(detail?.playback?.positionSec, 37);
+    assert.equal(detail?.playback?.durationSec, 180);
     const episodeFilter = await database.list({ page: 1, pageSize: 1, filter: "episode", sort: "title" });
     assert.equal(episodeFilter.totalCount, 1);
     assert.equal(episodeFilter.items[0]?.mediaId, episodeId);
@@ -204,6 +207,10 @@ async function run(): Promise<void> {
     });
     assert.equal(savedPlayback.positionSec, 42);
     assert.equal((await database.getPlayback(episodeId))?.audioTrackId, "audio-1");
+    const updatedDetail = await database.getDetail(episodeId);
+    assert.equal(updatedDetail?.playback?.mediaId, episodeId);
+    assert.equal(updatedDetail?.playback?.positionSec, 42);
+    assert.equal(updatedDetail?.playback?.audioTrackId, "audio-1");
     const continueWatching = await database.listContinueWatching();
     assert.equal(continueWatching.some((entry) => entry.item.mediaId === episodeId && entry.playback.positionSec === 42), true);
 

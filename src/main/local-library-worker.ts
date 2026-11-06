@@ -957,6 +957,7 @@ function getDetail(mediaId: string): LocalMediaDetail | undefined {
   const item = get(mediaId);
   if (!item) return undefined;
   const db = requireDatabase();
+  const playback = getPlayback(item.mediaId);
   const collection = db.prepare("SELECT title, kind FROM collections WHERE collection_id = ?").get(item.collectionId) as { title?: string; kind?: string } | undefined;
   const rows = db.prepare(`
     SELECT media_files.media_id AS mediaId, media_files.collection_id AS collectionId, media_files.source_id AS sourceId,
@@ -976,6 +977,7 @@ function getDetail(mediaId: string): LocalMediaDetail | undefined {
     ...(collection?.title ? { collectionTitle: collection.title } : {}),
     ...(collection?.kind === "movie" || collection?.kind === "show" || collection?.kind === "unclassified" ? { collectionKind: collection.kind } : {}),
     episodes: rows.map(toPublicItem),
+    ...(playback ? { playback } : {}),
   };
 }
 
