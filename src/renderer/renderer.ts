@@ -2,12 +2,15 @@ import type {
   LocalArtworkReference,
   LocalContinueWatchingItem,
   LocalLibraryQuery,
+  LocalLibrarySort,
   LocalLibraryState,
   LocalMediaDetail,
   LocalMediaItem,
+  LocalPlaybackState,
   LocalScanProgress,
   LocalScanResult,
 } from "../shared/local-library-contracts";
+import { isLocalLibrarySort } from "../shared/app-preferences-contracts";
 import type { LocalPlaybackEvent } from "../shared/local-playback-contracts";
 
 const PAGE_SIZE = 24;
@@ -45,12 +48,16 @@ const detailTitle = document.querySelector<HTMLElement>("#media-detail-title");
 const detailMeta = document.querySelector<HTMLElement>("#media-detail-meta");
 const detailPlot = document.querySelector<HTMLElement>("#media-detail-plot");
 const detailOpen = document.querySelector<HTMLButtonElement>("#media-detail-open");
+const detailRestart = document.querySelector<HTMLButtonElement>("#media-detail-restart");
+const detailResume = document.querySelector<HTMLElement>("#media-detail-resume");
+const detailPlotSection = document.querySelector<HTMLDetailsElement>("#media-detail-plot-section");
 const detailAvailability = document.querySelector<HTMLElement>("#detail-availability");
 const detailEpisodesSection = document.querySelector<HTMLElement>("#detail-episodes-section");
 const detailEpisodes = document.querySelector<HTMLElement>("#detail-episodes");
 const playerView = document.querySelector<HTMLElement>('[data-view="player"]');
 const playerSurface = document.querySelector<HTMLElement>(".player-surface");
 const playerSurfaceMessage = document.querySelector<HTMLElement>("#player-surface-message");
+const playerCurrentTitle = document.querySelector<HTMLElement>("#player-current-title");
 const playerCloseButton = document.querySelector<HTMLButtonElement>("#player-close-button");
 const playerToggleButton = document.querySelector<HTMLButtonElement>("#player-toggle-button");
 const playerSeek = document.querySelector<HTMLInputElement>("#player-seek");
@@ -72,6 +79,12 @@ let requestEpoch = 0;
 let continueEpoch = 0;
 let searchTimer: number | undefined;
 let scanId: string | undefined;
+let scanProgress: LocalScanProgress | undefined;
+let scanRefreshTimer: number | undefined;
+let scanRefreshInFlight = false;
+let scanRefreshQueued = false;
+let scanCommit = 0;
+let scanRenderedCommit = -1;
 let sourceBusy = false;
 let playerState: "playing" | "paused" | "buffering" | "ended" = "paused";
 let playerDurationSec = 0;
@@ -82,6 +95,9 @@ let playerVolumeLevel = 100;
 let playerVolumeDragging = false;
 let playerVolumeRestoreAfterDrag = false;
 let playerSpeedValue = 1;
+let activePlaybackTitle = "";
+let activeDetailPlayback: LocalPlaybackState | undefined;
+const continuePlaybackByMediaId = new Map<string, LocalPlaybackState>();
 
 let currentQuery: LocalLibraryQuery = { page: 1, pageSize: PAGE_SIZE, filter: "all", sort: "recent" };
 
@@ -95,6 +111,8 @@ interface ArtworkTask {
 const artworkQueue: ArtworkTask[] = [];
 let artworkActive = 0;
 let artworkObserver: IntersectionObserver | undefined;
+
+type LocalSort = LocalLibrarySort;
 
 function escapeHtml(value: unknown): string {
   return String(value ?? "").replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character] ?? character);
@@ -116,10 +134,69 @@ function formatTime(seconds: number): string {
     : `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
 }
 
+function isDetailOrPlayerVisible(): boolean {
+  return detail?.hidden === false || playerView?.hidden === false;
+}
+
+function detailPlayback(detailValue: LocalMediaDetail): LocalPlaybackState | undefined {
+  const candidate = detailValue.playback;
+  return candidate?.mediaId === detailValue.item.mediaId ? candidate : continuePlaybackByMediaId.get(detailValue.item.mediaId);
+}
+
+function hasResume(playback: LocalPlaybackState | undefined): playback is LocalPlaybackState {
+  return Boolean(playback && playback.positionSec > 0 && !playback.watched);
+}
+
+function currentEmptyCopy(totalCount: number): { title: string; message: string } {
+  if (currentQuery.query) return { title: "没有匹配结果", message: "换一个关键词，或清除搜索条件。" };
+  if (currentQuery.filter && currentQuery.filter !== "all") {
+    return { title: "当前类型没有媒体", message: "切换类型或查看全部媒体。" };
+  }
+  if (scanProgress?.status === "running") {
+    return {
+      title: "正在扫描本地来源",
+      message: `已提交 ${scanProgress.importedFiles + scanProgress.updatedFiles} 项，新条目会在扫描中陆续显示。`,
+    };
+  }
+  if (state?.sources.length === 0) return { title: "还没有本地来源", message: "选择一个文件夹开始索引，或直接打开一个视频文件。" };
+  if (totalCount === 0) return { title: "来源中没有可播放视频", message: "扫描其他目录，或确认来源中包含支持的视频文件。" };
+  return { title: "暂无内容", message: "选择一个本地来源开始索引。" };
+}
+
+function updateEmptyCopy(totalCount: number): void {
+  const copy = currentEmptyCopy(totalCount);
+  if (libraryEmptyTitle) libraryEmptyTitle.textContent = copy.title;
+  if (libraryEmptyMessage) libraryEmptyMessage.textContent = copy.message;
+}
+
+function preserveGridFocus(): string | undefined {
+  const focused = document.activeElement;
+  return focused instanceof HTMLElement && focused.closest("#library-grid") ? focused.dataset.mediaId : undefined;
+}
+
+function restoreGridFocus(mediaId: string | undefined): void {
+  if (!mediaId) return;
+  document.querySelector<HTMLButtonElement>(`#library-grid [data-media-id="${cssEscape(mediaId)}"]`)?.focus({ preventScroll: true });
+}
+
+function cssEscape(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]/g, (character) => `\\${character}`);
+}
+
+async function restoreSortPreference(): Promise<void> {
+  try {
+    const result = await window.zVideo.appPreferences.get();
+    if (isLocalLibrarySort(result.sort)) setQuery({ sort: result.sort, page: 1 });
+  } catch {
+    // Missing or malformed settings fall back to the local recent sort.
+  }
+}
+
 function showPlayer(visible: boolean): void {
   const wasVisible = playerView ? !playerView.hidden : false;
   if (appShell) appShell.hidden = visible;
   if (playerView) playerView.hidden = !visible;
+  if (playerCurrentTitle) playerCurrentTitle.textContent = visible ? activePlaybackTitle : "";
   if (visible && !wasVisible) playerSurface?.focus();
 }
 
@@ -266,6 +343,8 @@ function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
     setPlayerControlsEnabled(false);
     setPlayerStatus("");
     if (playerSurfaceMessage) playerSurfaceMessage.textContent = "正在准备原生播放器…";
+    activePlaybackTitle = "";
+    if (playerCurrentTitle) playerCurrentTitle.textContent = "";
     closeDetail();
     setMessage("本地播放已关闭。");
     return;
@@ -448,12 +527,12 @@ function card(item: LocalMediaItem): HTMLElement {
 
 function renderPage(page: { items: LocalMediaItem[]; totalCount: number; page: number; pageSize: number }): void {
   activePage = page;
+  const focusedMediaId = preserveGridFocus();
   if (!libraryGrid || !libraryEmpty) return;
   artworkObserver?.disconnect();
   libraryGrid.replaceChildren(...page.items.map(card));
   libraryEmpty.hidden = page.items.length > 0;
-  if (libraryEmptyTitle) libraryEmptyTitle.textContent = page.totalCount === 0 && currentQuery.query ? "没有匹配结果" : "还没有本地影片";
-  if (libraryEmptyMessage) libraryEmptyMessage.textContent = page.totalCount === 0 && currentQuery.query ? "换一个关键词，或清除搜索条件。" : "选择一个文件夹开始索引，或直接打开一个视频文件。";
+  updateEmptyCopy(page.totalCount);
   if (pageScope) pageScope.textContent = page.totalCount ? `${page.totalCount} 项 · 第 ${page.page} 页` : "";
   renderPagination(page);
   artworkObserver = new IntersectionObserver((entries) => {
@@ -466,6 +545,7 @@ function renderPage(page: { items: LocalMediaItem[]; totalCount: number; page: n
     }
   }, { rootMargin: "320px" });
   libraryGrid.querySelectorAll<HTMLElement>("[data-artwork-media-id]").forEach((element) => artworkObserver?.observe(element));
+  restoreGridFocus(focusedMediaId);
 }
 
 function renderPagination(page: { totalCount: number; page: number; pageSize: number }): void {
@@ -492,7 +572,9 @@ function renderPagination(page: { totalCount: number; page: number; pageSize: nu
 function renderContinue(items: LocalContinueWatchingItem[]): void {
   if (!continueSection || !continueRow) return;
   continueRow.replaceChildren();
-  if (items.length === 0 || currentQuery.query || currentQuery.sourceId) {
+  continuePlaybackByMediaId.clear();
+  for (const entry of items) continuePlaybackByMediaId.set(entry.item.mediaId, entry.playback);
+  if (items.length === 0 || currentQuery.query || currentQuery.sourceId || detail?.hidden === false || playerView?.hidden === false) {
     continueSection.hidden = true;
     return;
   }
@@ -503,6 +585,7 @@ function renderContinue(items: LocalContinueWatchingItem[]): void {
     button.type = "button";
     button.className = "continue-card";
     button.dataset.mediaId = entry.item.mediaId;
+    button.setAttribute("aria-label", `继续观看《${entry.item.title}》，从 ${formatTime(entry.playback.positionSec)} 开始`);
     const poster = document.createElement("span");
     poster.className = "continue-image";
     const kind = artworkKind(entry.item);
@@ -519,7 +602,7 @@ function renderContinue(items: LocalContinueWatchingItem[]): void {
     const duration = entry.playback.durationSec && entry.playback.durationSec > 0 ? entry.playback.durationSec : 0;
     const percent = duration ? Math.min(100, Math.round(entry.playback.positionSec / duration * 100)) : 0;
     const detailLine = document.createElement("span");
-    detailLine.textContent = `${kindLabel(entry.item.kind)} · ${percent ? `${percent}%` : "已记录进度"}`;
+    detailLine.textContent = `${kindLabel(entry.item.kind)} · 已保存至 ${formatTime(entry.playback.positionSec)}${percent ? ` · ${percent}%` : ""}`;
     const track = document.createElement("span");
     track.className = "progress-track";
     const progress = document.createElement("span");
@@ -563,16 +646,57 @@ async function pumpArtwork(): Promise<void> {
   }
 }
 
-async function loadLibrary(): Promise<void> {
+function scheduleScanRefresh(): void {
+  if (scanProgress?.status !== "running" || scanCommit <= scanRenderedCommit) return;
+  if (isDetailOrPlayerVisible()) {
+    scanRefreshQueued = true;
+    return;
+  }
+  if (scanRefreshTimer !== undefined || scanRefreshInFlight) {
+    scanRefreshQueued = true;
+    return;
+  }
+  scanRefreshTimer = window.setTimeout(() => {
+    scanRefreshTimer = undefined;
+    if (isDetailOrPlayerVisible()) {
+      scanRefreshQueued = true;
+      return;
+    }
+    scanRefreshInFlight = true;
+    scanRefreshQueued = false;
+    const renderedCommit = scanCommit;
+    void loadLibrary().then((applied) => {
+      if (applied) scanRenderedCommit = Math.max(scanRenderedCommit, renderedCommit);
+    }).finally(() => {
+      scanRefreshInFlight = false;
+      if (scanCommit > scanRenderedCommit) scheduleScanRefresh();
+    });
+  }, 350);
+}
+
+async function loadLibrary(): Promise<boolean> {
+  if (isDetailOrPlayerVisible()) {
+    scanRefreshQueued = true;
+    return false;
+  }
   const epoch = ++requestEpoch;
+  const query = { ...currentQuery };
   try {
-    const result = await window.zVideo.localLibrary.list(currentQuery);
-    if (epoch !== requestEpoch || !result.page) return;
+    const result = await window.zVideo.localLibrary.list(query);
+    if (epoch !== requestEpoch || !result.page) return false;
     renderState(result.state);
     renderPage(result.page);
-    setMessage(result.page.totalCount ? `已索引 ${result.page.totalCount} 项媒体。` : result.state.sources.length ? "来源中暂未找到支持的视频。" : "添加一个本地来源开始索引。", false);
+    if (scanProgress?.status === "running") {
+      setMessage(`正在扫描：已索引 ${result.page.totalCount} 项，已提交 ${scanProgress.importedFiles + scanProgress.updatedFiles} 项。`, false);
+    } else if (result.page.totalCount) {
+      setMessage(`已索引 ${result.page.totalCount} 项媒体。`, false);
+    } else {
+      setMessage(currentEmptyCopy(0).message, false);
+    }
+    return true;
   } catch (error) {
     if (epoch === requestEpoch) setMessage(error instanceof Error ? error.message : "本地片库加载失败。", true);
+    return false;
   }
 }
 
@@ -598,6 +722,7 @@ function setQuery(patch: Partial<LocalLibraryQuery>): void {
 async function openDetail(mediaId: string): Promise<void> {
   const epoch = ++requestEpoch;
   activeDetail = undefined;
+  activeDetailPlayback = undefined;
   selectedMediaId = mediaId;
   if (detail) detail.hidden = false;
   if (collectionSection) collectionSection.hidden = true;
@@ -619,6 +744,9 @@ async function openDetail(mediaId: string): Promise<void> {
 function renderDetail(detailValue: LocalMediaDetail): void {
   const item = detailValue.item;
   selectedMediaId = item.mediaId;
+  activeDetailPlayback = detailPlayback(detailValue);
+  activePlaybackTitle = item.title;
+  if (playerCurrentTitle) playerCurrentTitle.textContent = activePlaybackTitle;
   if (detailTitle) detailTitle.textContent = detailValue.collectionTitle && detailValue.collectionKind === "show" ? detailValue.collectionTitle : item.title;
   if (detailMeta) {
     const parts = [kindLabel(item.kind)];
@@ -628,8 +756,32 @@ function renderDetail(detailValue: LocalMediaDetail): void {
     detailMeta.textContent = parts.join(" · ");
   }
   if (detailPlot) detailPlot.textContent = item.plot ?? "暂无本地简介。";
+  if (detailPlotSection) {
+    const plotLength = item.plot?.trim().length ?? 0;
+    detailPlotSection.open = plotLength <= 220;
+  }
   if (detailAvailability) detailAvailability.textContent = item.available ? "来源可用" : "来源离线";
-  if (detailOpen) detailOpen.textContent = item.available ? "播放" : "尝试播放";
+  const playback = activeDetailPlayback;
+  const resume = hasResume(playback);
+  const restartAfterCompletion = Boolean(playback?.watched);
+  if (detailOpen) {
+    detailOpen.textContent = resume
+      ? `继续 · ${formatTime(playback.positionSec)}`
+      : restartAfterCompletion ? "重新播放" : item.available ? "播放" : "尝试播放";
+    detailOpen.dataset.playbackMode = resume ? "resume" : restartAfterCompletion ? "restart" : "play";
+  }
+  if (detailRestart) {
+    detailRestart.hidden = !resume;
+    detailRestart.dataset.playbackMode = "restart";
+  }
+  if (detailResume) {
+    detailResume.hidden = !playback;
+    detailResume.textContent = playback
+      ? playback.watched
+        ? `已保存进度 ${formatTime(playback.positionSec)} · 已看完`
+        : `已保存进度 ${formatTime(playback.positionSec)} · 可继续或从头开始`
+      : "";
+  }
   if (detailEpisodesSection && detailEpisodes) {
     const episodes = detailValue.episodes.filter((candidate) => candidate.kind === "episode");
     detailEpisodesSection.hidden = episodes.length === 0;
@@ -666,11 +818,30 @@ function renderDetail(detailValue: LocalMediaDetail): void {
 function closeDetail(): void {
   requestEpoch += 1;
   activeDetail = undefined;
+  activeDetailPlayback = undefined;
   selectedMediaId = undefined;
   if (detail) detail.hidden = true;
   if (collectionSection) collectionSection.hidden = false;
-  void loadLibrary();
+  void loadLibrary().then((applied) => {
+    if (applied) {
+      scanRenderedCommit = scanCommit;
+      scanRefreshQueued = false;
+    }
+  });
   void loadContinueWatching();
+}
+
+async function openSelectedLocalMedia(restart = false): Promise<void> {
+  if (!selectedMediaId) return;
+  activePlaybackTitle = activeDetail?.item.title ?? "本地媒体";
+  showPlayer(true);
+  setPlayerStatus(restart ? "正在从头打开本地媒体…" : "正在打开本地媒体…");
+  try {
+    await window.zVideo.localPlayback.open(selectedMediaId, restart ? { restart: true } : undefined);
+  } catch (error: unknown) {
+    showPlayer(false);
+    setMessage(error instanceof Error ? error.message : "本地播放请求失败。", true);
+  }
 }
 
 async function handleImport(operation: () => Promise<Awaited<ReturnType<typeof window.zVideo.localLibrary.openVideo>>>): Promise<void> {
@@ -705,6 +876,10 @@ async function runScan(operation: () => Promise<LocalScanResult>): Promise<void>
   chooseFolderButton?.setAttribute("disabled", "true");
   openVideoButton?.setAttribute("disabled", "true");
   scanId = undefined;
+  scanProgress = { scanId: "pending", sourceId: "", status: "running", scannedFiles: 0, importedFiles: 0, updatedFiles: 0, warningCount: 0 };
+  scanCommit = 0;
+  scanRenderedCommit = -1;
+  scanRefreshQueued = false;
   cancelScanButton?.setAttribute("hidden", "true");
   setMessage("正在扫描本地来源…");
   try {
@@ -717,6 +892,10 @@ async function runScan(operation: () => Promise<LocalScanResult>): Promise<void>
   } finally {
     sourceBusy = false;
     scanId = undefined;
+    if (scanRefreshTimer !== undefined) {
+      window.clearTimeout(scanRefreshTimer);
+      scanRefreshTimer = undefined;
+    }
     cancelScanButton?.setAttribute("hidden", "true");
     scanFolderButton?.removeAttribute("disabled");
     chooseFolderButton?.removeAttribute("disabled");
@@ -725,6 +904,12 @@ async function runScan(operation: () => Promise<LocalScanResult>): Promise<void>
 }
 
 function renderScanProgress(progress: LocalScanProgress): void {
+  scanProgress = progress;
+  const commit = progress.importedFiles + progress.updatedFiles;
+  if (progress.status === "running") {
+    scanCommit = Math.max(scanCommit, commit);
+    scheduleScanRefresh();
+  }
   if (progress.status === "running") {
     scanId = progress.scanId;
     if (scanStatus) scanStatus.textContent = `扫描中：${progress.scannedFiles} 个视频，新增 ${progress.importedFiles}，更新 ${progress.updatedFiles}`;
@@ -794,22 +979,11 @@ continueRow?.addEventListener("click", (event) => {
 detailEpisodes?.addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-media-id]");
   const mediaId = button?.dataset.mediaId;
-  if (!mediaId || !activeDetail) return;
-  const episode = activeDetail.episodes.find((candidate) => candidate.mediaId === mediaId);
-  if (!episode) return;
-  activeDetail = { ...activeDetail, item: episode };
-  renderDetail(activeDetail);
+  if (mediaId) void openDetail(mediaId);
 });
 detailBack?.addEventListener("click", closeDetail);
-detailOpen?.addEventListener("click", () => {
-  if (!selectedMediaId) return;
-  showPlayer(true);
-  setPlayerStatus("正在打开本地媒体…");
-  void window.zVideo.localPlayback.open(selectedMediaId).catch((error: unknown) => {
-    showPlayer(false);
-    setMessage(error instanceof Error ? error.message : "本地播放请求失败。", true);
-  });
-});
+detailOpen?.addEventListener("click", () => { void openSelectedLocalMedia(detailOpen.dataset.playbackMode === "restart"); });
+detailRestart?.addEventListener("click", () => { void openSelectedLocalMedia(true); });
 playerCloseButton?.addEventListener("click", () => void sendLocalPlaybackCommand({ type: "close" }));
 playerToggleButton?.addEventListener("click", () => {
   void sendLocalPlaybackCommand({ type: playerState === "playing" ? "pause" : "play" });
@@ -878,7 +1052,12 @@ searchClear?.addEventListener("click", () => {
   searchInput?.focus();
 });
 filterSelect?.addEventListener("change", () => { setQuery({ filter: filterSelect.value as LocalLibraryQuery["filter"], page: 1 }); void loadLibrary(); });
-sortSelect?.addEventListener("change", () => { setQuery({ sort: sortSelect.value as LocalLibraryQuery["sort"], page: 1 }); void loadLibrary(); });
+sortSelect?.addEventListener("change", () => {
+  const sort = sortSelect.value as LocalSort;
+  setQuery({ sort, page: 1 });
+  void window.zVideo.appPreferences.setSort(sort).catch(() => setMessage("排序偏好保存失败，本次排序仍已应用。", true));
+  void loadLibrary();
+});
 libraryPagination?.addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-page]");
   const page = Number(button?.dataset.page);
@@ -890,7 +1069,13 @@ window.zVideo.localLibrary.onState(renderState);
 window.zVideo.localLibrary.onScanProgress(renderScanProgress);
 window.zVideo.localPlayback.onEvent(renderLocalPlaybackEvent);
 
-void window.zVideo.localLibrary.getState().then((next) => {
-  renderState(next);
-  return Promise.all([loadLibrary(), loadContinueWatching()]);
-}).catch((error: unknown) => setMessage(error instanceof Error ? error.message : "本地片库加载失败。", true));
+void (async () => {
+  try {
+    const next = await window.zVideo.localLibrary.getState();
+    await restoreSortPreference();
+    renderState(next);
+    await Promise.all([loadLibrary(), loadContinueWatching()]);
+  } catch (error: unknown) {
+    setMessage(error instanceof Error ? error.message : "本地片库加载失败。", true);
+  }
+})();
