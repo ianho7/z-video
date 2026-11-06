@@ -10,3 +10,4 @@ await import("../dist/tests/library-controller.test.js");
 await import("../dist/tests/local-library-contract.test.js");
 await import("../dist/tests/local-playback.test.js");
 await import("../dist/tests/mpv-player.test.js");
+await import("../dist/tests/app-preferences.test.js");

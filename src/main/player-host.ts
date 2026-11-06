@@ -9,6 +9,7 @@ import {
   type LocalPlaybackControlCommand,
   type LocalPlaybackEvent,
   type LocalPlaybackOpenResult,
+  type LocalPlaybackOpenOptions,
   type LocalPlaybackStore,
 } from "../shared/local-playback-contracts";
 import { IPC_CHANNELS } from "../shared/ipc-channels";
@@ -17,6 +18,7 @@ import { LocalPlaybackCoordinator, PlaybackCoordinator, type PlaybackIdentity, t
 import { NasError, type AuthenticatedSession, type NasCollectionDetail, type NasEpisode, type NasPlaybackProgress, type NasPlaybackStream } from "./nas-client";
 import type { SessionController } from "./session-controller";
 import { rendererEpisodeId } from "./episode-identity";
+import { AppPreferencesStore } from "./app-preferences";
 
 export interface PlaybackHost {
   chooseLocalFile(): Promise<{ opened: boolean }>;
@@ -26,7 +28,7 @@ export interface PlaybackHost {
 }
 
 export interface LocalPlaybackHost {
-  open(mediaId: string): Promise<LocalPlaybackOpenResult>;
+  open(mediaId: string, options?: LocalPlaybackOpenOptions): Promise<LocalPlaybackOpenResult>;
   handle(command: LocalPlaybackControlCommand): Promise<void>;
   chooseSubtitleFile(): Promise<{ loaded: boolean }>;
   close(): Promise<void>;
@@ -185,11 +187,15 @@ export class MainLocalPlaybackHost implements LocalPlaybackHost {
     private readonly window: BrowserWindow,
     store: LocalPlaybackStore,
     private readonly fileDialog: PlaybackFileDialog = dialog,
+    private readonly appPreferences?: AppPreferencesStore,
   ) {
-    const engine = new MpvNativePlayer(window);
+    const engine = new MpvNativePlayer(window, appPreferences?.get());
     this.coordinator = new LocalPlaybackCoordinator(
       engine,
-      (event) => this.send(event),
+      (event) => {
+        this.send(event);
+        if (event.type === "settings") void this.persistNativeSettings(event);
+      },
       (enabled) => {
         if (!window.isDestroyed()) window.setFullScreen(enabled);
       },
@@ -197,10 +203,10 @@ export class MainLocalPlaybackHost implements LocalPlaybackHost {
     );
   }
 
-  async open(mediaId: string): Promise<LocalPlaybackOpenResult> {
+  async open(mediaId: string, options?: LocalPlaybackOpenOptions): Promise<LocalPlaybackOpenResult> {
     if (this.closed || this.window.isDestroyed()) return { opened: false };
     assertLocalPlaybackMediaId(mediaId);
-    await this.coordinator.open(mediaId);
+    await this.coordinator.open(mediaId, options);
     return { opened: true };
   }
 
@@ -224,6 +230,16 @@ export class MainLocalPlaybackHost implements LocalPlaybackHost {
     if (this.closed) return;
     this.closed = true;
     await this.coordinator.close();
+    await this.appPreferences?.flush();
+  }
+
+  private async persistNativeSettings(event: Extract<LocalPlaybackEvent, { type: "settings" }>): Promise<void> {
+    if (!this.appPreferences) return;
+    try {
+      await this.appPreferences.confirmPlayback({ volume: event.volume, muted: event.muted, speed: event.speed });
+    } catch {
+      this.send({ type: "control-error", mediaId: event.mediaId, message: "播放设置保存失败，当前播放不受影响。" });
+    }
   }
 
   private send(event: LocalPlaybackEvent): void {

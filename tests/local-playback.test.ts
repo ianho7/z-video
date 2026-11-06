@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { isLocalPlaybackControlCommand, type LocalPlaybackEvent, type LocalPlaybackStore } from "../src/shared/local-playback-contracts";
+import { isLocalPlaybackControlCommand, isLocalPlaybackOpenOptions, type LocalPlaybackEvent, type LocalPlaybackStore } from "../src/shared/local-playback-contracts";
 import type { LocalPlaybackState } from "../src/shared/local-library-contracts";
 import { LocalPlaybackCoordinator, type PlayerEngine, type PlayerEngineEvent } from "../src/main/player";
 
@@ -134,6 +134,13 @@ test("local playback controls stay within the supported settings ranges and repo
   await coordinator.close();
 });
 
+test("local playback open options accept only the restart flag", () => {
+  assert.equal(isLocalPlaybackOpenOptions({}), true);
+  assert.equal(isLocalPlaybackOpenOptions({ restart: true }), true);
+  assert.equal(isLocalPlaybackOpenOptions({ restart: "yes" }), false);
+  assert.equal(isLocalPlaybackOpenOptions({ path: "C:\\private\\movie.mp4" }), false);
+});
+
 test("native EOF state marks the observed local playback as watched", async () => {
   const engine = new FakeLocalEngine();
   const store = new MemoryPlaybackStore();
@@ -257,6 +264,38 @@ test("switching files flushes the first media and fresh open restores its commit
   await secondCoordinator.open(mediaOne);
   assert.equal(secondEngine.starts[0]?.startPositionSec, 8);
   await secondCoordinator.close();
+});
+
+test("restart opens from zero and a failed restart preserves the committed history", async () => {
+  const engine = new FakeLocalEngine();
+  const store = new MemoryPlaybackStore();
+  store.paths.set(mediaOne, "first.mp4");
+  const previous: LocalPlaybackState = {
+    mediaId: mediaOne,
+    positionSec: 48,
+    durationSec: 90,
+    watched: true,
+    updatedAtMs: 123,
+  };
+  store.states.set(mediaOne, previous);
+  const coordinator = createCoordinator(engine, store, []);
+
+  engine.startError = new Error("decoder failed");
+  await coordinator.open(mediaOne, { restart: true });
+  assert.equal(engine.starts[0]?.startPositionSec, 0);
+  assert.deepEqual(store.states.get(mediaOne), previous);
+  assert.equal(store.saves.length, 0);
+
+  engine.startError = undefined;
+  await coordinator.open(mediaOne, { restart: true });
+  assert.equal(engine.starts[1]?.startPositionSec, 0);
+  engine.starts[1].onEvent({ type: "position", positionSec: 3, durationSec: 90 });
+  await coordinator.handle({ type: "close" });
+  assert.equal(store.saves[0]?.watched, false);
+  assert.equal(store.states.get(mediaOne)?.positionSec, 3);
+  assert.equal(store.states.get(mediaOne)?.watched, false);
+  assert.equal(store.saves.length, 1);
+  await coordinator.close();
 });
 
 test("local close and native shutdown leave fullscreen disabled", async () => {

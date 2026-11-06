@@ -93,6 +93,18 @@ async function runFirstProcess(): Promise<void> {
       if (!(playerLayout.controlsHeight >= 140)) throw new Error("native player controls did not reserve the native child height");
       if (!playerLayout.controlsVisible) throw new Error("one or more player controls overflowed or were clipped at the minimum window size");
       if (!playerLayout.toggleEnabled) throw new Error("native playback controls did not become enabled after ready");
+      const savedPreferences = await window.zVideo.appPreferences.setSort("score_desc");
+      if (savedPreferences.sort !== "score_desc") throw new Error("main preferences did not confirm the requested library sort");
+      await window.zVideo.localPlayback.command({ type: "set-volume", volume: 35 });
+      await window.zVideo.localPlayback.command({ type: "set-muted", muted: true });
+      await window.zVideo.localPlayback.command({ type: "set-speed", speed: 1.25 });
+      const settingsDeadline = Date.now() + 5_000;
+      let confirmedSettings;
+      while (Date.now() < settingsDeadline && !confirmedSettings) {
+        confirmedSettings = events.find((event) => event.type === "settings" && event.volume === 35 && event.muted === true && event.speed === 1.25);
+        if (!confirmedSettings) await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      if (!confirmedSettings || confirmedSettings.type !== "settings") throw new Error("native playback did not confirm the requested settings");
       await window.zVideo.localPlayback.command({ type: "seek", positionSec: 7 });
       const positionDeadline = Date.now() + 12_000;
       while (Date.now() < positionDeadline && !events.some((event) => event.type === "position" && event.positionSec >= 6.5)) {
@@ -125,6 +137,8 @@ async function runFirstProcess(): Promise<void> {
         mediaId: imported.item.mediaId,
         positionSec: observed.positionSec,
         durationSec: observed.durationSec,
+        sort: savedPreferences.sort,
+        settings: confirmedSettings,
         playerLayout,
         events,
         fixturePathLeaked: JSON.stringify(events).includes(${JSON.stringify(fixturePath)}),
@@ -133,6 +147,7 @@ async function runFirstProcess(): Promise<void> {
       mediaId: string;
       positionSec: number;
       durationSec?: number;
+      sort: string;
       playerLayout: {
         playerVisible: boolean;
         surfaceWidth: number;
@@ -142,6 +157,7 @@ async function runFirstProcess(): Promise<void> {
         toggleEnabled: boolean;
       };
       events: LocalPlaybackEvent[];
+      settings: Extract<LocalPlaybackEvent, { type: "settings" }>;
       fixturePathLeaked: boolean;
     };
     assert.equal(isOpaqueMediaId(result.mediaId), true);
@@ -280,7 +296,7 @@ async function runFirstProcess(): Promise<void> {
 }
 
 async function runSecondProcess(): Promise<void> {
-  const first = JSON.parse(await readFile(firstResultPath, "utf8")) as { mediaId: string; positionSec: number };
+  const first = JSON.parse(await readFile(firstResultPath, "utf8")) as { mediaId: string; positionSec: number; sort: string; settings: { volume: number; muted: boolean; speed: number } };
   assert.equal(isOpaqueMediaId(first.mediaId), true);
   require("../src/main/main.js");
   const window = await waitForProductionWindow();
@@ -297,6 +313,12 @@ async function runSecondProcess(): Promise<void> {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     if (!events.some((event) => event.type === "ready")) throw new Error("fresh process playback did not become ready");
+    const preferences = await window.zVideo.appPreferences.get();
+    if (preferences.sort !== ${JSON.stringify(first.sort)}) throw new Error("fresh process did not restore the persisted library sort");
+    const settings = events.find((event) => event.type === "settings");
+    if (!settings || settings.type !== "settings" || settings.volume !== ${JSON.stringify(first.settings.volume)} || settings.muted !== ${JSON.stringify(first.settings.muted)} || settings.speed !== ${JSON.stringify(first.settings.speed)}) {
+      throw new Error("fresh process did not restore persisted native playback settings");
+    }
     const resumeObservationStart = events.length;
     await window.zVideo.localPlayback.command({ type: "pause" });
     const pauseDeadline = Date.now() + 5_000;

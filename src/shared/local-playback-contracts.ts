@@ -2,6 +2,10 @@ import { isOpaqueMediaId, type LocalPlaybackState } from "./local-library-contra
 
 export type LocalPlaybackMediaId = LocalPlaybackState["mediaId"];
 
+export interface LocalPlaybackOpenOptions {
+  restart?: boolean;
+}
+
 export type LocalPlaybackControlCommand =
   | { type: "play" }
   | { type: "pause" }
@@ -42,7 +46,7 @@ export interface LocalPlaybackOpenResult {
 }
 
 export interface LocalPlaybackApi {
-  open(mediaId: string): Promise<LocalPlaybackOpenResult>;
+  open(mediaId: string, options?: LocalPlaybackOpenOptions): Promise<LocalPlaybackOpenResult>;
   command(command: LocalPlaybackControlCommand): Promise<void>;
   chooseSubtitleFile(): Promise<{ loaded: boolean }>;
   onEvent(listener: (event: LocalPlaybackEvent) => void): () => void;
@@ -83,4 +87,11 @@ export function isLocalPlaybackControlCommand(value: unknown): value is LocalPla
 
 export function assertLocalPlaybackMediaId(value: unknown): asserts value is LocalPlaybackMediaId {
   if (!isOpaqueMediaId(value)) throw new Error("mediaId 格式无效");
+}
+
+export function isLocalPlaybackOpenOptions(value: unknown): value is LocalPlaybackOpenOptions {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return Object.keys(record).every((key) => key === "restart")
+    && (record.restart === undefined || typeof record.restart === "boolean");
 }

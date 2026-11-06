@@ -5,6 +5,7 @@ import koffi from "koffi";
 
 import { NativeVideoWindow } from "./native-window";
 import type { PlayerEngine, PlayerEngineEvent } from "./player";
+import type { AppPlaybackPreferences } from "../shared/app-preferences-contracts";
 
 const MPV_EVENT_SHUTDOWN = 1;
 const MPV_EVENT_START_FILE = 6;
@@ -120,10 +121,11 @@ export class MpvNativePlayer implements PlayerEngine {
   private lastState: string | undefined;
   private lastTrackSignature: string | undefined;
   private lastSettingsSignature: string | undefined;
-  private settings = { volume: 100, muted: false, speed: 1 };
+  private settings: AppPlaybackPreferences;
 
-  constructor(parent: BrowserWindow) {
+  constructor(parent: BrowserWindow, settings: AppPlaybackPreferences = { volume: 100, muted: false, speed: 1 }) {
     this.parent = parent;
+    this.settings = { ...settings };
   }
 
   async start(path: string, startPositionSec: number | undefined, onEvent: (event: PlayerEngineEvent) => void): Promise<void> {
@@ -154,6 +156,7 @@ export class MpvNativePlayer implements PlayerEngine {
       this.setProperty("volume", String(this.settings.volume));
       this.setProperty("mute", this.settings.muted ? "yes" : "no");
       this.setProperty("speed", String(this.settings.speed));
+      this.syncSettings();
       this.assertSuccess(api.command(handle, ["loadfile", path, "replace", null]));
       this.eventTimer = setInterval(() => this.pumpEvents(), 25);
       this.stateTimer = setInterval(() => this.syncState(), 250);
@@ -200,19 +203,15 @@ export class MpvNativePlayer implements PlayerEngine {
   }
 
   setVolume(volume: number): void {
-    if (Number.isFinite(volume) && volume >= 0 && volume <= 100 && this.setProperty("volume", String(volume))) {
-      this.settings.volume = volume;
-    }
+    if (Number.isFinite(volume) && volume >= 0 && volume <= 100 && this.setProperty("volume", String(volume))) this.syncSettings();
   }
 
   setMuted(muted: boolean): void {
-    if (this.setProperty("mute", muted ? "yes" : "no")) this.settings.muted = muted;
+    if (this.setProperty("mute", muted ? "yes" : "no")) this.syncSettings();
   }
 
   setSpeed(speed: number): void {
-    if (Number.isFinite(speed) && speed >= 0.25 && speed <= 3 && this.setProperty("speed", String(speed))) {
-      this.settings.speed = speed;
-    }
+    if (Number.isFinite(speed) && speed >= 0.25 && speed <= 3 && this.setProperty("speed", String(speed))) this.syncSettings();
   }
 
   setAudioTrack(trackId: string): void {

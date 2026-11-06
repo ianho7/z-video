@@ -14,7 +14,9 @@ import type {
   WindowAppearanceState,
   LocalLibraryQuery,
   LocalPlaybackControlCommand,
+  LocalPlaybackOpenOptions,
 } from "../shared/contracts";
+import type { LocalLibrarySort } from "../shared/local-library-contracts";
 
 // Sandboxed preloads may require Electron's built-ins, but not local CommonJS
 // modules. Keep these names identical to shared/ipc-channels.ts.
@@ -35,6 +37,8 @@ const IPC_CHANNELS = {
   localPlaybackCommand: "local-playback:command",
   localPlaybackChooseSubtitleFile: "local-playback:choose-subtitle-file",
   localPlaybackEvent: "local-playback:event",
+  appPreferencesGet: "app-preferences:get",
+  appPreferencesSetSort: "app-preferences:set-sort",
   restore: "session:restore",
   login: "session:login",
   sendMfa: "session:send-mfa",
@@ -82,7 +86,7 @@ const api: ElectronApi = {
     },
   },
   localPlayback: {
-    open: (mediaId: string) => ipcRenderer.invoke(IPC_CHANNELS.localPlaybackOpen, mediaId),
+    open: (mediaId: string, options?: LocalPlaybackOpenOptions) => ipcRenderer.invoke(IPC_CHANNELS.localPlaybackOpen, { mediaId, ...(options ?? {}) }),
     command: (command: LocalPlaybackControlCommand) => ipcRenderer.invoke(IPC_CHANNELS.localPlaybackCommand, command) as Promise<void>,
     chooseSubtitleFile: () => ipcRenderer.invoke(IPC_CHANNELS.localPlaybackChooseSubtitleFile) as Promise<{ loaded: boolean }>,
     onEvent: (listener) => {
@@ -90,6 +94,10 @@ const api: ElectronApi = {
       ipcRenderer.on(IPC_CHANNELS.localPlaybackEvent, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.localPlaybackEvent, handler);
     },
+  },
+  appPreferences: {
+    get: () => ipcRenderer.invoke(IPC_CHANNELS.appPreferencesGet),
+    setSort: (sort: LocalLibrarySort) => ipcRenderer.invoke(IPC_CHANNELS.appPreferencesSetSort, sort),
   },
   appearance: {
     onState: (listener: (state: WindowAppearanceState) => void) => {

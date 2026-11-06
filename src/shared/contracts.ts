@@ -20,7 +20,9 @@ import type {
   LocalPlaybackApi,
   LocalPlaybackControlCommand,
   LocalPlaybackEvent,
+  LocalPlaybackOpenOptions,
 } from "./local-playback-contracts";
+import type { AppPreferences, AppPreferencesApi } from "./app-preferences-contracts";
 
 export type {
   LocalLibraryApi,
@@ -40,7 +42,8 @@ export type {
   LocalContinueWatchingItem,
   LocalMediaDetail,
 } from "./local-library-contracts";
-export type { LocalPlaybackApi, LocalPlaybackControlCommand, LocalPlaybackEvent } from "./local-playback-contracts";
+export type { LocalPlaybackApi, LocalPlaybackControlCommand, LocalPlaybackEvent, LocalPlaybackOpenOptions } from "./local-playback-contracts";
+export type { AppPreferences, AppPreferencesApi } from "./app-preferences-contracts";
 
 /**
  * Renderer-safe contracts shared by the Electron main, preload and renderer.
@@ -267,6 +270,7 @@ export type PlaybackEvent =
 export interface ElectronApi {
   localLibrary: LocalLibraryApi;
   localPlayback: LocalPlaybackApi;
+  appPreferences: AppPreferencesApi;
   appearance: {
     onState(listener: (state: WindowAppearanceState) => void): () => void;
   };

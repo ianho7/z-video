@@ -15,6 +15,8 @@ export const IPC_CHANNELS = {
   localPlaybackCommand: "local-playback:command",
   localPlaybackChooseSubtitleFile: "local-playback:choose-subtitle-file",
   localPlaybackEvent: "local-playback:event",
+  appPreferencesGet: "app-preferences:get",
+  appPreferencesSetSort: "app-preferences:set-sort",
   restore: "session:restore",
   login: "session:login",
   sendMfa: "session:send-mfa",

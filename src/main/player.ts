@@ -1,5 +1,5 @@
 import type { PlaybackCommand, PlaybackEvent } from "../shared/contracts";
-import type { LocalPlaybackControlCommand, LocalPlaybackEvent, LocalPlaybackMediaId, LocalPlaybackStore } from "../shared/local-playback-contracts";
+import type { LocalPlaybackControlCommand, LocalPlaybackEvent, LocalPlaybackMediaId, LocalPlaybackOpenOptions, LocalPlaybackStore } from "../shared/local-playback-contracts";
 import type { LocalPlaybackState } from "../shared/local-library-contracts";
 
 export type PlayerEngineEvent =
@@ -104,7 +104,7 @@ export class LocalPlaybackCoordinator {
     private readonly now: () => number = Date.now,
   ) {}
 
-  async open(mediaId: LocalPlaybackMediaId): Promise<void> {
+  async open(mediaId: LocalPlaybackMediaId, options: LocalPlaybackOpenOptions = {}): Promise<void> {
     const generation = await this.beginTransition();
     if (generation === undefined) return;
     this.active = {
@@ -127,12 +127,12 @@ export class LocalPlaybackCoordinator {
       const active = this.active;
       if (!active) return;
       active.state = state;
-      active.positionSec = finiteNonNegative(state?.positionSec) ?? 0;
+      active.positionSec = options.restart ? 0 : finiteNonNegative(state?.positionSec) ?? 0;
       active.durationSec = finiteNonNegative(state?.durationSec);
       active.audioTrackId = state?.audioTrackId;
       active.subtitleTrackId = state?.subtitleTrackId;
-      active.watched = state?.watched === true;
-      await this.engine.start(path, finiteNonNegative(state?.positionSec), (event) => {
+      active.watched = options.restart ? false : state?.watched === true;
+      await this.engine.start(path, options.restart ? 0 : finiteNonNegative(state?.positionSec), (event) => {
         if (this.isCurrent(generation, mediaId)) this.onEngineEvent(generation, mediaId, event);
       });
       if (!this.isCurrent(generation, mediaId)) await this.engine.stop();

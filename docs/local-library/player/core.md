@@ -1,8 +1,8 @@
 # Local native playback core
 
-The sandboxed renderer sends `LocalPlaybackControlCommand` through the preload bridge. `LocalPlaybackCoordinator` accepts bounded controls only for the active media generation. `MpvNativePlayer` applies volume, mute, and speed directly to libmpv, reads the resulting `volume`, `mute`, and `speed` properties, then reports a complete settings snapshot on `local-playback:event` with the active opaque `mediaId`.
+The sandboxed renderer sends `LocalPlaybackControlCommand` through the preload bridge. `LocalPlaybackCoordinator` accepts bounded controls only for the active media generation. `MpvNativePlayer` applies volume, mute, and speed directly to libmpv, reads the resulting `volume`, `mute`, and `speed` properties immediately after successful setters, then reports a complete settings snapshot on `local-playback:event` with the active opaque `mediaId`. Main serially persists those confirmed values and the validated library sort in `userData/app-preferences.json`.
 
-Volume is 0–100, mute is boolean, and speed is 0.25–3. The latest values remain in memory for the `MainLocalPlaybackHost` lifetime and are reapplied when another media item starts. They are not part of `playback_state` and do not survive closing the application window.
+Volume is 0–100, mute is boolean, and speed is 0.25–3. The confirmed values are reapplied before each media load and survive a fresh process. They are not part of `playback_state`. Preference writes are serialized and flushed after the player closes; a write failure emits a non-fatal control error and does not stop playback. Missing or malformed JSON falls back to defaults.
 
 Track titles/languages arrive from media metadata and may contain path-like text. The MPV track serializer keeps only the final path component before emitting labels and never reads `external-filename`.
 
@@ -13,8 +13,9 @@ Ownership:
 - `src/shared/local-playback-contracts.ts`: command, event, and preload API contracts plus control range validation.
 - `src/main/local-playback-ipc.ts` and `src/preload/preload.ts`: narrow command/picker IPC.
 - `src/main/player.ts`: active media generation, native settings event routing, and subtitle selection guard.
-- `src/main/mpv-player.ts`: libmpv property writes/reads and per-window in-memory preferences.
+- `src/main/mpv-player.ts`: libmpv property writes/reads and confirmed native settings snapshots.
 - `src/main/player-host.ts`: main-owned subtitle dialog and local player lifecycle.
+- `src/main/app-preferences.ts` and `src/main/app-preferences-ipc.ts`: bounded JSON preferences, serial atomic updates and the read/set-sort bridge.
 
 `docs/local-library/contracts.md` is the public contract. This file describes the implementation boundary; it does not claim hardware decode, macOS, packaged playback, or real-share acceptance.
 
