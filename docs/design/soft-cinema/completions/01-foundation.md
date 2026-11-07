@@ -6,4 +6,5 @@
 - `npm run typecheck`：通过。
 - `npm test`：67/67 通过。首次沙箱运行的 Electron 下载和本地 HTTP fixture 受网络限制；安装 Electron 后在允许本地 fixture 的环境重跑通过。
 - `git diff --check`：通过。
-- 待集成者串行执行：`npm run test:window`、`npm run package`、`npm run verify:package`，测量包体变化并记录 Windows 截图。macOS 外观尚未验收。
+- 集成分支串行验证：`npm run test:window`、`npm run package` 和 `npm run verify:package` 均通过；独立包大小为 503,248,965 bytes，包内确认含字体和许可证。未测同环境基线包，不能将总包体差异归因于字体。
+- Windows 截图和 macOS 外观尚未验收。
