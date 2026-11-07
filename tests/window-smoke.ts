@@ -26,6 +26,7 @@ const state = {
 async function run(): Promise<void> {
   await app.whenReady();
   const queries: Array<Record<string, unknown>> = [];
+  const preferences = { volume: 100, muted: false, speed: 1, sort: "recent" };
   ipcMain.handle("local-library:state", async () => state);
   ipcMain.handle("local-library:choose-folder", async () => ({
     status: "completed",
@@ -44,6 +45,8 @@ async function run(): Promise<void> {
   });
   ipcMain.handle("local-library:get", async () => ({ state, item }));
   ipcMain.handle("local-library:continue-watching", async () => ({ state, items: [] }));
+  ipcMain.handle("app-preferences:get", async () => ({ ...preferences }));
+  ipcMain.handle("app-preferences:set-sort", async (_event, sort) => ({ ...preferences, sort }));
 
   const window = new BrowserWindow({
     show: false,
@@ -57,9 +60,19 @@ async function run(): Promise<void> {
     },
   });
   await window.loadFile(join(__dirname, "..", "src", "renderer", "index.html"));
-  await new Promise((resolve) => setTimeout(resolve, 120));
 
-  const initial = await window.webContents.executeJavaScript(`({
+  async function waitFor<T>(label: string, read: () => Promise<T>, predicate: (value: T) => boolean, timeoutMs = 5_000): Promise<T> {
+    const deadline = Date.now() + timeoutMs;
+    let last: T | undefined;
+    while (Date.now() < deadline) {
+      last = await read();
+      if (predicate(last)) return last;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error(`${label} did not become ready within ${timeoutMs}ms: ${JSON.stringify(last)}`);
+  }
+
+  const readInitial = () => window.webContents.executeJavaScript(`({
     bridge: typeof window.zVideo === "object",
     nodeRequire: typeof require,
     nodeProcess: typeof process,
@@ -68,7 +81,9 @@ async function run(): Promise<void> {
     folderButton: Boolean(document.querySelector('#choose-folder-button')),
     openButton: Boolean(document.querySelector('#open-video-button')),
     card: document.querySelector('[data-media-id]')?.textContent || ''
-  })`, true) as { bridge: boolean; nodeRequire: string; nodeProcess: string; localApi: boolean; loginView: boolean; folderButton: boolean; openButton: boolean; card: string };
+  })`, true) as Promise<{ bridge: boolean; nodeRequire: string; nodeProcess: string; localApi: boolean; loginView: boolean; folderButton: boolean; openButton: boolean; card: string }>;
+  const initial = await waitFor("renderer card", readInitial, (value) => value.bridge && Boolean(value.card));
+
   assert.equal(initial.bridge, true);
   assert.equal(initial.nodeRequire, "undefined");
   assert.equal(initial.nodeProcess, "undefined");
@@ -79,22 +94,21 @@ async function run(): Promise<void> {
   assert.match(initial.card, /窗口测试影片/);
 
   await window.webContents.executeJavaScript("document.querySelector('#choose-folder-button').click()", true);
-  await new Promise((resolve) => setTimeout(resolve, 120));
-  const folderScan = await window.webContents.executeJavaScript("document.querySelector('#scan-status')?.textContent || ''", true) as string;
+  const folderScan = await waitFor("folder scan status", () => window.webContents.executeJavaScript("document.querySelector('#scan-status')?.textContent || ''", true) as Promise<string>, (value) => /扫描完成/.test(value));
   assert.match(folderScan, /扫描完成/);
 
   await window.webContents.executeJavaScript("document.querySelector('[data-media-id]').click()", true);
-  const detail = await window.webContents.executeJavaScript(`({ hidden: document.querySelector('#media-detail')?.hidden, title: document.querySelector('#media-detail-title')?.textContent || '' })`, true) as { hidden: boolean; title: string };
+  const detail = await waitFor("detail view", () => window.webContents.executeJavaScript(`({ hidden: document.querySelector('#media-detail')?.hidden, title: document.querySelector('#media-detail-title')?.textContent || '' })`, true) as Promise<{ hidden: boolean; title: string }>, (value) => value.hidden === false && Boolean(value.title));
   assert.equal(detail.hidden, false);
   assert.equal(detail.title, "窗口测试影片");
 
   await window.webContents.executeJavaScript("document.querySelector('#media-detail-back').click()", true);
   await window.webContents.executeJavaScript("document.querySelector('#library-search-input').value = '窗口'; document.querySelector('#library-search-input').dispatchEvent(new Event('input', { bubbles: true }))", true);
-  await new Promise((resolve) => setTimeout(resolve, 260));
+  await waitFor("search query", async () => queries.at(-1)?.query, (value) => value === "窗口");
   assert.equal(queries.at(-1)?.query, "窗口");
 
   window.close();
-  for (const channel of ["local-library:state", "local-library:choose-folder", "local-library:open-video", "local-library:list", "local-library:get", "local-library:continue-watching"]) ipcMain.removeHandler(channel);
+  for (const channel of ["local-library:state", "local-library:choose-folder", "local-library:open-video", "local-library:list", "local-library:get", "local-library:continue-watching", "app-preferences:get", "app-preferences:set-sort"]) ipcMain.removeHandler(channel);
 }
 
 run().then(() => app.quit()).catch((error: unknown) => {

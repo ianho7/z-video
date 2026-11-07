@@ -10,7 +10,7 @@ import type {
   LocalScanProgress,
   LocalScanResult,
 } from "../shared/local-library-contracts";
-import { isLocalLibrarySort } from "../shared/app-preferences-contracts";
+import { isLocalLibrarySort } from "../shared/app-preferences-contracts.js";
 import type { LocalPlaybackEvent } from "../shared/local-playback-contracts";
 
 const PAGE_SIZE = 24;
@@ -196,7 +196,8 @@ function showPlayer(visible: boolean): void {
   const wasVisible = playerView ? !playerView.hidden : false;
   if (appShell) appShell.hidden = visible;
   if (playerView) playerView.hidden = !visible;
-  if (playerCurrentTitle) playerCurrentTitle.textContent = visible ? activePlaybackTitle : "";
+  const nextTitle = visible ? activePlaybackTitle : "";
+  if (playerCurrentTitle && playerCurrentTitle.textContent !== nextTitle) playerCurrentTitle.textContent = nextTitle;
   if (visible && !wasVisible) playerSurface?.focus();
 }
 
@@ -888,10 +889,18 @@ async function runScan(operation: () => Promise<LocalScanResult>): Promise<void>
     await loadLibrary();
     await loadContinueWatching();
   } catch (error) {
+    scanProgress = undefined;
+    scanCommit = scanRenderedCommit;
+    scanRefreshQueued = false;
     setMessage(error instanceof Error ? error.message : "扫描失败。", true);
   } finally {
     sourceBusy = false;
     scanId = undefined;
+    if (scanProgress?.status === "running") {
+      scanProgress = undefined;
+      scanCommit = scanRenderedCommit;
+      scanRefreshQueued = false;
+    }
     if (scanRefreshTimer !== undefined) {
       window.clearTimeout(scanRefreshTimer);
       scanRefreshTimer = undefined;
