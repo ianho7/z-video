@@ -715,9 +715,9 @@ function setQuery(patch: Partial<LocalLibraryQuery>): void {
   renderSourceFilters();
 }
 
-async function openDetail(mediaId: string): Promise<void> {
+async function openDetail(mediaId: string, returnFocusTarget?: HTMLElement): Promise<void> {
   if (detail?.hidden !== false) {
-    const focused = document.activeElement;
+    const focused = returnFocusTarget ?? document.activeElement;
     returnFocusMediaId = focused instanceof HTMLElement && focused.dataset.mediaId ? focused.dataset.mediaId : mediaId;
     returnFocusContainerId = focused instanceof HTMLElement
       ? focused.closest("#library-grid") ? "#library-grid"
@@ -1015,8 +1015,8 @@ searchAllTypesButton?.addEventListener("click", () => {
   void loadLibrary();
 });
 libraryRetryButton?.addEventListener("click", () => void loadLibrary());
-for (const row of [document.querySelector<HTMLElement>("#recent-row"), document.querySelector<HTMLElement>("#shows-row")]) row?.addEventListener("click", (event) => { const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-media-id]"); if (button?.dataset.mediaId) void openDetail(button.dataset.mediaId); });
-document.querySelector<HTMLButtonElement>("#hero-detail")?.addEventListener("click", () => { const item = homeItems[0]?.item ?? recentItems[0]; if (item) void openDetail(item.mediaId); });
+for (const row of [document.querySelector<HTMLElement>("#recent-row"), document.querySelector<HTMLElement>("#shows-row")]) row?.addEventListener("click", (event) => { const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-media-id]"); if (button?.dataset.mediaId) void openDetail(button.dataset.mediaId, button); });
+document.querySelector<HTMLButtonElement>("#hero-detail")?.addEventListener("click", (event) => { const item = homeItems[0]?.item ?? recentItems[0]; if (item) void openDetail(item.mediaId, event.currentTarget as HTMLElement); });
 for (const [id, restart] of [["#hero-play", false], ["#hero-restart", true]] as const) document.querySelector<HTMLButtonElement>(id)?.addEventListener("click", () => { const item = homeItems[0]?.item ?? recentItems[0]; if (!item || !item.available) return; selectedMediaId = item.mediaId; activeDetail = { item, episodes: [item] }; void openSelectedLocalMedia(restart); });
 chooseFolderButton?.addEventListener("click", () => void runScan(() => window.zVideo.localLibrary.chooseFolder()));
 openVideoButton?.addEventListener("click", () => void handleImport(() => window.zVideo.localLibrary.openVideo()));
@@ -1061,16 +1061,16 @@ sourceList?.addEventListener("click", (event) => {
 });
 libraryGrid?.addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-media-id]");
-  if (button?.dataset.mediaId) void openDetail(button.dataset.mediaId);
+  if (button?.dataset.mediaId) void openDetail(button.dataset.mediaId, button);
 });
 continueRow?.addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-media-id]");
-  if (button?.dataset.mediaId) void openDetail(button.dataset.mediaId);
+  if (button?.dataset.mediaId) void openDetail(button.dataset.mediaId, button);
 });
 detailEpisodes?.addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-media-id]");
   const mediaId = button?.dataset.mediaId;
-  if (mediaId) void openDetail(mediaId);
+  if (mediaId) void openDetail(mediaId, button);
 });
 detailSeasonTabs?.addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-season-number]");

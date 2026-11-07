@@ -5,6 +5,6 @@
 - 查询参数和页码沿用现有 local-library `list` DTO，不涉及 IPC、preload 或 schema。详情返回后恢复原页并尝试恢复焦点到原媒体卡片。
 - 覆盖测试：扩展 `tests/local-library-app-smoke.ts` 检查第 2 页往返与焦点恢复，以及“搜索全部类型”保留关键词；窗口 smoke 由集成者串行执行，本 worktree 未运行。
 - `npm run typecheck`：通过。
-- `npm test`：69 项中 49 项通过、20 项因当前环境无法访问本地 NAS 测试地址（`fetch failed`）失败；renderer build 成功，失败集中在旧 NAS 网络测试，不属于本 ticket 行为。
+- `npm test`：授权网络环境下 69/69 通过，renderer build 成功。
 - `git diff --check`：通过。
 - Windows GUI 截图/窗口 smoke 由集成阶段执行；macOS 外观未验收。
