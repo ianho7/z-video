@@ -37,6 +37,9 @@ const libraryGrid = document.querySelector<HTMLElement>("#library-grid");
 const libraryEmpty = document.querySelector<HTMLElement>("#library-empty");
 const libraryEmptyTitle = document.querySelector<HTMLElement>("#library-empty-title");
 const libraryEmptyMessage = document.querySelector<HTMLElement>("#library-empty-message");
+const searchAllTypesButton = document.querySelector<HTMLButtonElement>("#search-all-types-button");
+const libraryRetryButton = document.querySelector<HTMLButtonElement>("#library-retry-button");
+const sourceFilters = document.querySelector<HTMLElement>("#library-source-filters");
 const libraryPagination = document.querySelector<HTMLElement>("#library-pagination");
 const pageScope = document.querySelector<HTMLElement>("#page-scope");
 const searchForm = document.querySelector<HTMLFormElement>("#library-search-form");
@@ -101,6 +104,9 @@ let state: LocalLibraryState | undefined;
 let activePage: { items: LocalMediaItem[]; totalCount: number; page: number; pageSize: number } | undefined;
 let activeDetail: LocalMediaDetail | undefined;
 let selectedMediaId: string | undefined;
+let returnFocusMediaId: string | undefined;
+let returnFocusContainerId: "#library-grid" | "#recent-row" | "#shows-row" | undefined;
+let returnFocusControlId: string | undefined;
 let requestEpoch = 0;
 let continueEpoch = 0;
 let searchTimer: number | undefined;
@@ -123,9 +129,6 @@ let playerVolumeRestoreAfterDrag = false;
 let playerSpeedValue = 1;
 let activePlaybackTitle = "";
 let activeDetailPlayback: LocalPlaybackState | undefined;
-let returnFocusMediaId: string | undefined;
-let returnFocusContainerId: "#library-grid" | "#recent-row" | "#shows-row" | undefined;
-let returnFocusControlId: string | undefined;
 let selectedSeason: number | undefined;
 const continuePlaybackByMediaId = new Map<string, LocalPlaybackState>();
 
@@ -168,7 +171,7 @@ function hasResume(playback: LocalPlaybackState | undefined): playback is LocalP
 }
 
 function currentEmptyCopy(totalCount: number): { title: string; message: string } {
-  if (currentQuery.query) return { title: "没有匹配结果", message: "换一个关键词，或清除搜索条件。" };
+  if (currentQuery.query) return { title: "没有匹配结果", message: currentQuery.filter && currentQuery.filter !== "all" ? `当前只在「${filterLabel(currentQuery.filter)}」里搜索。` : "换一个关键词，或清除搜索条件。" };
   if (currentQuery.filter && currentQuery.filter !== "all") {
     return { title: "当前类型没有媒体", message: "切换类型或查看全部媒体。" };
   }
@@ -181,6 +184,10 @@ function currentEmptyCopy(totalCount: number): { title: string; message: string 
   if (state?.sources.length === 0) return { title: "还没有本地来源", message: "选择一个文件夹开始索引，或直接打开一个视频文件。" };
   if (totalCount === 0) return { title: "来源中没有可播放视频", message: "扫描其他目录，或确认来源中包含支持的视频文件。" };
   return { title: "暂无内容", message: "选择一个本地来源开始索引。" };
+}
+
+function filterLabel(filter: NonNullable<LocalLibraryQuery["filter"]>): string {
+  return ({ all: "全部类型", movie: "电影", show: "电视剧", episode: "剧集", unclassified: "未分类" })[filter];
 }
 
 function updateEmptyCopy(totalCount: number): void {
@@ -428,6 +435,7 @@ function renderState(next: LocalLibraryState): void {
   state = next;
   renderSources(next, scanProgress, sourceList);
   if (allSourceCount) allSourceCount.textContent = String(next.sources.reduce((sum, source) => sum + source.itemCount, 0));
+  renderSourceFilters();
   if (next.status === "error") setMessage(next.error?.message ?? "本地片库不可用。", true);
 }
 
@@ -440,7 +448,12 @@ function renderPage(page: { items: LocalMediaItem[]; totalCount: number; page: n
   libraryGrid.replaceChildren(...page.items.map(card));
   libraryEmpty.hidden = page.items.length > 0;
   updateEmptyCopy(page.totalCount);
-  if (pageScope) pageScope.textContent = page.totalCount ? `${page.totalCount} 项 · 第 ${page.page} 页` : "";
+  if (searchAllTypesButton) searchAllTypesButton.hidden = !(page.items.length === 0 && Boolean(currentQuery.query) && currentQuery.filter !== "all");
+  if (libraryRetryButton) libraryRetryButton.hidden = true;
+  if (pageScope) {
+    const total = state?.sources.reduce((count, source) => count + source.itemCount, 0) ?? page.totalCount;
+    pageScope.textContent = currentQuery.query ? `“${currentQuery.query}” · ${page.totalCount} / ${total}` : page.totalCount ? `${page.totalCount} 项 · 第 ${page.page} 页` : "";
+  }
   renderPagination(page);
   artworkObserver = new IntersectionObserver((entries) => {
     for (const entry of entries) {
@@ -453,6 +466,23 @@ function renderPage(page: { items: LocalMediaItem[]; totalCount: number; page: n
   }, { rootMargin: "320px" });
   libraryGrid.querySelectorAll<HTMLElement>("[data-artwork-media-id]").forEach((element) => artworkObserver?.observe(element));
   restoreGridFocus(focusedMediaId);
+}
+
+function renderSourceFilters(): void {
+  if (!sourceFilters || !state) return;
+  const add = (label: string, sourceId?: string, available = true) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "chip source-filter-chip";
+    button.textContent = label;
+    button.setAttribute("aria-pressed", String(currentQuery.sourceId === sourceId));
+    if (sourceId) button.dataset.sourceFilterId = sourceId;
+    if (!available) button.dataset.available = "false";
+    sourceFilters.append(button);
+  };
+  sourceFilters.replaceChildren();
+  add("全部来源");
+  for (const source of state.sources) add(`${source.label}${source.available ? "" : " · 离线"}`, source.sourceId, source.available);
 }
 
 function renderPagination(page: { totalCount: number; page: number; pageSize: number }): void {
@@ -634,11 +664,23 @@ async function loadLibrary(): Promise<boolean> {
   }
   const epoch = ++requestEpoch;
   const query = { ...currentQuery };
+  if (libraryGrid && libraryEmpty && activePage === undefined) {
+    libraryEmpty.hidden = true;
+    libraryGrid.setAttribute("aria-busy", "true");
+    libraryGrid.replaceChildren(...Array.from({ length: 8 }, () => {
+      const skeleton = document.createElement("div");
+      skeleton.className = "media-skeleton";
+      skeleton.setAttribute("aria-hidden", "true");
+      return skeleton;
+    }));
+    setMessage("正在加载片库…");
+  }
   try {
     const result = await window.zVideo.localLibrary.list(query);
     if (epoch !== requestEpoch || !result.page) return false;
     renderState(result.state);
     renderPage(result.page);
+    libraryGrid?.removeAttribute("aria-busy");
     if (scanProgress?.status === "running") {
       setMessage(`正在扫描：已索引 ${result.page.totalCount} 项，已提交 ${scanProgress.importedFiles + scanProgress.updatedFiles} 项。`, false);
     } else if (result.page.totalCount) {
@@ -648,7 +690,15 @@ async function loadLibrary(): Promise<boolean> {
     }
     return true;
   } catch (error) {
-    if (epoch === requestEpoch) setMessage(error instanceof Error ? error.message : "本地片库加载失败。", true);
+    if (epoch === requestEpoch) {
+      setMessage(error instanceof Error ? error.message : "本地片库加载失败。", true);
+      if (libraryGrid) { libraryGrid.removeAttribute("aria-busy"); libraryGrid.replaceChildren(); }
+      if (libraryEmpty) libraryEmpty.hidden = false;
+      if (libraryEmptyTitle) libraryEmptyTitle.textContent = "片库加载失败";
+      if (libraryEmptyMessage) libraryEmptyMessage.textContent = error instanceof Error ? error.message : "本地片库加载失败。";
+      if (libraryRetryButton) libraryRetryButton.hidden = false;
+      if (searchAllTypesButton) searchAllTypesButton.hidden = true;
+    }
     return false;
   }
 }
@@ -670,6 +720,8 @@ function setQuery(patch: Partial<LocalLibraryQuery>): void {
   if (searchClear) searchClear.hidden = !Boolean(currentQuery.query);
   if (filterSelect) filterSelect.value = currentQuery.filter ?? "all";
   if (sortSelect) sortSelect.value = currentQuery.sort ?? "recent";
+  document.querySelectorAll<HTMLButtonElement>("#library-filter-buttons [data-filter]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.filter === (currentQuery.filter ?? "all"))));
+  renderSourceFilters();
 }
 
 async function openDetail(mediaId: string, returnFocusTarget?: HTMLElement): Promise<void> {
@@ -966,6 +1018,30 @@ document.querySelector<HTMLAnchorElement>('#detail-offline-banner a')?.addEventL
 document.querySelectorAll<HTMLButtonElement>('[data-import="folder"]').forEach((button) => button.addEventListener("click", () => chooseFolderButton?.click()));
 document.querySelectorAll<HTMLButtonElement>('[data-import="video"]').forEach((button) => button.addEventListener("click", () => openVideoButton?.click()));
 document.querySelector<HTMLButtonElement>("[data-cancel-scan]")?.addEventListener("click", () => cancelScanButton?.click());
+document.querySelector<HTMLButtonElement>("#library-filter-buttons")?.addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-filter]");
+  const filter = button?.dataset.filter as LocalLibraryQuery["filter"] | undefined;
+  if (!filter) return;
+  setQuery({ filter, page: 1 });
+  void loadLibrary();
+});
+sourceFilters?.addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-source-filter-id]");
+  if (!button) {
+    if ((event.target as HTMLElement).closest(".source-filter-chip")) {
+      setQuery({ sourceId: undefined, page: 1 });
+      void loadLibrary();
+    }
+    return;
+  }
+  setQuery({ sourceId: button.dataset.sourceFilterId, page: 1 });
+  void loadLibrary();
+});
+searchAllTypesButton?.addEventListener("click", () => {
+  setQuery({ filter: "all", page: 1 });
+  void loadLibrary();
+});
+libraryRetryButton?.addEventListener("click", () => void loadLibrary());
 for (const row of [document.querySelector<HTMLElement>("#recent-row"), document.querySelector<HTMLElement>("#shows-row")]) row?.addEventListener("click", (event) => { const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-media-id]"); if (button?.dataset.mediaId) void openDetail(button.dataset.mediaId, button); });
 document.querySelector<HTMLButtonElement>("#hero-detail")?.addEventListener("click", (event) => { const item = homeItems[0]?.item ?? recentItems[0]; if (item) void openDetail(item.mediaId, event.currentTarget as HTMLElement); });
 for (const [id, restart] of [["#hero-play", false], ["#hero-restart", true]] as const) document.querySelector<HTMLButtonElement>(id)?.addEventListener("click", () => { const item = homeItems[0]?.item ?? recentItems[0]; if (!item || !item.available) return; selectedMediaId = item.mediaId; activeDetail = { item, episodes: [item] }; void openSelectedLocalMedia(restart); });

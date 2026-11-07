@@ -43,24 +43,6 @@
           </div>
 
           <div class="library-toolbar">
-            <label>类型
-              <select id="library-filter" class="library-select">
-                <option value="all">全部</option>
-                <option value="movie">电影</option>
-                <option value="show">电视剧</option>
-                <option value="episode">剧集</option>
-                <option value="unclassified">未分类</option>
-              </select>
-            </label>
-            <label>排序
-              <select id="library-sort" class="library-select">
-                <option value="recent">最近更新</option>
-                <option value="added_desc">最近添加</option>
-                <option value="title">标题</option>
-                <option value="year_desc">年份</option>
-                <option value="score_desc">评分</option>
-              </select>
-            </label>
             <button id="cancel-scan-button" class="secondary-button compact-button" type="button" hidden>取消扫描</button>
           </div>
 
@@ -76,11 +58,35 @@
           <section id="recent-section" class="home-shelf" hidden><div class="section-heading"><h2>最近添加</h2><button type="button" data-shelf="recent">查看全部 →</button></div><div id="recent-row" class="shelf-row"></div></section>
           <section id="shows-section" class="home-shelf" hidden><div class="section-heading"><h2>剧集</h2><button type="button" data-shelf="show">查看全部 →</button></div><div id="shows-row" class="shelf-row"></div></section>
           <section id="collection-section" aria-labelledby="collection-title">
-            <div class="section-heading"><h2 id="collection-title">全部媒体</h2><span id="page-scope" class="muted"></span></div>
+            <div class="section-heading all-media-heading"><h1 id="collection-title">全部媒体</h1><span id="page-scope" class="muted"></span></div>
+            <div class="library-toolbar all-media-toolbar">
+              <div id="library-filter-buttons" class="segmented-control" role="group" aria-label="类型">
+                <button type="button" data-filter="all" aria-pressed="true">全部</button>
+                <button type="button" data-filter="movie" aria-pressed="false">电影</button>
+                <button type="button" data-filter="show" aria-pressed="false">电视剧</button>
+                <button type="button" data-filter="episode" aria-pressed="false">剧集</button>
+                <button type="button" data-filter="unclassified" aria-pressed="false">未分类</button>
+              </div>
+              <div id="library-source-filters" class="source-filters" role="group" aria-label="来源"></div>
+              <label class="sort-control">排序
+                <select id="library-sort" class="library-select">
+                  <option value="recent">最近更新</option>
+                  <option value="added_desc">最近添加</option>
+                  <option value="title">标题</option>
+                  <option value="year_desc">年份</option>
+                  <option value="score_desc">评分</option>
+                </select>
+              </label>
+              <select id="library-filter" class="sr-only" aria-hidden="true" tabindex="-1">
+                <option value="all">全部</option><option value="movie">电影</option><option value="show">电视剧</option><option value="episode">剧集</option><option value="unclassified">未分类</option>
+              </select>
+            </div>
             <div id="library-grid" class="library-grid" role="list" aria-live="polite"></div>
             <div id="library-empty" class="empty-state" hidden>
               <h2 id="library-empty-title">还没有本地影片</h2>
               <p id="library-empty-message">选择一个文件夹开始索引，或直接打开一个视频文件。</p>
+              <button id="search-all-types-button" class="primary-button" type="button" hidden>搜索全部类型</button>
+              <button id="library-retry-button" class="secondary-button" type="button" hidden>重试</button>
             </div>
             <nav id="library-pagination" class="library-pagination" aria-label="片库分页"></nav>
           </section>
