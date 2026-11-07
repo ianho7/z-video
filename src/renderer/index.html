@@ -15,15 +15,19 @@
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
           <span><strong>z-video</strong><small>本地片库</small></span>
         </div>
-        <div class="header-actions">
+        <nav class="top-nav" aria-label="浏览"><button type="button" data-nav="home" aria-current="page">首页</button><button type="button" data-nav="all">全部</button><button type="button" data-nav="movie">电影</button><button type="button" data-nav="show">剧集</button></nav>
+        <span id="scan-status" class="scan-status" role="status" aria-live="polite"></span>
+        <form id="library-search-form" class="search-box" role="search"><span aria-hidden="true">⌕</span><input id="library-search-input" type="search" autocomplete="off" placeholder="搜索片名、剧集" aria-label="搜索片名、剧集" /><button id="library-search-clear" class="icon-button" type="button" hidden aria-label="清除搜索">×</button></form>
+        <details class="add-menu"><summary aria-label="添加">+</summary><div class="header-actions">
           <button id="choose-folder-button" class="secondary-button" type="button">添加文件夹</button>
           <button id="scan-folder-button" class="secondary-button" type="button">扫描目录</button>
           <button id="open-video-button" class="primary-button" type="button">打开视频</button>
-        </div>
+          <button id="manage-sources-button" class="secondary-button" type="button">管理来源</button>
+        </div></details>
       </header>
 
       <main class="library-layout">
-        <aside class="source-sidebar" aria-label="本地片库来源">
+        <aside class="source-sidebar" aria-label="本地片库来源" hidden>
           <p class="eyebrow">SOURCES</p>
           <h2>我的来源</h2>
           <button id="all-sources-button" class="source-all" type="button" aria-pressed="true">全部来源 <span id="all-source-count">0</span></button>
@@ -37,11 +41,6 @@
               <p class="eyebrow">LOCAL LIBRARY</p>
               <h1 id="library-title">片库</h1>
             </div>
-            <form id="library-search-form" class="search-box" role="search">
-              <span aria-hidden="true">⌕</span>
-              <input id="library-search-input" type="search" autocomplete="off" placeholder="搜索片名、剧集" aria-label="搜索片名、剧集" />
-              <button id="library-search-clear" class="icon-button" type="button" hidden aria-label="清除搜索">×</button>
-            </form>
           </div>
 
           <div class="library-toolbar">
@@ -63,17 +62,19 @@
                 <option value="score_desc">评分</option>
               </select>
             </label>
-            <span id="scan-status" class="scan-status" role="status" aria-live="polite"></span>
             <button id="cancel-scan-button" class="secondary-button compact-button" type="button" hidden>取消扫描</button>
           </div>
 
           <div id="library-message" class="status" role="status" aria-live="polite"></div>
 
+          <section id="home-hero" class="home-hero" hidden><div id="hero-artwork" class="hero-artwork"></div><div class="hero-copy"><p id="hero-label" class="eyebrow"></p><h1 id="hero-title"></h1><p id="hero-meta"></p><div class="hero-progress"><span id="hero-progress-fill"></span></div><div class="hero-actions"><button id="hero-play" class="primary-button" type="button">继续观看</button><button id="hero-restart" class="secondary-button" type="button">从头播放</button><button id="hero-detail" class="secondary-button" type="button">详情</button></div></div></section>
           <section id="continue-section" class="continue-section" hidden aria-labelledby="continue-title">
-            <div class="section-heading"><h2 id="continue-title">继续观看</h2><span id="continue-scope" class="muted"></span></div>
+            <div class="section-heading"><h2 id="continue-title">继续观看</h2><span id="continue-scope" class="muted"></span><button type="button" data-shelf="all">查看全部 →</button></div>
             <div id="continue-row" class="continue-row"></div>
           </section>
 
+          <section id="recent-section" class="home-shelf" hidden><div class="section-heading"><h2>最近添加</h2><button type="button" data-shelf="recent">查看全部 →</button></div><div id="recent-row" class="shelf-row"></div></section>
+          <section id="shows-section" class="home-shelf" hidden><div class="section-heading"><h2>剧集</h2><button type="button" data-shelf="show">查看全部 →</button></div><div id="shows-row" class="shelf-row"></div></section>
           <section id="collection-section" aria-labelledby="collection-title">
             <div class="section-heading"><h2 id="collection-title">全部媒体</h2><span id="page-scope" class="muted"></span></div>
             <div id="library-grid" class="library-grid" role="list" aria-live="polite"></div>

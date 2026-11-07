@@ -79,6 +79,14 @@ const playerMuteButton = document.querySelector<HTMLButtonElement>("#player-mute
 const playerSpeed = document.querySelector<HTMLSelectElement>("#player-speed");
 const playerStatus = document.querySelector<HTMLElement>("#player-status");
 
+let homeVisible = true;
+let homeItems: LocalContinueWatchingItem[] = [];
+let recentItems: LocalMediaItem[] = [];
+let homeEpoch = 0;
+const hero = document.querySelector<HTMLElement>("#home-hero");
+const recentSection = document.querySelector<HTMLElement>("#recent-section");
+const showsSection = document.querySelector<HTMLElement>("#shows-section");
+const sidebar = document.querySelector<HTMLElement>(".source-sidebar");
 let state: LocalLibraryState | undefined;
 let activePage: { items: LocalMediaItem[]; totalCount: number; page: number; pageSize: number } | undefined;
 let activeDetail: LocalMediaDetail | undefined;
@@ -449,12 +457,61 @@ function renderPagination(page: { totalCount: number; page: number; pageSize: nu
   add("下一页", page.page + 1, page.page >= totalPages);
 }
 
+function renderHomeHero(): void {
+  if (!hero) return;
+  const entry = homeItems[0];
+  const item = entry?.item ?? recentItems[0];
+  hero.hidden = !homeVisible || !item || detail?.hidden === false;
+  if (!item) return;
+  const title = hero.querySelector<HTMLElement>("#hero-title");
+  const label = hero.querySelector<HTMLElement>("#hero-label");
+  const meta = hero.querySelector<HTMLElement>("#hero-meta");
+  const progress = hero.querySelector<HTMLElement>("#hero-progress-fill");
+  const restart = hero.querySelector<HTMLButtonElement>("#hero-restart");
+  const play = hero.querySelector<HTMLButtonElement>("#hero-play");
+  const background = hero.querySelector<HTMLElement>("#hero-artwork");
+  if (title) title.textContent = item.title;
+  if (label) label.textContent = entry ? "继续观看" : "最近添加";
+  if (meta) meta.textContent = [item.seasonNumber !== undefined ? `S${item.seasonNumber}` : "", item.episodeNumber !== undefined ? `E${String(item.episodeNumber).padStart(2, "0")}` : "", entry ? `已观看 ${formatTime(entry.playback.positionSec)}` : kindLabel(item.kind)].filter(Boolean).join(" · ");
+  if (progress) progress.style.width = entry?.playback.durationSec ? `${Math.min(100, entry.playback.positionSec / entry.playback.durationSec * 100)}%` : "0%";
+  if (restart) { restart.hidden = !entry; restart.disabled = !item.available; }
+  if (play) { play.textContent = entry ? "继续观看" : "播放"; play.disabled = !item.available; }
+  applyTone(hero, coverData(item).tone);
+  if (background) {
+    background.replaceChildren();
+    delete background.dataset.artworkMediaId; delete background.dataset.artworkKind; delete background.dataset.artworkLoaded; delete background.dataset.artworkLoading;
+    if (item.artwork?.some((art) => art.kind === "fanart")) { background.dataset.artworkMediaId = item.mediaId; background.dataset.artworkKind = "fanart"; enqueueArtwork(background, 2); }
+  }
+}
+
+async function loadHomeShelves(): Promise<void> {
+  const epoch = ++homeEpoch;
+  try {
+    const [recent, shows] = await Promise.all([
+      window.zVideo.localLibrary.list({ page: 1, pageSize: 12, sort: "added_desc", filter: "all" }),
+      window.zVideo.localLibrary.list({ page: 1, pageSize: 12, filter: "show" }),
+    ]);
+    if (epoch !== homeEpoch) return;
+    recentItems = recent.page?.items ?? [];
+    for (const [section, selector, items] of [[recentSection, "#recent-row", recentItems], [showsSection, "#shows-row", shows.page?.items ?? []]] as const) {
+      const row = document.querySelector<HTMLElement>(selector);
+      if (!row || !section) continue;
+      row.replaceChildren(...items.map(card));
+      row.querySelectorAll<HTMLElement>("[data-artwork-media-id]").forEach((element) => enqueueArtwork(element, 1));
+      section.hidden = !homeVisible || items.length === 0 || detail?.hidden === false;
+    }
+    renderHomeHero();
+  } catch { if (epoch === homeEpoch) setMessage("首页片架加载失败，请重试。", true); }
+}
+
 function renderContinue(items: LocalContinueWatchingItem[]): void {
   if (!continueSection || !continueRow) return;
+  homeItems = items;
+  renderHomeHero();
   continueRow.replaceChildren();
   continuePlaybackByMediaId.clear();
   for (const entry of items) continuePlaybackByMediaId.set(entry.item.mediaId, entry.playback);
-  if (items.length === 0 || currentQuery.query || currentQuery.sourceId || detail?.hidden === false || playerView?.hidden === false) {
+  if (!homeVisible || items.length === 0 || currentQuery.query || currentQuery.sourceId || detail?.hidden === false || playerView?.hidden === false) {
     continueSection.hidden = true;
     return;
   }
@@ -588,6 +645,9 @@ async function openDetail(mediaId: string): Promise<void> {
   selectedMediaId = mediaId;
   if (detail) detail.hidden = false;
   if (collectionSection) collectionSection.hidden = true;
+  if (hero) hero.hidden = true;
+  if (recentSection) recentSection.hidden = true;
+  if (showsSection) showsSection.hidden = true;
   if (continueSection) continueSection.hidden = true;
   setMessage("正在打开详情…");
   try {
@@ -673,7 +733,8 @@ function closeDetail(): void {
   activeDetailPlayback = undefined;
   selectedMediaId = undefined;
   if (detail) detail.hidden = true;
-  if (collectionSection) collectionSection.hidden = false;
+  if (collectionSection) collectionSection.hidden = homeVisible;
+  if (homeVisible) void loadHomeShelves();
   void loadLibrary().then((applied) => {
     if (applied) {
       scanRenderedCommit = scanCommit;
@@ -711,6 +772,7 @@ async function handleImport(operation: () => Promise<Awaited<ReturnType<typeof w
     renderState(outcome.state);
     await loadLibrary();
     await loadContinueWatching();
+    await loadHomeShelves();
   } catch (error) {
     setMessage(error instanceof Error ? error.message : "导入失败。", true);
   } finally {
@@ -739,6 +801,7 @@ async function runScan(operation: () => Promise<LocalScanResult>): Promise<void>
     renderScanResult(result);
     await loadLibrary();
     await loadContinueWatching();
+    await loadHomeShelves();
   } catch (error) {
     scanProgress = undefined;
     if (!isDetailOrPlayerVisible()) requestEpoch += 1;
@@ -796,6 +859,24 @@ function renderScanResult(result: LocalScanResult): void {
   else setMessage(result.error ?? "扫描部分完成，部分条目保留此前索引。", true);
 }
 
+function navigateHomeOrLibrary(target: string): void {
+  requestEpoch += 1;
+  homeVisible = target === "home";
+  if (detail) detail.hidden = true;
+  if (sidebar) sidebar.hidden = true;
+  if (collectionSection) collectionSection.hidden = homeVisible;
+  document.querySelectorAll<HTMLButtonElement>("[data-nav]").forEach((button) => {
+    if (button.dataset.nav === target) button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current");
+  });
+  if (homeVisible) { setQuery({ query: undefined, sourceId: undefined, filter: "all" }); void loadContinueWatching(); void loadHomeShelves(); }
+  else { if (hero) hero.hidden = true; if (continueSection) continueSection.hidden = true; if (recentSection) recentSection.hidden = true; if (showsSection) showsSection.hidden = true; setQuery({ sourceId: undefined, filter: target === "movie" || target === "show" ? target : "all", sort: target === "recent" ? "added_desc" : currentQuery.sort }); void loadLibrary(); }
+}
+document.querySelectorAll<HTMLButtonElement>("[data-nav]").forEach((button) => button.addEventListener("click", () => navigateHomeOrLibrary(button.dataset.nav ?? "home")));
+document.querySelectorAll<HTMLButtonElement>("[data-shelf]").forEach((button) => button.addEventListener("click", () => navigateHomeOrLibrary(button.dataset.shelf ?? "all")));
+document.querySelector<HTMLButtonElement>("#manage-sources-button")?.addEventListener("click", () => { navigateHomeOrLibrary("all"); if (sidebar) sidebar.hidden = false; });
+for (const row of [document.querySelector<HTMLElement>("#recent-row"), document.querySelector<HTMLElement>("#shows-row")]) row?.addEventListener("click", (event) => { const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-media-id]"); if (button?.dataset.mediaId) void openDetail(button.dataset.mediaId); });
+document.querySelector<HTMLButtonElement>("#hero-detail")?.addEventListener("click", () => { const item = homeItems[0]?.item ?? recentItems[0]; if (item) void openDetail(item.mediaId); });
+for (const [id, restart] of [["#hero-play", false], ["#hero-restart", true]] as const) document.querySelector<HTMLButtonElement>(id)?.addEventListener("click", () => { const item = homeItems[0]?.item ?? recentItems[0]; if (!item || !item.available) return; selectedMediaId = item.mediaId; activeDetail = { item, episodes: [item] }; void openSelectedLocalMedia(restart); });
 chooseFolderButton?.addEventListener("click", () => void runScan(() => window.zVideo.localLibrary.chooseFolder()));
 openVideoButton?.addEventListener("click", () => void handleImport(() => window.zVideo.localLibrary.openVideo()));
 scanFolderButton?.addEventListener("click", () => void runScan(() => window.zVideo.localLibrary.scanFolder()));
@@ -902,7 +983,9 @@ playerSpeed?.addEventListener("change", () => {
 window.addEventListener("keydown", handlePlayerShortcut);
 searchForm?.addEventListener("submit", (event) => {
   event.preventDefault();
-  setQuery({ query: searchInput?.value.trim() || undefined, page: 1 });
+  const query = searchInput?.value.trim() || undefined;
+  if (homeVisible) navigateHomeOrLibrary("all");
+  setQuery({ query, page: 1 });
   void loadLibrary();
 });
 searchInput?.addEventListener("input", () => {
@@ -910,7 +993,9 @@ searchInput?.addEventListener("input", () => {
   if (searchTimer !== undefined) window.clearTimeout(searchTimer);
   searchTimer = window.setTimeout(() => {
     searchTimer = undefined;
-    setQuery({ query: searchInput.value.trim() || undefined, page: 1 });
+    const query = searchInput.value.trim() || undefined;
+    if (homeVisible) navigateHomeOrLibrary("all");
+    setQuery({ query, page: 1 });
     void loadLibrary();
   }, 220);
 });
@@ -943,7 +1028,8 @@ void (async () => {
     const next = await window.zVideo.localLibrary.getState();
     await restoreSortPreference();
     renderState(next);
-    await Promise.all([loadLibrary(), loadContinueWatching()]);
+    if (collectionSection) collectionSection.hidden = true;
+    await Promise.all([loadLibrary(), loadContinueWatching(), loadHomeShelves()]);
   } catch (error: unknown) {
     setMessage(error instanceof Error ? error.message : "本地片库加载失败。", true);
   }

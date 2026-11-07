@@ -133,6 +133,12 @@ async function run(): Promise<void> {
   assert.equal(await window.webContents.executeJavaScript("document.querySelector('#media-detail-title')?.textContent", true), replacement.title);
   await window.webContents.executeJavaScript("document.querySelector('#media-detail-back').click()", true);
   await waitFor("initial card restored", () => window.webContents.executeJavaScript("Boolean(document.querySelector('[data-media-id]'))", true) as Promise<boolean>, Boolean);
+  await waitFor("home shelves", () => window.webContents.executeJavaScript(`({ recent: document.querySelector('#recent-row')?.textContent || '', shows: document.querySelector('#shows-row')?.textContent || '' })`, true) as Promise<{ recent: string; shows: string }>, (value) => Boolean(value.recent && value.shows));
+  assert.ok(queries.some((query) => query.sort === "added_desc" && query.pageSize === 12));
+  assert.ok(queries.some((query) => query.filter === "show" && query.pageSize === 12));
+  await window.webContents.executeJavaScript("document.querySelector('[data-nav=movie]').click()", true);
+  await waitFor("movie filter", async () => queries.at(-1)?.filter, (value) => value === "movie");
+  await window.webContents.executeJavaScript("document.querySelector('[data-nav=home]').click()", true);
 
   await window.webContents.executeJavaScript("document.querySelector('#choose-folder-button').click()", true);
   const folderScan = await waitFor("folder scan status", () => window.webContents.executeJavaScript("document.querySelector('#scan-status')?.textContent || ''", true) as Promise<string>, (value) => /扫描完成/.test(value));
