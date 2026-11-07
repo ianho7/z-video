@@ -1,3 +1,9 @@
+import { escapeHtml, formatTime, kindLabel, formatBytes, posterFallback, artworkKind } from "./views/shared.js";
+import { card } from "./views/all.js";
+import { renderSources } from "./views/sources.js";
+import { episodeRows } from "./views/detail.js";
+import { renderTrackOptions } from "./views/player.js";
+import { renderContinueCards } from "./views/home.js";
 import type {
   LocalArtworkReference,
   LocalContinueWatchingItem,
@@ -114,24 +120,10 @@ let artworkObserver: IntersectionObserver | undefined;
 
 type LocalSort = LocalLibrarySort;
 
-function escapeHtml(value: unknown): string {
-  return String(value ?? "").replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character] ?? character);
-}
-
 function setMessage(message: string, error = false): void {
   if (!libraryMessage) return;
   libraryMessage.textContent = message;
   libraryMessage.dataset.state = error ? "error" : "normal";
-}
-
-function formatTime(seconds: number): string {
-  const safe = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
-  const hours = Math.floor(safe / 3600);
-  const minutes = Math.floor((safe % 3600) / 60);
-  const remainder = safe % 60;
-  return hours > 0
-    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`
-    : `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
 }
 
 function isDetailOrPlayerVisible(): boolean {
@@ -325,17 +317,6 @@ function handlePlayerShortcut(event: KeyboardEvent): void {
   }
 }
 
-function renderTrackOptions(select: HTMLSelectElement | null, tracks: Array<{ id: string; label: string; selected?: boolean }>, emptyLabel: string): void {
-  if (!select) return;
-  const options = [new Option(emptyLabel, ""), ...tracks.map((track) => {
-    const option = new Option(track.label, track.id);
-    option.selected = Boolean(track.selected);
-    return option;
-  })];
-  select.replaceChildren(...options);
-  select.value = tracks.find((track) => track.selected)?.id ?? "";
-}
-
 function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
   if (event.type === "closed") {
     playerFullscreen = false;
@@ -415,115 +396,10 @@ async function sendLocalPlaybackCommand(command: Parameters<typeof window.zVideo
   }
 }
 
-function kindLabel(kind: LocalMediaItem["kind"]): string {
-  return kind === "movie" ? "电影" : kind === "show" ? "电视剧" : kind === "episode" ? "剧集" : "未分类";
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
-
-function posterFallback(title: string): HTMLElement {
-  const fallback = document.createElement("span");
-  fallback.className = "poster-fallback";
-  const titleNode = document.createElement("strong");
-  titleNode.textContent = title.slice(0, 2) || "影视";
-  fallback.append(titleNode, document.createTextNode("封面不可用"));
-  return fallback;
-}
-
-function artworkKind(item: LocalMediaItem): LocalArtworkReference["kind"] | undefined {
-  return item.artwork?.find((art) => art.kind === "poster")?.kind ?? item.artwork?.[0]?.kind;
-}
-
 function renderState(next: LocalLibraryState): void {
   state = next;
-  if (allSourceCount) allSourceCount.textContent = String(next.sources.reduce((total, source) => total + source.itemCount, 0));
-  if (sourceList) {
-    sourceList.replaceChildren(...next.sources.map((source) => {
-      const row = document.createElement("div");
-      row.className = `source-row${currentQuery.sourceId === source.sourceId ? " selected" : ""}`;
-      row.dataset.sourceId = source.sourceId;
-      row.setAttribute("role", "listitem");
-      const select = document.createElement("button");
-      select.className = "source-select";
-      select.type = "button";
-      select.dataset.sourceId = source.sourceId;
-      select.setAttribute("aria-pressed", String(currentQuery.sourceId === source.sourceId));
-      const dot = document.createElement("span");
-      dot.className = `source-dot${source.available ? "" : " offline"}`;
-      const label = document.createElement("span");
-      label.className = "source-label";
-      label.textContent = source.label;
-      const count = document.createElement("span");
-      count.className = "source-count";
-      count.textContent = String(source.itemCount);
-      select.append(dot, label, count);
-      const actions = document.createElement("span");
-      actions.className = "source-actions";
-      const refresh = document.createElement("button");
-      refresh.type = "button";
-      refresh.className = "source-action";
-      refresh.dataset.refreshSourceId = source.sourceId;
-      refresh.title = "刷新来源";
-      refresh.setAttribute("aria-label", `刷新 ${source.label}`);
-      refresh.textContent = "↻";
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "source-action danger";
-      remove.dataset.removeSourceId = source.sourceId;
-      remove.title = "移除来源索引";
-      remove.setAttribute("aria-label", `移除 ${source.label}`);
-      remove.textContent = "×";
-      actions.append(refresh, remove);
-      row.append(select, actions);
-      return row;
-    }));
-    if (next.sources.length === 0) {
-      const empty = document.createElement("p");
-      empty.className = "muted";
-      empty.textContent = "尚未添加来源";
-      sourceList.append(empty);
-    }
-  }
+  renderSources(next, currentQuery.sourceId, allSourceCount, sourceList);
   if (next.status === "error") setMessage(next.error?.message ?? "本地片库不可用。", true);
-}
-
-function card(item: LocalMediaItem): HTMLElement {
-  const article = document.createElement("article");
-  article.className = `media-card${item.available ? "" : " unavailable"}`;
-  article.setAttribute("role", "listitem");
-  const button = document.createElement("button");
-  button.className = "media-card-button";
-  button.type = "button";
-  button.dataset.mediaId = item.mediaId;
-  button.setAttribute("aria-label", `查看 ${item.title}`);
-  const poster = document.createElement("span");
-  poster.className = "media-poster";
-  const kind = artworkKind(item);
-  if (kind) {
-    poster.dataset.artworkMediaId = item.mediaId;
-    poster.dataset.artworkKind = kind;
-    poster.append(posterFallback(item.title));
-  } else {
-    poster.append(posterFallback(item.title));
-  }
-  const title = document.createElement("span");
-  title.className = "media-card-title";
-  title.textContent = item.title;
-  const meta = document.createElement("span");
-  meta.className = "media-card-meta";
-  const parts = [kindLabel(item.kind)];
-  if (item.year !== undefined) parts.push(String(item.year));
-  if (item.rating !== undefined) parts.push(`★ ${item.rating.toFixed(1)}`);
-  if (!item.available) parts.push("来源离线");
-  meta.textContent = `${parts.join(" · ")} · ${formatBytes(item.sizeBytes)}`;
-  button.append(poster, title, meta);
-  article.append(button);
-  return article;
 }
 
 function renderPage(page: { items: LocalMediaItem[]; totalCount: number; page: number; pageSize: number }): void {
@@ -581,38 +457,7 @@ function renderContinue(items: LocalContinueWatchingItem[]): void {
   }
   continueSection.hidden = false;
   if (continueScope) continueScope.textContent = `${items.length} 项`;
-  for (const entry of items.slice(0, 12)) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "continue-card";
-    button.dataset.mediaId = entry.item.mediaId;
-    button.setAttribute("aria-label", `继续观看《${entry.item.title}》，从 ${formatTime(entry.playback.positionSec)} 开始`);
-    const poster = document.createElement("span");
-    poster.className = "continue-image";
-    const kind = artworkKind(entry.item);
-    if (kind) {
-      poster.dataset.artworkMediaId = entry.item.mediaId;
-      poster.dataset.artworkKind = kind;
-      poster.append(posterFallback(entry.item.title));
-      enqueueArtwork(poster, 1);
-    } else poster.append(posterFallback(entry.item.title));
-    const copy = document.createElement("span");
-    copy.className = "continue-copy";
-    const title = document.createElement("strong");
-    title.textContent = entry.item.title;
-    const duration = entry.playback.durationSec && entry.playback.durationSec > 0 ? entry.playback.durationSec : 0;
-    const percent = duration ? Math.min(100, Math.round(entry.playback.positionSec / duration * 100)) : 0;
-    const detailLine = document.createElement("span");
-    detailLine.textContent = `${kindLabel(entry.item.kind)} · 已保存至 ${formatTime(entry.playback.positionSec)}${percent ? ` · ${percent}%` : ""}`;
-    const track = document.createElement("span");
-    track.className = "progress-track";
-    const progress = document.createElement("span");
-    progress.style.width = `${percent}%`;
-    track.append(progress);
-    copy.append(title, detailLine, track);
-    button.append(poster, copy);
-    continueRow.append(button);
-  }
+  renderContinueCards(items, continueRow, enqueueArtwork);
 }
 
 function enqueueArtwork(element: HTMLElement, priority: number): void {
@@ -787,24 +632,7 @@ function renderDetail(detailValue: LocalMediaDetail): void {
   if (detailEpisodesSection && detailEpisodes) {
     const episodes = detailValue.episodes.filter((candidate) => candidate.kind === "episode");
     detailEpisodesSection.hidden = episodes.length === 0;
-    detailEpisodes.replaceChildren(...episodes.map((episode) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "episode-row";
-      button.dataset.mediaId = episode.mediaId;
-      button.setAttribute("aria-selected", String(episode.mediaId === selectedMediaId));
-      const number = document.createElement("span");
-      number.className = "episode-number";
-      number.textContent = episode.seasonNumber !== undefined && episode.episodeNumber !== undefined ? `S${String(episode.seasonNumber).padStart(2, "0")}E${String(episode.episodeNumber).padStart(2, "0")}` : "剧集";
-      const title = document.createElement("span");
-      title.className = "episode-title";
-      title.textContent = episode.title;
-      const availability = document.createElement("span");
-      availability.className = "episode-duration";
-      availability.textContent = episode.available ? "可播放" : "离线";
-      button.append(number, title, availability);
-      return button;
-    }));
+    detailEpisodes.replaceChildren(...episodeRows(episodes, selectedMediaId));
   }
   if (detailPoster) {
     detailPoster.replaceChildren(posterFallback(item.title));

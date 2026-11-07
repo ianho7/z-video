@@ -4,6 +4,6 @@
     "module": "ES2022",
     "outDir": "dist"
   },
-  "include": ["src/renderer/renderer.ts", "src/renderer/library.ts", "src/renderer/window.d.ts", "src/shared/contracts.ts"],
+  "include": ["src/renderer/renderer.ts", "src/renderer/shapes.ts", "src/renderer/library.ts", "src/renderer/window.d.ts", "src/shared/contracts.ts"],
   "exclude": ["dist", "node_modules"]
 }
