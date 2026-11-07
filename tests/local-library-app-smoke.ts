@@ -121,6 +121,8 @@ async function run(): Promise<void> {
       35_000,
     );
 
+    await evaluate(window, "document.querySelector('[data-nav=all]')?.click()");
+    await waitFor("visible all-media page", () => evaluate(window, "document.querySelector('#collection-section')?.hidden"), (hidden) => hidden === false);
     await evaluate(window, "document.querySelector('#library-pagination button:last-child')?.click()");
     const pageTwo = await waitFor(
       "second library page",
