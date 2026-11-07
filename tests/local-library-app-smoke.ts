@@ -7,7 +7,7 @@ import { app, BrowserWindow, dialog } from "electron";
 const LONG_TITLE = "Owned UX Audit Feature Film 2026 — Long Detail Title";
 const LONG_PLOT = "这是用于本地片库窗口验收的自有长剧情素材。它故意包含多行文字，验证详情页在长标题和长剧情下仍然把播放操作放在首屏，并允许用户展开或收起剧情简介。第二段继续描述一个不应遮挡播放按钮的本地媒体故事，内容只服务于隔离测试，不代表真实用户片名或路径。".repeat(3);
 const INDEX_FILE_COUNT = 8_000;
-const APP_TIMEOUT_MS = 85_000;
+const APP_TIMEOUT_MS = 100_000;
 let appDeadline = 0;
 
 async function createFixture(profile: string): Promise<string> {
@@ -31,7 +31,7 @@ async function createFixture(profile: string): Promise<string> {
   const showRoot = join(root, "owned-show");
   await mkdir(showRoot);
   await writeFile(join(showRoot, "tvshow.nfo"), "<tvshow><title>Owned Next Show</title></tvshow>");
-  for (const number of [1, 2]) {
+  for (const number of [1, 2, 3]) {
     const stem = `Owned Next Show - S01E0${number}`;
     await copyFile(join(process.cwd(), "assets", "test_video.mp4"), join(showRoot, stem + ".mp4"));
     await writeFile(join(showRoot, stem + ".nfo"), `<episodedetails><title>Next Episode ${number}</title><season>1</season><episode>${number}</episode></episodedetails>`);

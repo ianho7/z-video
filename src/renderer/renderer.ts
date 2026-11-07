@@ -453,7 +453,7 @@ function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
     case "position":
       playerDurationSec = event.durationSec ?? playerDurationSec;
       if (playerSeek && document.activeElement !== playerSeek) playerSeek.value = String(event.positionSec);
-      if (playerSeek) playerSeek.style.setProperty("--progress", `${playerDurationSec > 0 ? Math.min(100, event.positionSec / playerDurationSec * 100) : 0}%`);
+      if (playerSeek) playerSeek.parentElement?.style.setProperty("--progress", `${playerDurationSec > 0 ? Math.min(100, event.positionSec / playerDurationSec * 100) : 0}%`);
       if (playerTime) playerTime.textContent = `${formatTime(event.positionSec)} / ${formatTime(playerDurationSec)}`;
       break;
     case "tracks":
@@ -1204,6 +1204,7 @@ playerSettingsButton?.addEventListener("click", () => {
   playerSettings.hidden = !playerSettings.hidden;
   playerSettingsButton.setAttribute("aria-expanded", String(!playerSettings.hidden));
 });
+document.querySelector<HTMLButtonElement>("#player-settings-close")?.addEventListener("click", () => { if (playerSettings) playerSettings.hidden = true; playerSettingsButton?.setAttribute("aria-expanded", "false"); playerSettingsButton?.focus(); });
 playerNextButton?.addEventListener("click", () => { void playNextEpisode(); });
 playerPlayNext?.addEventListener("click", () => { void playNextEpisode(); });
 playerCancelNext?.addEventListener("click", () => { clearNextTimer(); if (playerCountdown) playerCountdown.textContent = "已取消自动播放"; });
