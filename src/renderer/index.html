@@ -129,28 +129,30 @@
           <p id="player-surface-message" class="player-surface-message">正在准备原生播放器…</p>
         </div>
         <div class="player-controls" aria-label="播放控制">
-          <div class="player-control-row">
+          <div class="player-control-row player-progress-row">
             <button id="player-close-button" class="secondary-button" type="button">返回片库</button>
             <span class="player-now-playing" aria-live="polite"><span>正在播放</span><strong id="player-current-title"></strong></span>
-            <button id="player-toggle-button" class="primary-button" type="button" aria-keyshortcuts="Space" title="Space" disabled>播放</button>
-            <label class="seek-control" for="player-seek"><span class="sr-only">播放进度</span><input id="player-seek" type="range" min="0" max="0" value="0" step="0.1" aria-keyshortcuts="ArrowLeft ArrowRight" title="视频区域焦点时 ←/→ 前后 5 秒；滑块聚焦时微调" disabled /></label>
+            <label class="seek-control" for="player-seek"><span class="sr-only">播放进度</span><svg class="player-wave" viewBox="0 0 200 12" preserveAspectRatio="none" aria-hidden="true"><path d="M0 6 Q5 0 10 6 T20 6 T30 6 T40 6 T50 6 T60 6 T70 6 T80 6 T90 6 T100 6 T110 6 T120 6 T130 6 T140 6 T150 6 T160 6 T170 6 T180 6 T190 6 T200 6"/></svg><input id="player-seek" type="range" min="0" max="0" value="0" step="0.1" aria-keyshortcuts="ArrowLeft ArrowRight" title="视频区域焦点时 ←/→ 前后 5 秒；滑块聚焦时微调" disabled /></label>
             <span id="player-time" class="player-time" aria-live="off">00:00 / 00:00</span>
+          </div>
+          <div class="player-control-row player-actions">
+            <button id="player-back-10" class="secondary-button" type="button" aria-label="后退 10 秒">−10</button>
+            <button id="player-toggle-button" class="primary-button" type="button" aria-keyshortcuts="Space" title="Space" disabled>播放</button>
+            <button id="player-forward-10" class="secondary-button" type="button" aria-label="前进 10 秒">+10</button>
+            <button id="player-next-button" class="secondary-button" type="button" disabled>下一集</button>
+            <span class="player-spacer"></span>
+            <label class="player-volume-control" for="player-volume"><span>音量</span><input id="player-volume" type="range" min="0" max="100" step="5" value="100" aria-keyshortcuts="ArrowUp ArrowDown" disabled /></label>
+            <button id="player-mute-button" class="secondary-button" type="button" aria-keyshortcuts="M" aria-pressed="false" title="M" disabled>静音</button>
+            <button id="player-settings-button" class="secondary-button" type="button" aria-expanded="false" aria-controls="player-settings">设置</button>
+            <button id="player-fullscreen-button" class="secondary-button" type="button" aria-keyshortcuts="F" title="F" disabled>全屏</button>
+          </div>
+          <div id="player-settings" class="player-settings" hidden>
             <label class="player-speed-control" for="player-speed"><span>倍速</span><select id="player-speed" aria-label="播放倍速" disabled>
               <option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option><option value="3">3×</option>
             </select></label>
-            <button id="player-fullscreen-button" class="secondary-button" type="button" aria-keyshortcuts="F" title="F" disabled>全屏</button>
-          </div>
-          <div class="player-control-row player-secondary-row">
             <label for="player-audio-track">音轨</label><select id="player-audio-track" disabled><option value="">自动</option></select>
             <label for="player-subtitle-track">字幕</label><select id="player-subtitle-track" disabled><option value="">关闭</option></select>
-            <button id="player-subtitle-file-button" class="secondary-button" type="button" title="加载外部字幕" disabled>加载字幕</button>
-            <label class="player-volume-control" for="player-volume"><span>音量</span><input id="player-volume" type="range" min="0" max="100" step="5" value="100" aria-keyshortcuts="ArrowUp ArrowDown" title="↑ / ↓：音量 ±5" disabled /></label>
-            <button id="player-mute-button" class="secondary-button" type="button" aria-keyshortcuts="M" aria-pressed="false" title="M" disabled>静音</button>
-            <span id="player-status" class="status" role="status" aria-live="polite"></span>
+            <button id="player-subtitle-file-button" class="secondary-button" type="button" disabled>加载字幕</button>
           </div>
-        </div>
-      </main>
-    </section>
-    <script type="module" src="renderer.js"></script>
-  </body>
-</html>
+          <span id="player-status" class="sr-only" role="status" aria-live="polite"></span>
+          <div id="player-ended" class="player-ended" hidden><strong>已看完</strong><span class="player-countdown-ring"><svg viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="19" /></svg><span id="player-countdown"></span></span><button id="player-play-next" type="button">立即播放</button><button id="player-cancel-next" type="button">取消</button><button id="player-return-list" type="button">返回剧集列表</button></div>

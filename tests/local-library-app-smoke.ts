@@ -7,7 +7,7 @@ import { app, BrowserWindow, dialog } from "electron";
 const LONG_TITLE = "Owned UX Audit Feature Film 2026 — Long Detail Title";
 const LONG_PLOT = "这是用于本地片库窗口验收的自有长剧情素材。它故意包含多行文字，验证详情页在长标题和长剧情下仍然把播放操作放在首屏，并允许用户展开或收起剧情简介。第二段继续描述一个不应遮挡播放按钮的本地媒体故事，内容只服务于隔离测试，不代表真实用户片名或路径。".repeat(3);
 const INDEX_FILE_COUNT = 8_000;
-const APP_TIMEOUT_MS = 55_000;
+const APP_TIMEOUT_MS = 85_000;
 let appDeadline = 0;
 
 async function createFixture(profile: string): Promise<string> {
@@ -27,6 +27,15 @@ async function createFixture(profile: string): Promise<string> {
     "",
   ].join("\n");
   await writeFile(join(root, "00-owned-feature.nfo"), featureNfo, "utf8");
+
+  const showRoot = join(root, "owned-show");
+  await mkdir(showRoot);
+  await writeFile(join(showRoot, "tvshow.nfo"), "<tvshow><title>Owned Next Show</title></tvshow>");
+  for (const number of [1, 2]) {
+    const stem = `Owned Next Show - S01E0${number}`;
+    await copyFile(join(process.cwd(), "assets", "test_video.mp4"), join(showRoot, stem + ".mp4"));
+    await writeFile(join(showRoot, stem + ".nfo"), `<episodedetails><title>Next Episode ${number}</title><season>1</season><episode>${number}</episode></episodedetails>`);
+  }
 
   const batchSize = 100;
   for (let first = 0; first < INDEX_FILE_COUNT; first += batchSize) {
@@ -120,6 +129,26 @@ async function run(): Promise<void> {
       (value) => value.status.includes("扫描完成") && value.count >= INDEX_FILE_COUNT + 1,
       35_000,
     );
+
+    await evaluate(window, "(() => { const search = document.querySelector('#library-search-input'); if (!(search instanceof HTMLInputElement)) throw new Error('search missing'); search.value = 'Next Episode 1'; search.dispatchEvent(new Event('input', { bubbles: true })); })()");
+    await waitFor("episode search", () => evaluate(window, "document.querySelector('#library-grid .media-card-title')?.textContent || ''"), (title) => title === "Next Episode 1");
+    await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
+    await waitFor("episode detail", () => evaluate(window, "document.querySelector('#media-detail-open')?.disabled === false"), Boolean);
+    await evaluate(window, "document.querySelector('#media-detail-open')?.click()");
+    await waitFor("episode playback", () => evaluate(window, "document.querySelector('#player-toggle-button')?.disabled === false"), Boolean);
+    await evaluate(window, "window.zVideo.localPlayback.command({ type: 'pause' })");
+    await waitFor("episode paused", () => evaluate(window, "document.querySelector('#player-toggle-button')?.textContent"), (text) => text === "播放");
+    window.webContents.send("local-playback:event", { type: "state", state: "ended" });
+    await waitFor("next episode prompt", () => evaluate(window, "document.querySelector('#player-ended')?.hidden === false"), Boolean);
+    await evaluate(window, "document.querySelector('#player-cancel-next')?.click()");
+    await new Promise((resolve) => setTimeout(resolve, 10_500));
+    assert.equal(await evaluate(window, "document.querySelector('#player-current-title')?.textContent"), "Next Episode 1", "cancel prevents automatic playback");
+    window.webContents.send("local-playback:event", { type: "state", state: "playing" });
+    window.webContents.send("local-playback:event", { type: "state", state: "ended" });
+    await evaluate(window, "document.querySelector('#player-play-next')?.click()");
+    await waitFor("next episode opened", () => evaluate(window, "document.querySelector('#player-current-title')?.textContent"), (title) => title === "Next Episode 2");
+    await evaluate(window, "document.querySelector('#player-close-button')?.click()");
+    await waitFor("player closed", () => evaluate(window, "document.querySelector('[data-view=player]')?.hidden"), Boolean);
 
     await evaluate(window, "(() => { const search = document.querySelector('#library-search-input'); if (!(search instanceof HTMLInputElement)) throw new Error('search missing'); search.value = 'Owned UX Audit Feature Film 2026'; search.dispatchEvent(new Event('input', { bubbles: true })); })()");
     await waitFor("long title card", () => evaluate(window, "document.querySelector('#library-grid .media-card-title')?.textContent || ''"), (value) => value === LONG_TITLE);

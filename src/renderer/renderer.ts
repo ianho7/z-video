@@ -107,6 +107,15 @@ let scanRefreshQueued = false;
 let scanCommit = 0;
 let scanRenderedCommit = -1;
 let sourceBusy = false;
+const playerNextButton = document.querySelector<HTMLButtonElement>("#player-next-button");
+const playerEnded = document.querySelector<HTMLElement>("#player-ended");
+const playerCountdown = document.querySelector<HTMLElement>("#player-countdown");
+const playerPlayNext = document.querySelector<HTMLButtonElement>("#player-play-next");
+const playerCancelNext = document.querySelector<HTMLButtonElement>("#player-cancel-next");
+const playerSettings = document.querySelector<HTMLElement>("#player-settings");
+const playerSettingsButton = document.querySelector<HTMLButtonElement>("#player-settings-button");
+let nextTimer: number | undefined;
+let returnToEpisodes = false;
 let playerState: "playing" | "paused" | "buffering" | "ended" = "paused";
 let playerDurationSec = 0;
 let playerFullscreen = false;
@@ -231,6 +240,7 @@ function setPlayerControlsEnabled(enabled: boolean): void {
   if (playerVolume) playerVolume.disabled = !enabled;
   if (playerMuteButton) playerMuteButton.disabled = !enabled;
   if (playerSpeed) playerSpeed.disabled = !enabled;
+  if (playerNextButton) playerNextButton.disabled = !enabled || !nextEpisode();
 }
 
 function renderMuteButton(): void {
@@ -338,6 +348,45 @@ function handlePlayerShortcut(event: KeyboardEvent): void {
   }
 }
 
+function clearNextTimer(): void {
+  if (nextTimer !== undefined) window.clearInterval(nextTimer);
+  nextTimer = undefined;
+}
+
+function nextEpisode(): LocalMediaItem | undefined {
+  const episodes = activeDetail?.episodes ?? [];
+  const index = episodes.findIndex((episode) => episode.mediaId === selectedMediaId);
+  const next = index >= 0 ? episodes[index + 1] : undefined;
+  return next?.kind === "episode" && next.available ? next : undefined;
+}
+
+async function playNextEpisode(): Promise<void> {
+  const next = nextEpisode();
+  clearNextTimer();
+  if (!next || !activeDetail) return;
+  selectedMediaId = next.mediaId;
+  activeDetail = { ...activeDetail, item: next };
+  if (playerEnded) playerEnded.hidden = true;
+  await openSelectedLocalMedia();
+}
+
+function showPlaybackEnded(): void {
+  clearNextTimer();
+  const next = nextEpisode();
+  if (playerEnded) { playerEnded.hidden = false; playerEnded.style.setProperty("--remaining", "1"); }
+  if (playerPlayNext) playerPlayNext.hidden = !next;
+  if (playerCancelNext) playerCancelNext.hidden = !next;
+  if (playerCountdown) playerCountdown.textContent = next ? "10 秒后播放下一集" : "";
+  if (!next) return;
+  let seconds = 10;
+  nextTimer = window.setInterval(() => {
+    seconds -= 1;
+    if (playerCountdown) playerCountdown.textContent = `${seconds} 秒后播放下一集`;
+    playerEnded?.style.setProperty("--remaining", String(seconds / 10));
+    if (seconds <= 0) void playNextEpisode();
+  }, 1000);
+}
+
 function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
   if (event.type === "closed") {
     playerFullscreen = false;
@@ -381,6 +430,7 @@ function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
     case "position":
       playerDurationSec = event.durationSec ?? playerDurationSec;
       if (playerSeek && document.activeElement !== playerSeek) playerSeek.value = String(event.positionSec);
+      if (playerSeek) playerSeek.style.setProperty("--progress", `${playerDurationSec > 0 ? Math.min(100, event.positionSec / playerDurationSec * 100) : 0}%`);
       if (playerTime) playerTime.textContent = `${formatTime(event.positionSec)} / ${formatTime(playerDurationSec)}`;
       break;
     case "tracks":
@@ -1013,7 +1063,7 @@ detailPlotToggle?.addEventListener("click", () => {
 });
 detailOpen?.addEventListener("click", () => { void openSelectedLocalMedia(detailOpen.dataset.playbackMode === "restart"); });
 detailRestart?.addEventListener("click", () => { void openSelectedLocalMedia(true); });
-playerCloseButton?.addEventListener("click", () => void sendLocalPlaybackCommand({ type: "close" }));
+playerCloseButton?.addEventListener("click", () => { clearNextTimer(); void sendLocalPlaybackCommand({ type: "close" }); });
 playerToggleButton?.addEventListener("click", () => {
   void sendLocalPlaybackCommand({ type: playerState === "playing" ? "pause" : "play" });
 });
@@ -1029,6 +1079,21 @@ playerAudioTrack?.addEventListener("change", () => {
 playerSubtitleTrack?.addEventListener("change", () => {
   void sendLocalPlaybackCommand({ type: "set-subtitle-track", trackId: playerSubtitleTrack.value || null });
 });
+playerSettingsButton?.addEventListener("click", () => {
+  if (!playerSettings) return;
+  playerSettings.hidden = !playerSettings.hidden;
+  playerSettingsButton.setAttribute("aria-expanded", String(!playerSettings.hidden));
+});
+playerNextButton?.addEventListener("click", () => { void playNextEpisode(); });
+playerPlayNext?.addEventListener("click", () => { void playNextEpisode(); });
+playerCancelNext?.addEventListener("click", () => { clearNextTimer(); if (playerCountdown) playerCountdown.textContent = "已取消自动播放"; });
+document.querySelector<HTMLButtonElement>("#player-return-list")?.addEventListener("click", () => { clearNextTimer(); returnToEpisodes = true; void sendLocalPlaybackCommand({ type: "close" }); });
+for (const [selector, offset] of [["#player-back-10", -10], ["#player-forward-10", 10]] as const) {
+  document.querySelector<HTMLButtonElement>(selector)?.addEventListener("click", () => {
+    const positionSec = Math.max(0, Math.min(playerDurationSec, Number(playerSeek?.value ?? 0) + offset));
+    void sendLocalPlaybackCommand({ type: "seek", positionSec });
+  });
+}
 playerSubtitleFileButton?.addEventListener("click", () => {
   void window.zVideo.localPlayback.chooseSubtitleFile().then(({ loaded }) => {
     if (loaded) setPlayerStatus("已加载外部字幕。");
