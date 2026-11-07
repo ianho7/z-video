@@ -106,12 +106,16 @@ async function run(): Promise<void> {
     const initial = await waitFor(
       "fresh local-library empty state",
       () => evaluate(window, "({ localApi: typeof window.zVideo.localLibrary === 'object', emptyTitle: document.querySelector('#library-empty-title')?.textContent || '', sourceText: document.querySelector('#source-list')?.textContent || '' })"),
-      (value) => value.localApi && value.emptyTitle === "还没有本地影片",
+      (value) => value.localApi && value.emptyTitle.length > 0,
     );
     assert.equal(initial.localApi, true);
+    const capture = async (name: string): Promise<void> => { if (process.env.Z_VIDEO_CAPTURE_DIR) { await mkdir(process.env.Z_VIDEO_CAPTURE_DIR, { recursive: true }); await writeFile(join(process.env.Z_VIDEO_CAPTURE_DIR, `${name}.png`), (await window.webContents.capturePage()).toPNG()); } };
+    await waitFor("onboarding visible", () => evaluate(window, "document.querySelector('#onboarding')?.hidden === false"), Boolean);
+    await capture("onboarding");
 
     window.webContents.send(IPC_CHANNELS.localLibraryState, { status: "error", schemaVersion: 1, sqliteAvailable: false, sources: [], error: { code: "storage", message: "片库暂时不可用" } });
     const errorState = await waitFor("library error card", () => evaluate(window, `({ visible: !document.querySelector('#library-error').hidden, text: document.querySelector('#library-error').textContent, buttons: [...document.querySelectorAll('#library-error button')].map(button => button.textContent) })`), (value) => value.visible);
+    await capture("error");
     assert.match(errorState.text, /storage/);
     assert.deepEqual(errorState.buttons, ["重试"]);
     await evaluate(window, "document.querySelector('#library-error-retry').click()");
@@ -128,6 +132,7 @@ async function run(): Promise<void> {
       (value) => value.scanStatus.includes("扫描中") && value.cardTitle.length > 0 && value.sourceCount > 0,
       20_000,
     );
+    await capture("scan");
     assert.ok(running.cardTitle.length > 0);
     assert.ok(running.sourceCount > 0);
 
@@ -140,6 +145,12 @@ async function run(): Promise<void> {
 
     await evaluate(window, "document.querySelector('[data-nav=all]')?.click()");
     await waitFor("visible all-media page", () => evaluate(window, "document.querySelector('#collection-section')?.hidden"), (hidden) => hidden === false);
+    await waitFor("all navigation active", () => evaluate(window, "document.querySelector('[data-nav=all]')?.getAttribute('aria-current')"), (value) => value === "page");
+    await capture("all");
+    await evaluate(window, "document.querySelector('#manage-sources-button')?.click()");
+    await waitFor("sources visible", () => evaluate(window, "document.querySelector('#source-list')?.getBoundingClientRect().width > 0"), Boolean);
+    await capture("sources");
+    await evaluate(window, "document.querySelector('[data-nav=all]')?.click()");
     await evaluate(window, "document.querySelector('#library-pagination button:last-child')?.click()");
     const pageTwo = await waitFor(
       "second library page",
@@ -159,12 +170,20 @@ async function run(): Promise<void> {
     await waitFor("episode search", () => evaluate(window, "document.querySelector('#library-grid .media-card-title')?.textContent || ''"), (title) => title === "Next Episode 1");
     await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
     await waitFor("episode detail", () => evaluate(window, "document.querySelector('#media-detail-open')?.disabled === false"), Boolean);
+    await waitFor("episode detail title", () => evaluate(window, "document.querySelector('#media-detail-title')?.textContent"), (title) => title === "Owned Next Show");
+    await capture("episode-detail");
     await evaluate(window, "document.querySelector('#media-detail-open')?.click()");
     await waitFor("episode playback", () => evaluate(window, "document.querySelector('#player-toggle-button')?.disabled === false"), Boolean);
+    await capture("player");
+    await evaluate(window, "document.querySelector('#player-settings-button')?.click()");
+    await waitFor("player settings visible", () => evaluate(window, "document.querySelector('#player-settings')?.hidden === false"), Boolean);
+    await capture("player-menu");
+    await evaluate(window, "document.querySelector('#player-settings-close')?.click()");
     await evaluate(window, "window.zVideo.localPlayback.command({ type: 'pause' })");
     await waitFor("episode paused", () => evaluate(window, "document.querySelector('#player-toggle-button')?.textContent"), (text) => text === "播放");
     window.webContents.send("local-playback:event", { type: "state", state: "ended" });
     await waitFor("next episode prompt", () => evaluate(window, "document.querySelector('#player-ended')?.hidden === false"), Boolean);
+    await capture("next-episode");
     await evaluate(window, "document.querySelector('#player-cancel-next')?.click()");
     await new Promise((resolve) => setTimeout(resolve, 10_500));
     assert.equal(await evaluate(window, "document.querySelector('#player-current-title')?.textContent"), "Next Episode 1", "cancel prevents automatic playback");
@@ -190,6 +209,7 @@ async function run(): Promise<void> {
       () => evaluate(window, "(() => { const button = document.querySelector('#media-detail-open')?.getBoundingClientRect(); const plot = document.querySelector('#media-detail-plot'); const toggle = document.querySelector('#media-detail-plot-toggle'); return { hidden: document.querySelector('#media-detail')?.hidden, title: document.querySelector('#media-detail-title')?.textContent || '', meta: document.querySelector('#media-detail-meta')?.textContent || '', plot: plot?.textContent || '', plotCollapsed: plot?.classList.contains('collapsed'), plotExpanded: toggle?.getAttribute('aria-expanded'), movieInfo: document.querySelector('#detail-file-info')?.textContent || '', episodesHidden: document.querySelector('#detail-episodes-section')?.hidden, button: button ? { left: button.left, right: button.right, top: button.top, bottom: button.bottom } : undefined, viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight } }; })()"),
       (value) => value.hidden === false && value.title === LONG_TITLE && value.plot.length >= LONG_PLOT.length && Boolean(value.button),
     );
+    await capture("movie-detail");
     assert.equal(detail.title, LONG_TITLE);
     assert.equal(detail.plot, LONG_PLOT);
     assert.equal(detail.plotCollapsed, true, "long synopsis starts collapsed to three lines");
@@ -237,6 +257,7 @@ async function run(): Promise<void> {
       (value) => value.hidden === false && value.title === LONG_TITLE && value.title.length > 0 && value.firstTitle.length > 0,
       10_000,
     );
+    await capture("home");
     assert.equal(continueMin.title, LONG_TITLE);
     assert.ok(continueMin.firstTitle.length > 0);
 

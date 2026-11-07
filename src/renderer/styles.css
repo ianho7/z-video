@@ -101,7 +101,7 @@ button:disabled { cursor: wait; opacity: .55; }
 .library-select { min-width: 112px; padding: 6px 8px; border: 1px solid var(--surface-2); border-radius: 6px; color: var(--text); background: var(--surface); }
 .scan-status { flex: 1; min-width: 120px; color: var(--text-muted); font-size: 11px; }
 .compact-button { padding: 7px 10px; font-size: 12px; }
-.icon-button { border: 0; color: var(--text-muted); background: transparent; }
+.icon-button { min-width: 44px; min-height: 44px; border: 0; color: var(--text-muted); background: transparent; }
 .source-all { display: flex; width: 100%; justify-content: space-between; margin-bottom: 8px; padding: 9px 8px; border: 1px solid transparent; border-radius: 7px; color: var(--text); text-align: left; background: transparent; }
 .source-all[aria-pressed="true"], .source-all:hover { border-color: var(--surface-2); background: var(--surface-2); }
 .source-row { grid-template-columns: 1fr auto; padding: 0; background: transparent; }
@@ -213,6 +213,9 @@ button:disabled { cursor: wait; opacity: .55; }
 [hidden] { display: none !important; }
 .app-header { gap: 20px; border: 0; }
 .top-nav { display: flex; align-items: center; gap: 4px; }
+.brand-lockup, .top-nav { flex-shrink: 0; }
+.brand-lockup strong, .top-nav button { white-space: nowrap; }
+@media (max-width: 1100px) { .app-header .scan-status { display: none; } .app-header .search-box { min-width: 160px; } }
 .top-nav button, .section-heading button { min-height: 44px; padding: 0 16px; border: 0; border-radius: var(--r-pill); color: var(--text-muted); background: transparent; font-weight: 800; }
 .top-nav [aria-current] { color: var(--lavender-on); background: var(--lavender); }
 .app-header .scan-status { flex: 0 1 auto; min-width: 0; }
@@ -226,14 +229,13 @@ button:disabled { cursor: wait; opacity: .55; }
 .all-media-heading #page-scope { font: 800 16px Nunito, "Microsoft YaHei UI", sans-serif; }
 .all-media-toolbar { display: flex !important; align-items: center; flex-wrap: wrap; gap: 12px; margin: 0 0 22px; }
 .segmented-control { display: flex; flex-wrap: wrap; gap: 3px; padding: 4px; background: var(--surface); }
-.segmented-control button { min-height: 40px; padding: 0 15px; border: 0; border-radius: var(--r-pill); color: var(--text); background: transparent; font-weight: 800; }
+.segmented-control button { min-height: 44px; padding: 0 15px; border: 0; border-radius: var(--r-pill); color: var(--text); background: transparent; font-weight: 800; }
 .segmented-control button[aria-pressed="true"] { color: var(--lavender-on); background: var(--lavender); }
 .source-filters { display: flex; flex: 1 1 360px; flex-wrap: wrap; gap: 7px; }
-.source-filter-chip { min-height: 40px; padding-inline: 13px; color: var(--text-muted); background: var(--surface); border: 0; white-space: nowrap; }
+.source-filter-chip { min-height: 44px; padding-inline: 13px; color: var(--text-muted); background: var(--surface); border: 0; white-space: nowrap; }
 .source-filter-chip[aria-pressed="true"] { color: var(--lavender-on); background: var(--lavender); }
-.source-filter-chip[data-available="false"] { opacity: .65; }
 .sort-control { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 13px; font-weight: 800; white-space: nowrap; }
-.sort-control .library-select { min-height: 42px; padding-inline: 13px; border: 0; border-radius: var(--r-pill); background: var(--surface); font: 800 14px Nunito, "Microsoft YaHei UI", sans-serif; }
+.sort-control .library-select { min-height: 44px; padding-inline: 13px; border: 0; border-radius: var(--r-pill); background: var(--surface); font: 800 14px Nunito, "Microsoft YaHei UI", sans-serif; }
 .search-box:has(#library-search-input:not(:placeholder-shown)) { box-shadow: inset 0 0 0 2px var(--lavender); }
 .library-grid { grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 24px 18px; }
 .media-card-button { gap: 8px; }
