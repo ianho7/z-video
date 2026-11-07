@@ -3,6 +3,7 @@ import { copyFile, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promi
 import { join } from "node:path";
 
 import { app, BrowserWindow, dialog } from "electron";
+import { IPC_CHANNELS } from "../src/shared/ipc-channels";
 
 const LONG_TITLE = "Owned UX Audit Feature Film 2026 — Long Detail Title";
 const LONG_PLOT = "这是用于本地片库窗口验收的自有长剧情素材。它故意包含多行文字，验证详情页在长标题和长剧情下仍然把播放操作放在首屏，并允许用户展开或收起剧情简介。第二段继续描述一个不应遮挡播放按钮的本地媒体故事，内容只服务于隔离测试，不代表真实用户片名或路径。".repeat(3);
@@ -108,6 +109,13 @@ async function run(): Promise<void> {
       (value) => value.localApi && value.emptyTitle === "还没有本地影片",
     );
     assert.equal(initial.localApi, true);
+
+    window.webContents.send(IPC_CHANNELS.localLibraryState, { status: "error", schemaVersion: 1, sqliteAvailable: false, sources: [], error: { code: "storage", message: "片库暂时不可用" } });
+    const errorState = await waitFor("library error card", () => evaluate(window, `({ visible: !document.querySelector('#library-error').hidden, text: document.querySelector('#library-error').textContent, buttons: [...document.querySelectorAll('#library-error button')].map(button => button.textContent) })`), (value) => value.visible);
+    assert.match(errorState.text, /storage/);
+    assert.deepEqual(errorState.buttons, ["重试"]);
+    await evaluate(window, "document.querySelector('#library-error-retry').click()");
+    await waitFor("library retry", () => evaluate(window, "document.querySelector('#library-error').hidden"), (hidden) => hidden === true);
 
     window.setSize(1040, 720);
     const defaultOuter = window.getSize();

@@ -48,6 +48,13 @@
 
           <div id="library-message" class="status" role="status" aria-live="polite"></div>
 
+          <section id="library-error" class="library-error" role="alert" hidden>
+            <h2>片库加载失败</h2>
+            <p id="library-error-message"></p>
+            <p id="library-error-code"></p>
+            <button id="library-error-retry" class="primary-button" type="button">重试</button>
+          </section>
+
             <div id="onboarding" class="onboarding" hidden><p class="eyebrow">WELCOME</p><h1>你的私人影院，从这里开始</h1><p>添加本地文件夹，或直接打开一个视频。</p><button type="button" class="primary-button" data-import="folder">添加文件夹</button> <button type="button" class="secondary-button" data-import="video">打开单个视频</button></div>
           <section id="home-hero" class="home-hero" hidden><div id="hero-artwork" class="hero-artwork"></div><div class="hero-copy"><p id="hero-label" class="eyebrow"></p><h1 id="hero-title"></h1><div class="hero-episode"><strong id="hero-episode"></strong><span id="hero-meta"></span></div><svg class="hero-progress" viewBox="0 0 360 18" preserveAspectRatio="none" aria-hidden="true"><path id="hero-progress-track"/><path id="hero-progress-fill" pathLength="100"/></svg><div class="hero-actions"><button id="hero-play" class="primary-button" type="button">继续观看</button><button id="hero-restart" class="secondary-button" type="button">从头播放</button><button id="hero-detail" class="secondary-button" type="button">详情</button></div></div></section>
           <section id="continue-section" class="continue-section" hidden aria-labelledby="continue-title">

@@ -492,6 +492,20 @@ async function sendLocalPlaybackCommand(command: Parameters<typeof window.zVideo
 
 function renderState(next: LocalLibraryState): void {
   state = next;
+  const errorCard = document.querySelector<HTMLElement>("#library-error");
+  if (errorCard) errorCard.hidden = next.status !== "error";
+  if (next.status === "error") {
+    const message = document.querySelector<HTMLElement>("#library-error-message");
+    const code = document.querySelector<HTMLElement>("#library-error-code");
+    if (message) message.textContent = next.error?.message ?? "本地片库不可用。";
+    if (code) code.textContent = next.error?.code ? `错误代码：${next.error.code}` : "";
+    if (onboarding) onboarding.hidden = true;
+    if (hero) hero.hidden = true;
+    if (continueSection) continueSection.hidden = true;
+    if (recentSection) recentSection.hidden = true;
+    if (showsSection) showsSection.hidden = true;
+  }
+  if (collectionSection && !isDetailOrPlayerVisible()) collectionSection.hidden = next.status === "error" || homeVisible;
   renderSources(next, scanProgress, sourceList);
   if (allSourceCount) allSourceCount.textContent = String(next.sources.reduce((sum, source) => sum + source.itemCount, 0));
   renderSourceFilters();
@@ -500,7 +514,7 @@ function renderState(next: LocalLibraryState): void {
 
 function renderPage(page: { items: LocalMediaItem[]; totalCount: number; page: number; pageSize: number }): void {
   activePage = page;
-  if (onboarding) onboarding.hidden = !(homeVisible && state?.sources.length === 0 && page.totalCount === 0 && !currentQuery.query);
+  if (onboarding) onboarding.hidden = !(state?.status !== "error" && homeVisible && state?.sources.length === 0 && page.totalCount === 0 && !currentQuery.query);
   const focusedMediaId = preserveGridFocus();
   if (!libraryGrid || !libraryEmpty) return;
   artworkObserver?.disconnect();
@@ -750,6 +764,7 @@ async function loadLibrary(): Promise<boolean> {
     return true;
   } catch (error) {
     if (epoch === requestEpoch) {
+      if (state?.status === "error") return false;
       setMessage(error instanceof Error ? error.message : "本地片库加载失败。", true);
       if (libraryGrid) { libraryGrid.removeAttribute("aria-busy"); libraryGrid.replaceChildren(); }
       if (libraryEmpty) libraryEmpty.hidden = false;
@@ -1101,6 +1116,7 @@ searchAllTypesButton?.addEventListener("click", () => {
   void loadLibrary();
 });
 libraryRetryButton?.addEventListener("click", () => void loadLibrary());
+document.querySelector<HTMLButtonElement>("#library-error-retry")?.addEventListener("click", () => void loadLibrary());
 for (const row of [document.querySelector<HTMLElement>("#recent-row"), document.querySelector<HTMLElement>("#shows-row")]) row?.addEventListener("click", (event) => { const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-media-id]"); if (button?.dataset.mediaId) void openDetail(button.dataset.mediaId, button); });
 document.querySelector<HTMLButtonElement>("#hero-detail")?.addEventListener("click", (event) => { const item = homeItems[0]?.item ?? recentItems[0]; if (item) void openDetail(item.mediaId, event.currentTarget as HTMLElement); });
 for (const [id, restart] of [["#hero-play", false], ["#hero-restart", true]] as const) document.querySelector<HTMLButtonElement>(id)?.addEventListener("click", () => { const item = homeItems[0]?.item ?? recentItems[0]; if (!item || !item.available) return; selectedMediaId = item.mediaId; activeDetail = { item, episodes: [item] }; void openSelectedLocalMedia(restart); });
