@@ -9,7 +9,7 @@ import { createServer } from "node:net";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const root = resolve(scriptDirectory, "..");
-const packageRoot = resolve(process.env.Z_VIDEO_PACKAGE_DIR ?? join(root, ".scratch", "local-library", "package", "z-video-win32-x64"));
+const packageRoot = resolve(process.env.Z_VIDEO_PACKAGE_DIR ?? join(root, "release", "z-video-win32-x64"));
 const executable = join(packageRoot, "z-video.exe");
 const profile = await mkdtemp(join(tmpdir(), "z-video-package-smoke-"));
 const evidenceDir = join(root, ".scratch", "local-library", "runs", `05-package-${Date.now()}-${process.pid}`);

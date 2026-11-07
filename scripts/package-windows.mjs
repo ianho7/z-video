@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const root = resolve(scriptDirectory, "..");
 const rootPackage = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
-const output = resolve(process.env.Z_VIDEO_PACKAGE_DIR ?? join(root, ".scratch", "local-library", "package", "z-video-win32-x64"));
+const output = resolve(process.env.Z_VIDEO_PACKAGE_DIR ?? join(root, "release", "z-video-win32-x64"));
 const dependencyRoots = [join(root, "node_modules"), resolve(root, "..", "..", "node_modules")];
 function resolveDependency(name) {
   const relative = name.split("/").join("/");

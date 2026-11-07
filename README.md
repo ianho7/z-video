@@ -21,7 +21,7 @@ npm run test:local-library-scale # owned 2,000/20,000 项扫描、并发查询�
 npm run test:safe-storage-process  # 两个 Electron 进程 + 本地 HTTP fixture
 ```
 
-candidate 输出默认位于 `.scratch/local-library/package/z-video-win32-x64/`；不会读取普通用户会话，也不会连接私有 NAS。包生成器现在只允许同卷 hard link 或普通文件 copy，禁止 symlink/junction 回退；本机 D: 仅余约 33 MB 时，默认目标的完整 regular-copy 会明确以 `ENOSPC` 失败。最终独立 regular-copy candidate 位于授权 C: 路径 `C:\Users\admin\.codex\visualizations\2026\10\30\01a18d67-6765-7dc0-8bd1-47ac85ca8f26\local-library-package\z-video-win32-x64\`：503,138,932 bytes、231 files、0 个 reparse points；最新 idle packaged process working set 为 149,057,536 bytes。包清单会记录 Electron/Koffi/libmpv/XML 依赖闭包、文件数、字节数和 DLL SHA-256；libmpv 的公开再分发许可证来源尚未确认，因此该目录是个人使用验证候选，不是签名或公开发布包。2,000/20,000 项 owned scale 证据见 `.scratch/local-library/runs/scale-1793452793624-11380/`。
+Windows 包默认输出到 `release/z-video-win32-x64/`；可用 `Z_VIDEO_PACKAGE_DIR` 覆盖输出目录。打包验证使用隔离用户目录，不会读取普通用户会话，也不会连接私有 NAS。包清单记录 Electron/Koffi/libmpv/XML 依赖、文件数、字节数和 DLL SHA-256；libmpv 的公开再分发许可证来源尚未确认，因此该包是个人使用验证候选，不是签名或公开发布包。
 
 已确认的首版需求、用户故事及验收边界见 [首版 Spec](docs/spec.md)；迁移范围和未通过项见 [Electron migration spec](docs/electron-migration-spec.md)。
 

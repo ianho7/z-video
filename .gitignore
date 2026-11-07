@@ -3,6 +3,8 @@
 .worktrees/
 node_modules/
 dist/
+.scratch/
+release/
 .scratch/electron-migration/runs/
 .scratch/electron-migration/05-package/
 .scratch/local-library/runs/

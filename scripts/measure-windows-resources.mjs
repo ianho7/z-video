@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const root = resolve(scriptDirectory, "..");
-const packageRoot = resolve(process.env.Z_VIDEO_PACKAGE_DIR ?? join(root, ".scratch", "local-library", "package", "z-video-win32-x64"));
+const packageRoot = resolve(process.env.Z_VIDEO_PACKAGE_DIR ?? join(root, "release", "z-video-win32-x64"));
 const packageExecutable = join(packageRoot, "z-video.exe");
 const nodeModules = resolve(process.env.Z_VIDEO_NODE_MODULES_DIR ?? [join(root, "node_modules"), resolve(root, "..", "..", "node_modules")].find((candidate) => existsSync(candidate)) ?? join(root, "node_modules"));
 const npmCache = process.env.npm_config_cache ?? join(process.env.LOCALAPPDATA ?? join(tmpdir(), "z-video-no-localappdata"), "npm-cache");

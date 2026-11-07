@@ -25,11 +25,11 @@ Electron 45 + TypeScript 是当前默认的 Windows 运行、构建和打包路�
 
 默认窗口沿用旧 AppWindow 的 preferred `1040x720`、minimum `900x640` 和可收起 `220px` 侧栏。Windows 11 22H2+ 优先使用 Electron `backgroundMaterial: "acrylic"`，对应旧 Windows DWM transient-window 材料；系统 high contrast/reduced-transparency、显式 `Z_VIDEO_REDUCED_TRANSPARENCY=1`、不支持的 OS build 或材料不可用时，回退为不透明 sidebar/toolbar。该回退已由真实 Electron 窗口验证；DWM 实际采样画面仍需在有权限的 Windows 设备上单独留证。
 
-`npm run start`、`npm run build`、`npm run package`、`npm run verify:package` 和 `npm run measure:windows` 不依赖 Rust/Cargo。一次 Windows 测量记录在 `.scratch/electron-migration/runs/05-resources-1793418913399-24128/resource-measurement.json`；它分别记录开发依赖/cache、portable 总目录和 idle working-set，不比较不存在的 Rust release 包。旧 Slint/Rust 实现继续保留作回滚/对照；不删除全局 Rust/Cargo、旧 worktree、reference 或测试资料。
+`npm run start`、`npm run build`、`npm run package`、`npm run verify:package` 和 `npm run measure:windows` 不依赖 Rust/Cargo。一次 Windows 测量记录在 `.scratch/electron-migration/runs/05-resources-1793418913399-24128/resource-measurement.json`；它分别记录开发依赖/cache、portable 总目录和 idle working-set，不比较不存在的 Rust release 包。旧 Slint/Rust 实现可在 Git 历史中查阅；保留全局 Rust/Cargo、旧 worktree 和 reference。
 
 ## 已确定与待验证
 
-当前 GUI/业务实现是 Electron 45 + TypeScript；Windows/macOS 是目标平台，旧 Slint/Rust 代码只作回滚与协议参考。优先精致 GUI、原生播放、易维护和有限资源占用；不以增加语言和运行时换取尚未证明的收益。
+当前 GUI/业务实现是 Electron 45 + TypeScript；Windows/macOS 是目标平台。优先精致 GUI、原生播放、易维护和有限资源占用；不以增加语言和运行时换取尚未证明的收益。
 
 首版采用单应用、单进程、单窗口和一个播放引擎的最小方向。它是实现起点，不是对所有平台集成能力的保证。若真实播放集成需要改变进程或渲染结构，先记录实际约束和取舍，再调整。
 
