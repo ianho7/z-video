@@ -925,7 +925,7 @@ function renderScanProgress(progress: LocalScanProgress): void {
       scanRefreshTimer = undefined;
     }
     scanRefreshQueued = false;
-    requestEpoch += 1;
+    if (!isDetailOrPlayerVisible()) requestEpoch += 1;
   }
   if (progress.status === "running") {
     scanId = progress.scanId;
