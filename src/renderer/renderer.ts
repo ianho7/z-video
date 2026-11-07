@@ -127,6 +127,7 @@ interface ArtworkTask {
 }
 
 const artworkQueue: ArtworkTask[] = [];
+const artworkRequests = new Map<string, Promise<Awaited<ReturnType<typeof window.zVideo.localLibrary.getArtwork>>>>();
 let artworkActive = 0;
 let artworkObserver: IntersectionObserver | undefined;
 
@@ -543,9 +544,20 @@ async function pumpArtwork(): Promise<void> {
   while (artworkActive < ARTWORK_CONCURRENCY && artworkQueue.length > 0) {
     const task = artworkQueue.shift();
     if (!task) return;
-    artworkActive += 1;
     const current = () => task.element.isConnected && task.element.dataset.artworkMediaId === task.mediaId && task.element.dataset.artworkKind === task.kind && task.element.dataset.artworkGeneration === task.generation;
-    void window.zVideo.localLibrary.getArtwork(task.mediaId, task.kind).then(async (result) => {
+    const key = `${task.mediaId}:${task.kind}`;
+    let request = artworkRequests.get(key);
+    if (!request) {
+      artworkActive += 1;
+      request = window.zVideo.localLibrary.getArtwork(task.mediaId, task.kind);
+      artworkRequests.set(key, request);
+      void request.finally(() => {
+        artworkRequests.delete(key);
+        artworkActive -= 1;
+        void pumpArtwork();
+      }).catch(() => undefined);
+    }
+    void request.then(async (result) => {
       if (!result.dataUrl || !current()) return;
       const image = document.createElement("img");
       image.alt = "本地封面";
@@ -564,8 +576,6 @@ async function pumpArtwork(): Promise<void> {
       }
     }).catch(() => undefined).finally(() => {
       if (current()) task.element.dataset.artworkLoading = "false";
-      artworkActive -= 1;
-      void pumpArtwork();
     });
 
   }

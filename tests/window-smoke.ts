@@ -120,9 +120,8 @@ async function run(): Promise<void> {
   await window.webContents.executeJavaScript("document.querySelector('#media-detail-back').click()", true);
 
   await waitFor("delayed card", () => window.webContents.executeJavaScript("Boolean(document.querySelector('[data-media-id=\"media_123e4567-e89b-12d3-a456-426614174002\"]'))", true) as Promise<boolean>, Boolean);
-  const priorDelayed = delayedResponses.length;
   await window.webContents.executeJavaScript("document.querySelector('[data-media-id=\"media_123e4567-e89b-12d3-a456-426614174002\"]').click()", true);
-  await waitFor("delayed artwork request", async () => delayedResponses.length > priorDelayed, Boolean);
+  await waitFor("delayed artwork request", () => window.webContents.executeJavaScript("document.querySelector('#detail-poster')?.dataset.artworkLoading", true) as Promise<string>, (loading) => loading === "true" && delayedResponses.length > 0);
   await window.webContents.executeJavaScript("document.querySelector('#media-detail-back').click()", true);
   await waitFor("replacement card", () => window.webContents.executeJavaScript("Boolean(document.querySelector('[data-media-id=\"media_123e4567-e89b-12d3-a456-426614174003\"]'))", true) as Promise<boolean>, Boolean);
   await window.webContents.executeJavaScript("document.querySelector('[data-media-id=\"media_123e4567-e89b-12d3-a456-426614174003\"]').click()", true);
