@@ -1,4 +1,6 @@
-import { escapeHtml, formatTime, kindLabel, formatBytes, posterFallback, artworkKind } from "./views/shared.js";
+import { coverData, generatedCover } from "./cover.js";
+import { applyTone, posterTone } from "./tone.js";
+import { escapeHtml, formatTime, kindLabel, formatBytes, artworkKind } from "./views/shared.js";
 import { card } from "./views/all.js";
 import { renderSources } from "./views/sources.js";
 import { episodeRows } from "./views/detail.js";
@@ -112,6 +114,7 @@ interface ArtworkTask {
   mediaId: string;
   kind: LocalArtworkReference["kind"];
   priority: number;
+  generation: string;
 }
 
 const artworkQueue: ArtworkTask[] = [];
@@ -465,7 +468,9 @@ function enqueueArtwork(element: HTMLElement, priority: number): void {
   const kind = element.dataset.artworkKind as LocalArtworkReference["kind"] | undefined;
   if (!mediaId || !kind || element.dataset.artworkLoading === "true" || element.dataset.artworkLoaded === "true") return;
   element.dataset.artworkLoading = "true";
-  artworkQueue.push({ element, mediaId, kind, priority });
+  const generation = String(Number(element.dataset.artworkGeneration ?? 0) + 1);
+  element.dataset.artworkGeneration = generation;
+  artworkQueue.push({ element, mediaId, kind, priority, generation });
   artworkQueue.sort((left, right) => right.priority - left.priority);
   void pumpArtwork();
 }
@@ -475,20 +480,30 @@ async function pumpArtwork(): Promise<void> {
     const task = artworkQueue.shift();
     if (!task) return;
     artworkActive += 1;
-    void window.zVideo.localLibrary.getArtwork(task.mediaId, task.kind).then((result) => {
-      if (!result.dataUrl || !task.element.isConnected) return;
+    const current = () => task.element.isConnected && task.element.dataset.artworkMediaId === task.mediaId && task.element.dataset.artworkKind === task.kind && task.element.dataset.artworkGeneration === task.generation;
+    void window.zVideo.localLibrary.getArtwork(task.mediaId, task.kind).then(async (result) => {
+      if (!result.dataUrl || !current()) return;
       const image = document.createElement("img");
-      image.src = result.dataUrl;
       image.alt = "本地封面";
       image.decoding = "async";
-      image.loading = "lazy";
+      image.src = result.dataUrl;
+      await image.decode();
+      if (!current()) return;
+      const fallback = coverData({ mediaId: task.mediaId as LocalMediaItem["mediaId"], title: "", sourceId: "", collectionId: "", kind: "movie", sizeBytes: 0, modifiedAtMs: 0, available: true }).tone;
+      const tone = posterTone(task.mediaId, image, fallback);
       task.element.replaceChildren(image);
       task.element.dataset.artworkLoaded = "true";
+      applyTone(task.element, tone);
+      if (selectedMediaId === task.mediaId && detail && !detail.hidden) {
+        applyTone(detail, tone);
+        if (playerView) applyTone(playerView, tone);
+      }
     }).catch(() => undefined).finally(() => {
-      task.element.dataset.artworkLoading = "false";
+      if (current()) task.element.dataset.artworkLoading = "false";
       artworkActive -= 1;
       void pumpArtwork();
     });
+
   }
 }
 
@@ -635,7 +650,14 @@ function renderDetail(detailValue: LocalMediaDetail): void {
     detailEpisodes.replaceChildren(...episodeRows(episodes, selectedMediaId));
   }
   if (detailPoster) {
-    detailPoster.replaceChildren(posterFallback(item.title));
+    detailPoster.replaceChildren(generatedCover(item, detailValue.episodes.filter((episode) => episode.kind === "episode").length));
+    const tone = coverData(item).tone;
+    if (detail) applyTone(detail, tone);
+    if (playerView) applyTone(playerView, tone);
+    detailPoster.dataset.artworkGeneration = String(Number(detailPoster.dataset.artworkGeneration ?? 0) + 1);
+    delete detailPoster.dataset.artworkLoaded;
+    delete detailPoster.dataset.artworkLoading;
+    delete detailPoster.dataset.artworkKind;
     detailPoster.dataset.artworkMediaId = item.mediaId;
     const kind = artworkKind(item);
     if (kind) {

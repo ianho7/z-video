@@ -12,3 +12,5 @@ await import("../dist/tests/local-playback.test.js");
 await import("../dist/tests/mpv-player.test.js");
 await import("../dist/tests/app-preferences.test.js");
 await import("../dist/tests/shapes.test.js");
+
+await import("../dist/tests/cover-tone.test.js");

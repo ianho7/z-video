@@ -1,5 +1,6 @@
+import { generatedCover } from "../cover.js";
 import type { LocalContinueWatchingItem } from "../../shared/local-library-contracts";
-import { artworkKind, posterFallback, kindLabel, formatTime } from "./shared.js";
+import { artworkKind, kindLabel, formatTime } from "./shared.js";
 
 export function renderContinueCards(items: LocalContinueWatchingItem[], continueRow: HTMLElement, enqueueArtwork: (element: HTMLElement, priority: number) => void): void {
   for (const entry of items.slice(0, 12)) {
@@ -14,9 +15,9 @@ export function renderContinueCards(items: LocalContinueWatchingItem[], continue
     if (kind) {
       poster.dataset.artworkMediaId = entry.item.mediaId;
       poster.dataset.artworkKind = kind;
-      poster.append(posterFallback(entry.item.title));
+      poster.append(generatedCover(entry.item));
       enqueueArtwork(poster, 1);
-    } else poster.append(posterFallback(entry.item.title));
+    } else poster.append(generatedCover(entry.item));
     const copy = document.createElement("span");
     copy.className = "continue-copy";
     const title = document.createElement("strong");

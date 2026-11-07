@@ -25,15 +25,6 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
-export function posterFallback(title: string): HTMLElement {
-  const fallback = document.createElement("span");
-  fallback.className = "poster-fallback";
-  const titleNode = document.createElement("strong");
-  titleNode.textContent = title.slice(0, 2) || "影视";
-  fallback.append(titleNode, document.createTextNode("封面不可用"));
-  return fallback;
-}
-
 export function artworkKind(item: LocalMediaItem): LocalArtworkReference["kind"] | undefined {
-  return item.artwork?.find((art) => art.kind === "poster")?.kind ?? item.artwork?.[0]?.kind;
+  return item.artwork?.find((art) => art.kind === "poster")?.kind;
 }

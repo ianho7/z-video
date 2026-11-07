@@ -1,5 +1,6 @@
+import { generatedCover } from "../cover.js";
 import type { LocalMediaItem } from "../../shared/local-library-contracts";
-import { artworkKind, posterFallback, kindLabel, formatBytes } from "./shared.js";
+import { artworkKind, kindLabel, formatBytes } from "./shared.js";
 
 export function card(item: LocalMediaItem): HTMLElement {
   const article = document.createElement("article");
@@ -16,9 +17,9 @@ export function card(item: LocalMediaItem): HTMLElement {
   if (kind) {
     poster.dataset.artworkMediaId = item.mediaId;
     poster.dataset.artworkKind = kind;
-    poster.append(posterFallback(item.title));
+    poster.append(generatedCover(item));
   } else {
-    poster.append(posterFallback(item.title));
+    poster.append(generatedCover(item));
   }
   const title = document.createElement("span");
   title.className = "media-card-title";
