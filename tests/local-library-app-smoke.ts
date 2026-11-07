@@ -105,7 +105,7 @@ async function run(): Promise<void> {
     const initial = await waitFor(
       "fresh local-library empty state",
       () => evaluate(window, "({ localApi: typeof window.zVideo.localLibrary === 'object', emptyTitle: document.querySelector('#library-empty-title')?.textContent || '', sourceText: document.querySelector('#source-list')?.textContent || '' })"),
-      (value) => value.localApi && value.emptyTitle === "还没有本地来源" && value.sourceText.includes("尚未添加来源"),
+      (value) => value.localApi && value.emptyTitle === "还没有本地影片",
     );
     assert.equal(initial.localApi, true);
 

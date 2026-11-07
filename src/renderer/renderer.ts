@@ -403,6 +403,8 @@ function showPlaybackEnded(): void {
 
 function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
   if (event.type === "closed") {
+    clearNextTimer();
+    if (playerEnded) playerEnded.hidden = true;
     playerFullscreen = false;
     if (playerFullscreenButton) playerFullscreenButton.textContent = "全屏";
     showPlayer(false);
@@ -411,13 +413,16 @@ function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
     if (playerSurfaceMessage) playerSurfaceMessage.textContent = "正在准备原生播放器…";
     activePlaybackTitle = "";
     if (playerCurrentTitle) playerCurrentTitle.textContent = "";
-    closeDetail();
+    if (returnToEpisodes && activeDetail) { returnToEpisodes = false; renderDetail(activeDetail); }
+    else closeDetail();
     setMessage("本地播放已关闭。");
     return;
   }
   showPlayer(true);
   switch (event.type) {
     case "loading":
+      clearNextTimer();
+      if (playerEnded) playerEnded.hidden = true;
       playerState = "buffering";
       setPlayerControlsEnabled(false);
       setPlayerStatus("正在加载本地媒体…");
@@ -434,7 +439,11 @@ function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
       }
       break;
     case "state":
+      const wasEnded = playerState === "ended";
       playerState = event.state;
+      if (event.state === "ended" && !wasEnded) showPlaybackEnded();
+      else if (event.state !== "ended") { clearNextTimer(); if (playerEnded) playerEnded.hidden = true; }
+      if (playerNextButton) playerNextButton.disabled = !nextEpisode();
       if (playerToggleButton) playerToggleButton.textContent = event.state === "playing" ? "暂停" : "播放";
       if (event.state === "playing") setPlayerStatus("视频区域快捷键：Space 暂停 · ←/→ ±5秒 · ↑/↓ 音量±5 · M 静音 · F 全屏 · Esc 退出");
       else if (event.state === "paused") setPlayerStatus("已暂停 · Space 继续播放");
