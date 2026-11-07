@@ -872,6 +872,7 @@ function renderDetail(detailValue: LocalMediaDetail): void {
   }
   if (detailRestart) {
     detailRestart.hidden = !resume;
+    detailRestart.disabled = !item.available;
     detailRestart.dataset.playbackMode = "restart";
   }
   if (detailResume) {

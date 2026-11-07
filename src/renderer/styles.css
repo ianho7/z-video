@@ -17,6 +17,7 @@
 .library-error button { min-height: 48px; margin-top: 12px; border-radius: var(--r-pill); }
 body { margin: 0; min-width: 900px; min-height: 640px; background: var(--bg); }
 button, input { font: inherit; }
+button, select, summary, input[type="range"] { min-width: 44px; min-height: 44px; }
 button { cursor: pointer; }
 button:disabled { cursor: wait; opacity: .55; }
 .app-shell { min-height: 100vh; background: var(--bg); }
@@ -32,7 +33,6 @@ button:disabled { cursor: wait; opacity: .55; }
 .primary-button { background: var(--lavender); color: var(--lavender-on); }.primary-button:hover { background: #ded4ff; transform: translateY(-1px); }
 .secondary-button { background: var(--surface-2); border-color: var(--surface-2); color: var(--text); }.secondary-button:hover { background: var(--surface-2); transform: translateY(-1px); }
 .library-layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); min-height: calc(100vh - 66px); }
-.source-sidebar { padding: 22px 18px; border-right: 1px solid var(--surface-2); background: var(--surface); }
 .source-sidebar h2 { margin: 7px 0 22px; font-size: 18px; }.eyebrow { margin: 0; color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: .16em; }
 .source-list { display: grid; gap: 8px; }.source-row { display: grid; grid-template-columns: 9px 1fr auto; align-items: center; gap: 8px; padding: 9px 8px; border-radius: 7px; background: var(--surface-2); font-size: 13px; }.source-dot { width: 7px; height: 7px; border-radius: 99px; background: var(--lavender); }.source-count, .muted { color: var(--text-muted); }.source-note { margin-top: 30px; font-size: 11px; line-height: 1.6; }
 .library-content { min-width: 0; padding: 18px 24px 24px; overflow: auto; }.content-heading { display: flex; justify-content: space-between; align-items: end; gap: 18px; margin-bottom: 12px; }.content-heading h1 { margin: 5px 0 0; font-size: 28px; letter-spacing: -.04em; }
@@ -102,21 +102,12 @@ button:disabled { cursor: wait; opacity: .55; }
 .scan-status { flex: 1; min-width: 120px; color: var(--text-muted); font-size: 11px; }
 .compact-button { padding: 7px 10px; font-size: 12px; }
 .icon-button { min-width: 44px; min-height: 44px; border: 0; color: var(--text-muted); background: transparent; }
-.source-all { display: flex; width: 100%; justify-content: space-between; margin-bottom: 8px; padding: 9px 8px; border: 1px solid transparent; border-radius: 7px; color: var(--text); text-align: left; background: transparent; }
-.source-all[aria-pressed="true"], .source-all:hover { border-color: var(--surface-2); background: var(--surface-2); }
 .source-row { grid-template-columns: 1fr auto; padding: 0; background: transparent; }
-.source-row.selected .source-select { border-color: var(--lavender); background: var(--surface-2); }
-.source-select { display: grid; grid-template-columns: 9px 1fr auto; align-items: center; width: 100%; min-width: 0; gap: 8px; padding: 9px 8px; border: 1px solid transparent; border-radius: 7px; color: var(--text); text-align: left; background: transparent; }
-.source-select:hover { background: var(--surface-2); }
 .source-dot.offline { background: var(--error); }
 .source-actions { display: flex; align-items: center; gap: 1px; }
-.source-action { width: 24px; height: 26px; padding: 0; border: 0; border-radius: 5px; color: var(--text-muted); background: transparent; }
-.source-action:hover { background: var(--surface-2); color: var(--text); }
-.source-action.danger:hover { color: var(--error); }
 .source-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .media-poster { position: relative; overflow: hidden; }
 .media-poster img, .detail-poster img, .continue-image img { width: 100%; height: 100%; object-fit: cover; }
-.media-card.unavailable { opacity: .72; }
 .poster-fallback { display: grid; place-items: center; padding: 12px; color: var(--text-muted); font-size: 10px; line-height: 1.4; text-align: center; }
 .poster-fallback strong { display: block; margin-bottom: 5px; color: var(--lavender); font-size: 20px; }
 .empty-state { margin-top: 50px; }
@@ -209,7 +200,6 @@ button:disabled { cursor: wait; opacity: .55; }
 .cover-shape-2 { border-radius: 20px 20px 60px 20px; }
 .cover-shape-3 { border-radius: 20px 60px 20px 20px; }
 .library-layout { display: block; }
-.source-sidebar { position: absolute; right: 24px; z-index: 3; width: 260px; border: 0; border-radius: var(--r-card); }
 [hidden] { display: none !important; }
 .app-header { gap: 20px; border: 0; }
 .top-nav { display: flex; align-items: center; gap: 4px; }

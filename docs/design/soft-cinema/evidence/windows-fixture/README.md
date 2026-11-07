@@ -1,0 +1,9 @@
+# Windows fixture evidence
+
+Captured with `Z_VIDEO_CAPTURE_DIR=<this directory> npm run test:local-library-app` on Windows in an isolated Electron profile. The test uses repository-owned video/NFO fixtures and 8,000 empty indexed files. Source offline is produced by renaming only the temporary fixture directory and rescanning. The error event and playback-ended event are simulated; other screens use the production renderer and local-library path. Screenshots are Electron `capturePage` output, not evidence of a native video frame or DWM composition.
+
+Files: `home.png`, `all.png`, `sources.png`, `scan.png`, `episode-detail.png`, `movie-detail.png`, `movie-offline.png`, `player.png`, `player-menu.png`, `next-episode.png`, `onboarding.png`, `error.png`.
+
+The offline movie check verifies both playback and restart are disabled. The fixture window check passed after that repair. `test:appearance-window` remains failing: its dataset assertion is absent even at baseline `3e52f99`; main still selects the native backdrop, but this does not establish visible high-contrast behavior. macOS, real shares and media, hardware decoding and DWM remain unverified.
+
+Static accessibility review: button, select, summary and range controls have 44 CSS pixel minimum targets; the detail offline link is 44px high. Actual target sizes and all text contrasts have not been exhaustively measured in every dynamic state. Calculated contrast ratios: muted text on bg 7.42:1 and surface 6.75:1; error on error surface 10.11:1; lavender, pink, blue, orange and mint token pairs 10.05, 7.97, 9.47, 7.93 and 8.29:1. Warning pair 9.68:1. Muted text on the four colored deep backgrounds ranges 6.13–6.59:1. Removed offline card opacity, which reduced muted text on the page background to approximately 4.33:1. Disabled controls are intentionally dimmed.

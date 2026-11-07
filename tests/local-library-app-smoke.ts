@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { copyFile, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { app, BrowserWindow, dialog } from "electron";
@@ -109,7 +109,7 @@ async function run(): Promise<void> {
       (value) => value.localApi && value.emptyTitle.length > 0,
     );
     assert.equal(initial.localApi, true);
-    const capture = async (name: string): Promise<void> => { if (process.env.Z_VIDEO_CAPTURE_DIR) { await mkdir(process.env.Z_VIDEO_CAPTURE_DIR, { recursive: true }); await writeFile(join(process.env.Z_VIDEO_CAPTURE_DIR, `${name}.png`), (await window.webContents.capturePage()).toPNG()); } };
+    const capture = async (name: string): Promise<void> => { if (process.env.Z_VIDEO_CAPTURE_DIR) { await mkdir(process.env.Z_VIDEO_CAPTURE_DIR, { recursive: true }); await new Promise((resolve) => setTimeout(resolve, 150)); await writeFile(join(process.env.Z_VIDEO_CAPTURE_DIR, `${name}.png`), (await window.webContents.capturePage()).toPNG()); } };
     await waitFor("onboarding visible", () => evaluate(window, "document.querySelector('#onboarding')?.hidden === false"), Boolean);
     await capture("onboarding");
 
@@ -132,6 +132,8 @@ async function run(): Promise<void> {
       (value) => value.scanStatus.includes("扫描中") && value.cardTitle.length > 0 && value.sourceCount > 0,
       20_000,
     );
+    await evaluate(window, "document.querySelector('#manage-sources-button')?.click()");
+    await waitFor("scan panel running", () => evaluate(window, "document.querySelector('#scan-panel-title')?.textContent || ''"), (value) => value.includes("正在扫描"));
     await capture("scan");
     assert.ok(running.cardTitle.length > 0);
     assert.ok(running.sourceCount > 0);
@@ -273,6 +275,19 @@ async function run(): Promise<void> {
     assert.ok(Math.abs(defaultAfterContinueContent[0] - continueDefault.inner.width) <= 4 && Math.abs(defaultAfterContinueContent[1] - continueDefault.inner.height) <= 4, `content=${JSON.stringify(defaultAfterContinueContent)} inner=${JSON.stringify(continueDefault.inner)}`);
     assert.ok(continueDefault.content.width > 0 && continueDefault.content.height > 0);
     assert.ok(continueDefault.firstTitle.length > 0);
+
+    await rename(fixtureRoot, fixtureRoot + "-offline");
+    await evaluate(window, "document.querySelector('#manage-sources-button')?.click()");
+    await waitFor("source refresh available", () => evaluate(window, "Boolean(document.querySelector('[data-refresh-source-id]'))"), Boolean);
+    await evaluate(window, "document.querySelector('[data-refresh-source-id]')?.click()");
+    await waitFor("source offline", () => evaluate(window, "document.querySelector('#source-list')?.textContent || ''"), (value) => value.includes("离线"));
+    await evaluate(window, "document.querySelector('[data-nav=all]')?.click()");
+    await evaluate(window, "(() => { const search = document.querySelector('#library-search-input'); search.value = 'Owned UX Audit Feature Film 2026'; search.dispatchEvent(new Event('input', { bubbles: true })); })()");
+    await waitFor("offline movie card", () => evaluate(window, "document.querySelector('#library-grid .media-card-title')?.textContent || ''"), (value) => value === LONG_TITLE);
+    await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
+    await waitFor("offline movie detail", () => evaluate(window, "document.querySelector('#detail-offline-banner')?.hidden === false && document.querySelector('#media-detail-open')?.disabled === true"), Boolean);
+    assert.equal(await evaluate(window, "document.querySelector('#media-detail-restart')?.disabled"), true, "offline movie cannot restart playback");
+    await capture("movie-offline");
 
     const diagnostics = await readFile(join(logDir, "diagnostics.jsonl"), "utf8").catch(() => "");
     assert.match(diagnostics, /"operation":"window\.renderer-ready"/);
