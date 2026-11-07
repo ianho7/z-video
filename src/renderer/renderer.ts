@@ -3,7 +3,7 @@ import { applyTone, posterTone } from "./tone.js";
 import { escapeHtml, formatTime, kindLabel, formatBytes, artworkKind } from "./views/shared.js";
 import { card } from "./views/all.js";
 import { renderSources } from "./views/sources.js";
-import { episodeRows } from "./views/detail.js";
+import { episodeRows, renderMovieFileInfo, renderSeasonTabs } from "./views/detail.js";
 import { renderTrackOptions } from "./views/player.js";
 import { renderContinueCards } from "./views/home.js";
 import { wavePath } from "./shapes.js";
@@ -59,13 +59,17 @@ const detailPoster = document.querySelector<HTMLElement>("#detail-poster");
 const detailTitle = document.querySelector<HTMLElement>("#media-detail-title");
 const detailMeta = document.querySelector<HTMLElement>("#media-detail-meta");
 const detailPlot = document.querySelector<HTMLElement>("#media-detail-plot");
+const detailPlotToggle = document.querySelector<HTMLButtonElement>("#media-detail-plot-toggle");
 const detailOpen = document.querySelector<HTMLButtonElement>("#media-detail-open");
 const detailRestart = document.querySelector<HTMLButtonElement>("#media-detail-restart");
 const detailResume = document.querySelector<HTMLElement>("#media-detail-resume");
-const detailPlotSection = document.querySelector<HTMLDetailsElement>("#media-detail-plot-section");
-const detailAvailability = document.querySelector<HTMLElement>("#detail-availability");
+const detailPlotSection = document.querySelector<HTMLElement>("#media-detail-plot-section");
+const detailOfflineBanner = document.querySelector<HTMLElement>("#detail-offline-banner");
+const detailPlotEmpty = document.querySelector<HTMLElement>("#detail-plot-empty");
 const detailEpisodesSection = document.querySelector<HTMLElement>("#detail-episodes-section");
 const detailEpisodes = document.querySelector<HTMLElement>("#detail-episodes");
+const detailSeasonTabs = document.querySelector<HTMLElement>("#detail-season-tabs");
+const detailFileSection = document.querySelector<HTMLElement>("#detail-file-section");
 const playerView = document.querySelector<HTMLElement>('[data-view="player"]');
 const playerSurface = document.querySelector<HTMLElement>(".player-surface");
 const playerSurfaceMessage = document.querySelector<HTMLElement>("#player-surface-message");
@@ -96,6 +100,8 @@ let activePage: { items: LocalMediaItem[]; totalCount: number; page: number; pag
 let activeDetail: LocalMediaDetail | undefined;
 let selectedMediaId: string | undefined;
 let returnFocusMediaId: string | undefined;
+let returnFocusContainerId: "#library-grid" | "#recent-row" | "#shows-row" | undefined;
+let returnFocusControlId: string | undefined;
 let requestEpoch = 0;
 let continueEpoch = 0;
 let searchTimer: number | undefined;
@@ -118,6 +124,7 @@ let playerVolumeRestoreAfterDrag = false;
 let playerSpeedValue = 1;
 let activePlaybackTitle = "";
 let activeDetailPlayback: LocalPlaybackState | undefined;
+let selectedSeason: number | undefined;
 const continuePlaybackByMediaId = new Map<string, LocalPlaybackState>();
 
 let currentQuery: LocalLibraryQuery = { page: 1, pageSize: PAGE_SIZE, filter: "all", sort: "recent" };
@@ -709,8 +716,16 @@ function setQuery(patch: Partial<LocalLibraryQuery>): void {
 }
 
 async function openDetail(mediaId: string): Promise<void> {
+  if (detail?.hidden !== false) {
+    const focused = document.activeElement;
+    returnFocusMediaId = focused instanceof HTMLElement && focused.dataset.mediaId ? focused.dataset.mediaId : mediaId;
+    returnFocusContainerId = focused instanceof HTMLElement
+      ? focused.closest("#library-grid") ? "#library-grid"
+        : focused.closest("#recent-row") ? "#recent-row" : focused.closest("#shows-row") ? "#shows-row" : undefined
+      : undefined;
+    returnFocusControlId = focused instanceof HTMLElement && focused.id ? `#${CSS.escape(focused.id)}` : undefined;
+  }
   const epoch = ++requestEpoch;
-  returnFocusMediaId = mediaId;
   activeDetail = undefined;
   activeDetailPlayback = undefined;
   selectedMediaId = mediaId;
@@ -748,20 +763,29 @@ function renderDetail(detailValue: LocalMediaDetail): void {
     if (item.seasonNumber !== undefined && item.episodeNumber !== undefined) parts.push(`S${String(item.seasonNumber).padStart(2, "0")}E${String(item.episodeNumber).padStart(2, "0")}`);
     detailMeta.textContent = parts.join(" · ");
   }
-  if (detailPlot) detailPlot.textContent = item.plot ?? "暂无本地简介。";
+  const plot = item.plot?.trim() ?? "";
+  if (detailPlot) detailPlot.textContent = plot;
   if (detailPlotSection) {
-    const plotLength = item.plot?.trim().length ?? 0;
-    detailPlotSection.open = plotLength <= 220;
+    detailPlotSection.hidden = !plot;
+    detailPlot?.classList.toggle("collapsed", plot.length > 180);
+    if (detailPlotToggle) {
+      detailPlotToggle.hidden = plot.length <= 180;
+      detailPlotToggle.setAttribute("aria-expanded", "false");
+      const label = detailPlotToggle.querySelector("span");
+      if (label) label.textContent = "展开";
+    }
   }
-  if (detailAvailability) detailAvailability.textContent = item.available ? "来源可用" : "来源离线";
+  if (detailPlotEmpty) detailPlotEmpty.hidden = Boolean(plot);
+  if (detailOfflineBanner) detailOfflineBanner.hidden = item.available;
   const playback = activeDetailPlayback;
   const resume = hasResume(playback);
   const restartAfterCompletion = Boolean(playback?.watched);
   if (detailOpen) {
     detailOpen.textContent = resume
-      ? `继续 · ${formatTime(playback.positionSec)}`
-      : restartAfterCompletion ? "重新播放" : item.available ? "播放" : "尝试播放";
+      ? `继续播放 · ${formatTime(playback.positionSec)}`
+      : restartAfterCompletion ? "重新播放" : "播放";
     detailOpen.dataset.playbackMode = resume ? "resume" : restartAfterCompletion ? "restart" : "play";
+    detailOpen.disabled = !item.available;
   }
   if (detailRestart) {
     detailRestart.hidden = !resume;
@@ -778,7 +802,20 @@ function renderDetail(detailValue: LocalMediaDetail): void {
   if (detailEpisodesSection && detailEpisodes) {
     const episodes = detailValue.episodes.filter((candidate) => candidate.kind === "episode");
     detailEpisodesSection.hidden = episodes.length === 0;
-    detailEpisodes.replaceChildren(...episodeRows(episodes, selectedMediaId));
+    const seasons = [...new Set(episodes.map((episode) => episode.seasonNumber).filter((season): season is number => season !== undefined))];
+    if (!seasons.includes(selectedSeason ?? -1)) selectedSeason = seasons[0];
+    const visibleEpisodes = seasons.length > 1 ? episodes.filter((episode) => episode.seasonNumber === selectedSeason) : episodes;
+    detailEpisodes.replaceChildren(...episodeRows(visibleEpisodes, selectedMediaId, playback));
+    detailEpisodes.querySelectorAll<HTMLElement>("[data-artwork-media-id]").forEach((element) => enqueueArtwork(element, 1));
+    detailSeasonTabs?.replaceChildren(...renderSeasonTabs(episodes, selectedSeason));
+  }
+  if (detailFileSection) {
+    const isMovie = item.kind === "movie" || detailValue.collectionKind === "movie";
+    detailFileSection.hidden = !isMovie;
+    const sourceLabel = state?.sources.find((source) => source.sourceId === item.sourceId)?.label ?? "本地来源";
+    const fileInfo = renderMovieFileInfo(item, sourceLabel, playback);
+    fileInfo.id = "detail-file-info";
+    detailFileSection.querySelector("#detail-file-info")?.replaceWith(fileInfo);
   }
   if (detailPoster) {
     detailPoster.replaceChildren(generatedCover(item, detailValue.episodes.filter((episode) => episode.kind === "episode").length));
@@ -805,13 +842,20 @@ function closeDetail(): void {
   selectedMediaId = undefined;
   if (detail) detail.hidden = true;
   if (collectionSection) collectionSection.hidden = homeVisible;
-  if (homeVisible) void loadHomeShelves();
-  void loadLibrary().then((applied) => {
+  void Promise.all([loadLibrary(), homeVisible ? loadHomeShelves() : Promise.resolve()]).then(([applied]) => {
     if (applied) {
       scanRenderedCommit = scanCommit;
       scanRefreshQueued = false;
-      restoreGridFocus(returnFocusMediaId);
+      const mediaId = returnFocusMediaId;
+      const containerId = returnFocusContainerId;
+      const controlId = returnFocusControlId;
       returnFocusMediaId = undefined;
+      returnFocusContainerId = undefined;
+      returnFocusControlId = undefined;
+      const target = controlId ? document.querySelector<HTMLButtonElement>(controlId)
+        : mediaId && containerId ? document.querySelector<HTMLButtonElement>(`${containerId} [data-media-id="${cssEscape(mediaId)}"]`)
+          : mediaId ? document.querySelector<HTMLButtonElement>(`#library-grid [data-media-id="${cssEscape(mediaId)}"]`) : null;
+      target?.focus({ preventScroll: true });
     }
   });
   void loadContinueWatching();
@@ -1028,7 +1072,21 @@ detailEpisodes?.addEventListener("click", (event) => {
   const mediaId = button?.dataset.mediaId;
   if (mediaId) void openDetail(mediaId);
 });
+detailSeasonTabs?.addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-season-number]");
+  const season = Number(button?.dataset.seasonNumber);
+  if (!activeDetail || !Number.isInteger(season)) return;
+  selectedSeason = season;
+  renderDetail(activeDetail);
+});
 detailBack?.addEventListener("click", closeDetail);
+detailPlotToggle?.addEventListener("click", () => {
+  const expanded = detailPlotToggle.getAttribute("aria-expanded") !== "true";
+  detailPlotToggle.setAttribute("aria-expanded", String(expanded));
+  detailPlot?.classList.toggle("collapsed", !expanded);
+  const label = detailPlotToggle.querySelector("span");
+  if (label) label.textContent = expanded ? "收起" : "展开";
+});
 detailOpen?.addEventListener("click", () => { void openSelectedLocalMedia(detailOpen.dataset.playbackMode === "restart"); });
 detailRestart?.addEventListener("click", () => { void openSelectedLocalMedia(true); });
 playerCloseButton?.addEventListener("click", () => void sendLocalPlaybackCommand({ type: "close" }));

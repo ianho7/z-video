@@ -92,29 +92,39 @@
           </section>
 
           <section id="media-detail" class="media-detail" hidden aria-labelledby="media-detail-title">
-            <button id="media-detail-back" class="text-button" type="button">← 返回片库</button>
-            <div class="detail-layout">
+            <div class="detail-back-row">
+              <button id="media-detail-back" class="text-button" type="button">← 返回片库</button>
+              <span class="detail-kicker">你的本地片库</span>
+            </div>
+            <div id="detail-offline-banner" class="detail-offline" hidden role="status">
+              <span>来源离线，当前无法播放。已缓存的索引仍可查看。</span>
+              <a href="#source-list">查看来源</a>
+            </div>
+            <div class="detail-hero">
               <div id="detail-poster" class="detail-poster"><span class="poster-fallback">封面不可用</span></div>
               <div class="detail-copy">
-                <p class="eyebrow">MEDIA DETAIL</p>
+                <p id="media-detail-meta" class="detail-meta"></p>
                 <h2 id="media-detail-title"></h2>
-                <p id="media-detail-meta" class="muted"></p>
                 <div class="detail-actions">
                   <button id="media-detail-open" class="primary-button" type="button">播放</button>
                   <button id="media-detail-restart" class="secondary-button" type="button" hidden>从头播放</button>
-                  <span id="media-detail-resume" class="detail-resume" hidden></span>
-                  <span id="detail-availability" class="muted"></span>
                 </div>
-                <details id="media-detail-plot-section" class="detail-plot-section">
-                  <summary>剧情简介</summary>
-                  <p id="media-detail-plot" class="detail-plot"></p>
-                </details>
-                <section id="detail-episodes-section" hidden aria-labelledby="detail-episodes-title">
-                  <h3 id="detail-episodes-title">剧集</h3>
-                  <div id="detail-episodes" class="episode-list"></div>
+                <p id="media-detail-resume" class="detail-resume" hidden></p>
+                <section id="media-detail-plot-section" class="detail-plot-section">
+                  <button id="media-detail-plot-toggle" class="detail-plot-toggle" type="button" aria-expanded="false">剧情简介 <span>展开</span></button>
+                  <p id="media-detail-plot" class="detail-plot collapsed"></p>
                 </section>
+                <p id="detail-plot-empty" class="detail-plot-empty" hidden>暂无简介。为影片添加 NFO 文件和海报后，重新扫描来源即可补全信息。</p>
               </div>
             </div>
+            <section id="detail-episodes-section" class="detail-section" hidden aria-labelledby="detail-episodes-title">
+              <div class="section-heading"><h3 id="detail-episodes-title">选集</h3><div id="detail-season-tabs" class="season-tabs" role="group" aria-label="选择季度"></div></div>
+              <div id="detail-episodes" class="episode-list"></div>
+            </section>
+            <section id="detail-file-section" class="detail-section" hidden aria-labelledby="detail-file-title">
+              <h3 id="detail-file-title">文件信息</h3>
+              <dl id="detail-file-info" class="detail-file-info"></dl>
+            </section>
           </section>
         </section>
       </main>
