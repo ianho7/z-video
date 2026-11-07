@@ -121,8 +121,28 @@ async function run(): Promise<void> {
       35_000,
     );
 
+    await evaluate(window, "document.querySelector('#library-pagination button:last-child')?.click()");
+    const pageTwo = await waitFor(
+      "second library page",
+      () => evaluate(window, "({ scope: document.querySelector('#page-scope')?.textContent || '', mediaId: document.querySelector('#library-grid [data-media-id]')?.dataset.mediaId || '', title: document.querySelector('#library-grid .media-card-title')?.textContent || '' })"),
+      (value) => value.scope.includes("第 2 页") && Boolean(value.mediaId && value.title),
+    );
+    await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
+    await waitFor("second-page detail", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === false);
+    await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
+    const restoredPage = await waitFor(
+      "restored second page and focus",
+      () => evaluate(window, "({ scope: document.querySelector('#page-scope')?.textContent || '', activeMediaId: document.activeElement instanceof HTMLElement ? document.activeElement.dataset.mediaId || '' : '' })"),
+      (value) => value.scope.includes("第 2 页") && value.activeMediaId === pageTwo.mediaId,
+    );
+    assert.equal(restoredPage.activeMediaId, pageTwo.mediaId);
+
     await evaluate(window, "(() => { const search = document.querySelector('#library-search-input'); if (!(search instanceof HTMLInputElement)) throw new Error('search missing'); search.value = 'Owned UX Audit Feature Film 2026'; search.dispatchEvent(new Event('input', { bubbles: true })); })()");
     await waitFor("long title card", () => evaluate(window, "document.querySelector('#library-grid .media-card-title')?.textContent || ''"), (value) => value === LONG_TITLE);
+    await evaluate(window, "document.querySelector('#library-filter-buttons [data-filter=show]')?.click()");
+    await waitFor("filtered search empty state", () => evaluate(window, "({ title: document.querySelector('#library-empty-title')?.textContent || '', actionHidden: document.querySelector('#search-all-types-button')?.hidden, filter: document.querySelector('#library-filter')?.value, query: document.querySelector('#library-search-input')?.value })"), (value) => value.title === "没有匹配结果" && value.actionHidden === false && value.filter === "show" && value.query === "Owned UX Audit Feature Film 2026");
+    await evaluate(window, "document.querySelector('#search-all-types-button')?.click()");
+    await waitFor("search all media keeps query", () => evaluate(window, "({ title: document.querySelector('#library-grid .media-card-title')?.textContent || '', filter: document.querySelector('#library-filter')?.value, query: document.querySelector('#library-search-input')?.value })"), (value) => value.title === LONG_TITLE && value.filter === "all" && value.query === "Owned UX Audit Feature Film 2026");
     await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
 
     const detail = await waitFor(

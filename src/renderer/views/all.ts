@@ -29,9 +29,15 @@ export function card(item: LocalMediaItem): HTMLElement {
   const parts = [kindLabel(item.kind)];
   if (item.year !== undefined) parts.push(String(item.year));
   if (item.rating !== undefined) parts.push(`★ ${item.rating.toFixed(1)}`);
-  if (!item.available) parts.push("来源离线");
   meta.textContent = `${parts.join(" · ")} · ${formatBytes(item.sizeBytes)}`;
-  button.append(poster, title, meta);
+  button.append(poster);
+  if (!item.available) {
+    const offline = document.createElement("span");
+    offline.className = "offline-badge";
+    offline.textContent = "来源离线";
+    poster.append(offline);
+  }
+  button.append(title, meta);
   article.append(button);
   return article;
 }
