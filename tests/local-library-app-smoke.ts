@@ -123,6 +123,8 @@ async function run(): Promise<void> {
 
     await evaluate(window, "(() => { const search = document.querySelector('#library-search-input'); if (!(search instanceof HTMLInputElement)) throw new Error('search missing'); search.value = 'Owned UX Audit Feature Film 2026'; search.dispatchEvent(new Event('input', { bubbles: true })); })()");
     await waitFor("long title card", () => evaluate(window, "document.querySelector('#library-grid .media-card-title')?.textContent || ''"), (value) => value === LONG_TITLE);
+    const openedMediaId = await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.dataset.mediaId || ''");
+    assert.ok(openedMediaId, "search result exposes an openable movie card");
     await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
 
     const detail = await waitFor(
@@ -144,7 +146,8 @@ async function run(): Promise<void> {
     assert.equal(await evaluate(window, "document.querySelector('#media-detail-plot-toggle')?.getAttribute('aria-expanded')"), "true", "synopsis expands from its disclosure control");
     await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
     await waitFor("detail back navigation", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === true);
-    assert.equal(await evaluate(window, "document.activeElement?.dataset.mediaId"), await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.dataset.mediaId"), "return restores focus to the opened movie card");
+    await waitFor("movie card focus restoration", () => evaluate(window, "document.activeElement?.dataset.mediaId || ''"), (mediaId) => mediaId === openedMediaId);
+    assert.equal(await evaluate(window, "document.activeElement?.dataset.mediaId"), openedMediaId, "return restores focus to the opened movie card");
     await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
     await waitFor("movie detail after focus check", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === false);
 
