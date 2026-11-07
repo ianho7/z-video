@@ -127,12 +127,26 @@ async function run(): Promise<void> {
 
     const detail = await waitFor(
       "long detail view",
-      () => evaluate(window, "(() => { const button = document.querySelector('#media-detail-open')?.getBoundingClientRect(); return { hidden: document.querySelector('#media-detail')?.hidden, title: document.querySelector('#media-detail-title')?.textContent || '', plot: document.querySelector('#media-detail-plot')?.textContent || '', button: button ? { left: button.left, right: button.right, top: button.top, bottom: button.bottom } : undefined, viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight } }; })()"),
+      () => evaluate(window, "(() => { const button = document.querySelector('#media-detail-open')?.getBoundingClientRect(); const plot = document.querySelector('#media-detail-plot'); const toggle = document.querySelector('#media-detail-plot-toggle'); return { hidden: document.querySelector('#media-detail')?.hidden, title: document.querySelector('#media-detail-title')?.textContent || '', meta: document.querySelector('#media-detail-meta')?.textContent || '', plot: plot?.textContent || '', plotCollapsed: plot?.classList.contains('collapsed'), plotExpanded: toggle?.getAttribute('aria-expanded'), movieInfo: document.querySelector('#detail-file-info')?.textContent || '', episodesHidden: document.querySelector('#detail-episodes-section')?.hidden, button: button ? { left: button.left, right: button.right, top: button.top, bottom: button.bottom } : undefined, viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight } }; })()"),
       (value) => value.hidden === false && value.title === LONG_TITLE && value.plot.length >= LONG_PLOT.length && Boolean(value.button),
     );
     assert.equal(detail.title, LONG_TITLE);
     assert.equal(detail.plot, LONG_PLOT);
+    assert.equal(detail.plotCollapsed, true, "long synopsis starts collapsed to three lines");
+    assert.equal(detail.plotExpanded, "false");
+    assert.match(detail.meta, /2026/);
+    assert.match(detail.meta, /8\.7/);
+    assert.match(detail.movieInfo, /owned-fixture/i);
+    assert.equal(detail.episodesHidden, true, "movies do not show an episode list");
     assert.ok(detail.button.left >= 0 && detail.button.right <= detail.viewport.width && detail.button.top >= 0 && detail.button.bottom <= detail.viewport.height);
+
+    await evaluate(window, "document.querySelector('#media-detail-plot-toggle')?.click()");
+    assert.equal(await evaluate(window, "document.querySelector('#media-detail-plot-toggle')?.getAttribute('aria-expanded')"), "true", "synopsis expands from its disclosure control");
+    await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
+    await waitFor("detail back navigation", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === true);
+    assert.equal(await evaluate(window, "document.activeElement?.dataset.mediaId"), await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.dataset.mediaId"), "return restores focus to the opened movie card");
+    await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
+    await waitFor("movie detail after focus check", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === false);
 
     window.setSize(900, 640);
     const minOuter = window.getSize();
