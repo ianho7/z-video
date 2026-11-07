@@ -659,6 +659,7 @@ function scheduleScanRefresh(): void {
   }
   scanRefreshTimer = window.setTimeout(() => {
     scanRefreshTimer = undefined;
+    if (scanProgress?.status !== "running") return;
     if (isDetailOrPlayerVisible()) {
       scanRefreshQueued = true;
       return;
@@ -670,7 +671,7 @@ function scheduleScanRefresh(): void {
       if (applied) scanRenderedCommit = Math.max(scanRenderedCommit, renderedCommit);
     }).finally(() => {
       scanRefreshInFlight = false;
-      if (scanCommit > scanRenderedCommit) scheduleScanRefresh();
+      if (scanProgress?.status === "running" && scanCommit > scanRenderedCommit) scheduleScanRefresh();
     });
   }, 350);
 }
@@ -918,6 +919,13 @@ function renderScanProgress(progress: LocalScanProgress): void {
   if (progress.status === "running") {
     scanCommit = Math.max(scanCommit, commit);
     scheduleScanRefresh();
+  } else {
+    if (scanRefreshTimer !== undefined) {
+      window.clearTimeout(scanRefreshTimer);
+      scanRefreshTimer = undefined;
+    }
+    scanRefreshQueued = false;
+    requestEpoch += 1;
   }
   if (progress.status === "running") {
     scanId = progress.scanId;
