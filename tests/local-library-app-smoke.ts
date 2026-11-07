@@ -191,7 +191,7 @@ async function run(): Promise<void> {
       (value) => value.hidden === false && value.title === LONG_TITLE && value.firstTitle.length > 0,
     );
     assert.ok(defaultAfterContinueOuter[0] >= 1040 && defaultAfterContinueOuter[1] >= 720);
-    assert.ok(Math.abs(defaultAfterContinueContent[0] - continueDefault.inner.width) <= 4 && Math.abs(defaultAfterContinueContent[1] - continueDefault.inner.height) <= 4);
+    assert.ok(Math.abs(defaultAfterContinueContent[0] - continueDefault.inner.width) <= 4 && Math.abs(defaultAfterContinueContent[1] - continueDefault.inner.height) <= 4, `content=${JSON.stringify(defaultAfterContinueContent)} inner=${JSON.stringify(continueDefault.inner)}`);
     assert.ok(continueDefault.content.width > 0 && continueDefault.content.height > 0);
     assert.ok(continueDefault.firstTitle.length > 0);
 
