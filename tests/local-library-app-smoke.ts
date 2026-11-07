@@ -130,6 +130,21 @@ async function run(): Promise<void> {
       35_000,
     );
 
+    await evaluate(window, "document.querySelector('#library-pagination button:last-child')?.click()");
+    const pageTwo = await waitFor(
+      "second library page",
+      () => evaluate(window, "({ scope: document.querySelector('#page-scope')?.textContent || '', mediaId: document.querySelector('#library-grid [data-media-id]')?.dataset.mediaId || '', title: document.querySelector('#library-grid .media-card-title')?.textContent || '' })"),
+      (value) => value.scope.includes("第 2 页") && Boolean(value.mediaId && value.title),
+    );
+    await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
+    await waitFor("second-page detail", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === false);
+    await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
+    const restoredPage = await waitFor(
+      "restored second page and focus",
+      () => evaluate(window, "({ scope: document.querySelector('#page-scope')?.textContent || '', activeMediaId: document.activeElement instanceof HTMLElement ? document.activeElement.dataset.mediaId || '' : '' })"),
+      (value) => value.scope.includes("第 2 页") && value.activeMediaId === pageTwo.mediaId,
+    );
+    assert.equal(restoredPage.activeMediaId, pageTwo.mediaId);
     await evaluate(window, "(() => { const search = document.querySelector('#library-search-input'); if (!(search instanceof HTMLInputElement)) throw new Error('search missing'); search.value = 'Next Episode 1'; search.dispatchEvent(new Event('input', { bubbles: true })); })()");
     await waitFor("episode search", () => evaluate(window, "document.querySelector('#library-grid .media-card-title')?.textContent || ''"), (title) => title === "Next Episode 1");
     await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
@@ -154,6 +169,10 @@ async function run(): Promise<void> {
     await waitFor("long title card", () => evaluate(window, "document.querySelector('#library-grid .media-card-title')?.textContent || ''"), (value) => value === LONG_TITLE);
     const openedMediaId = await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.dataset.mediaId || ''");
     assert.ok(openedMediaId, "search result exposes an openable movie card");
+    await evaluate(window, "document.querySelector('#library-filter-buttons [data-filter=show]')?.click()");
+    await waitFor("filtered search empty state", () => evaluate(window, "({ title: document.querySelector('#library-empty-title')?.textContent || '', actionHidden: document.querySelector('#search-all-types-button')?.hidden, filter: document.querySelector('#library-filter')?.value, query: document.querySelector('#library-search-input')?.value })"), (value) => value.title === "没有匹配结果" && value.actionHidden === false && value.filter === "show" && value.query === "Owned UX Audit Feature Film 2026");
+    await evaluate(window, "document.querySelector('#search-all-types-button')?.click()");
+    await waitFor("search all media keeps query", () => evaluate(window, "({ title: document.querySelector('#library-grid .media-card-title')?.textContent || '', filter: document.querySelector('#library-filter')?.value, query: document.querySelector('#library-search-input')?.value })"), (value) => value.title === LONG_TITLE && value.filter === "all" && value.query === "Owned UX Audit Feature Film 2026");
     await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
 
     const detail = await waitFor(
@@ -220,7 +239,7 @@ async function run(): Promise<void> {
       (value) => value.hidden === false && value.title === LONG_TITLE && value.firstTitle.length > 0,
     );
     assert.ok(defaultAfterContinueOuter[0] >= 1040 && defaultAfterContinueOuter[1] >= 720);
-    assert.ok(Math.abs(defaultAfterContinueContent[0] - continueDefault.inner.width) <= 4 && Math.abs(defaultAfterContinueContent[1] - continueDefault.inner.height) <= 4);
+    assert.ok(Math.abs(defaultAfterContinueContent[0] - continueDefault.inner.width) <= 4 && Math.abs(defaultAfterContinueContent[1] - continueDefault.inner.height) <= 4, `content=${JSON.stringify(defaultAfterContinueContent)} inner=${JSON.stringify(continueDefault.inner)}`);
     assert.ok(continueDefault.content.width > 0 && continueDefault.content.height > 0);
     assert.ok(continueDefault.firstTitle.length > 0);
 
