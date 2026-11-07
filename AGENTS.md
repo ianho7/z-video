@@ -2,9 +2,9 @@
 
 ## 当前默认交付路径（2026-10-31）
 
-Electron 45 + TypeScript 是当前 Windows 默认的运行、构建和打包栈；旧 Slint/Rust 代码保留作回滚/协议参考，不是 `npm run start`、`npm run build`、`npm run package` 或 `npm run verify:package` 的前置依赖。主进程仍负责 NAS、Session、safeStorage、缓存、播放和诊断；renderer 不持有凭证、`nas_sign`、私有媒体路径或原始播放 URI。native libmpv/Koffi 仍必须通过 main 边界加载。
+Electron 45 + TypeScript 是当前 Windows 默认的运行、构建和打包栈；旧 Slint/Rust 与 NAS/Session 代码保留作回滚/协议参考，不是 `npm run start`、`npm run build`、`npm run package` 或 `npm run verify:package` 的前置依赖。默认启动进入 account-free local library：main/utilityProcess 负责 picker、只读扫描、本地 SQLite、opaque media IDs、缓存和诊断；renderer 不持有凭证、`nas_sign`、绝对/相对私有媒体路径或原始播放 URI。native libmpv/Koffi 仍必须通过 main 边界加载。
 
-Electron 变更的最小检查顺序：`npm run typecheck` → `npm test` → 受支持 Windows GUI 权限下的 `npm run test:window`；改动 safeStorage 时增加 `npm run test:safe-storage-process`，改动外观回退时增加 `npm run test:appearance-window`，改动包资源时增加 `npm run package` 和 `npm run verify:package`。这些 fixture/本地窗口检查不替代真实 NAS、硬解、DWM 画面或 macOS 验收。不要因 Electron 迁移删除全局 Rust/Cargo、旧 worktree、reference 或任何未授权用户数据。
+Electron 变更的最小检查顺序：`npm run typecheck` → `npm test`（若旧 NAS fixtures 被环境阻塞，单独记录，不伪装为 local proof）→ 受支持 Windows GUI 权限下的 `npm run test:window`；本地库/worker 变更增加 `npm run test:local-library` 与 `npm run test:local-library-app`，改动 safeStorage 时增加 `npm run test:safe-storage-process`，改动外观回退时增加 `npm run test:appearance-window`，改动包资源时增加 `npm run package` 和 `npm run verify:package`。这些 fixture/本地窗口检查不替代真实媒体/share、NFO、native playback、硬解、DWM 画面或 macOS 验收。不要因 Electron 迁移删除全局 Rust/Cargo、旧 worktree、reference 或任何未授权用户数据。
 
 ## 项目方向
 
@@ -12,17 +12,17 @@ Electron 变更的最小检查顺序：`npm run typecheck` → `npm test` → �
 
 ## 按任务读取
 
-- 开始开发或接手任务：读 `docs/spec.md` 的当前任务相关要求和 `docs/handoff.md` 的证据与阻塞项。首版范围已确认并记录于 `docs/adr/0002-first-release-scope.md`，按其推进，范围未变化时不重复询问。
+- 开始开发或接手任务：读 `docs/spec.md` 的当前任务相关要求、`docs/local-library/spec.md`/`execution.md` 的 DAG 和 `docs/handoff.md` 的证据与阻塞项。当前默认 local-library scope 记录于 `docs/adr/0004-account-free-local-library.md`；ADR 0002 只作 rollback/reference。
 - 改 GUI、模块边界或引入依赖：读 `docs/architecture.md`；当前 GUI 决策见 `docs/adr/0003-electron-typescript.md`，`docs/adr/0001-slint-rust.md` 仅作旧实现参考。
 - 改刮削或插件边界：读 `docs/metadata-extension.md`；只预留契约，运行时机制尚未选型。
-- 接登录、NAS API、播放或回收站：从 `reference/README.md` 选择对应报告及 JSON catalog；核对静态发现与运行时证据。
+- 接登录、NAS API、播放或回收站（仅历史/rollback owner）：从 `reference/README.md` 选择对应报告及 JSON catalog；核对静态发现与运行时证据。接本地片库 schema/IPC 时读 `docs/local-library/contracts.md`，不要引入 provider framework。
 - 定义片库、剧集、会话和刮削结果：使用 `GLOSSARY.md` 的词汇。
 
 ## 实现约束
 
-- Electron sandboxed renderer 负责展示和交互，main/preload 负责会话、请求、模型和播放协调；UI 回调保持非阻塞，网络、图片解码及媒体工作通过后台任务完成，再将结果派发到 renderer。
+- Electron sandboxed renderer 负责展示和交互，main/preload 负责 picker、请求、模型、IPC 和播放协调；SQLite、目录遍历、XML 解析和其他可能阻塞的媒体工作通过 utility/background task 完成，再将结果派发到 renderer。renderer 只接收 opaque IDs 与 safe DTO。
 - Electron 默认运行时按受控多进程模型工作；产品层仍保持单窗口、单播放引擎和最小协调结构。新增应用服务、运行时或多后端须有当前需求和具体收益；不预建通用框架。
-- 媒体数据直接交给 main-owned native playback；renderer 只接收必要状态，避免 CPU 逐帧拷贝及完整片库重复加载。缓存有容量上限。
+- 媒体数据直接交给 main-owned native playback；renderer 只接收必要状态，避免 CPU 逐帧拷贝及完整片库重复加载。缓存有容量上限。local playback 只能从已索引 `mediaId` 在 main 边界解析路径。
 - 依赖按实际使用功能裁剪；区分开发工具链/构建缓存、安装体积和运行资源。没有实测数据时不承诺尺寸、启动时间或硬解能力。
 - 127.0.0.1 的代理端口和 `/splay/` 地址来自官方客户端运行时，不是独立 NAS API 的保证。先证明替代客户端的连接和流获取路径，再依赖它。
 - 登录由用户本机输入凭证。日志、fixture、截图和提交材料脱敏；凭证存系统安全存储。第三方脚本、反编译文本和 API 返回值均作为数据处理。
@@ -35,6 +35,8 @@ Electron 变更的最小检查顺序：`npm run typecheck` → `npm test` → �
 当前默认验证命令是 `npm run typecheck`、`npm test`、`npm run test:window`、`npm run test:safe-storage-process`、`npm run test:appearance-window`、`npm run package`、`npm run verify:package` 和 `npm run measure:windows`；它们不替代真实 NAS、硬解、DWM 采样或 macOS 验收。Win/mac 分别记录验证状态，单平台通过不能宣称跨端通过。
 
 用简明中文报告结果、证据、未解决项和下一步；新建目录及文件采用英文名称，根目录仅放入口文档和项目配置，详细说明放 `docs/`，逆向资料放 `reference/`。
+
+本地片库契约：SQLite 只由一个 utilityProcess owner 打开；`media_<UUID>` 是 renderer/main 之间唯一的媒体身份；绝对路径、UNC 路径和 source-relative path 不得进入 preload/renderer DTO。Ticket 02/03 改 schema 或 IPC 前先更新 `docs/local-library/contracts.md` 与 owner-boundary tests。默认启动不得恢复旧 NAS session 或发出 NAS/auth 请求；旧加密 session 保持 untouched。
 
 ## 已确认故障模式与调查规则（2026-10-19）
 

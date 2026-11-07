@@ -5,6 +5,7 @@ import koffi from "koffi";
 
 import { NativeVideoWindow } from "./native-window";
 import type { PlayerEngine, PlayerEngineEvent } from "./player";
+import type { AppPlaybackPreferences } from "../shared/app-preferences-contracts";
 
 const MPV_EVENT_SHUTDOWN = 1;
 const MPV_EVENT_START_FILE = 6;
@@ -75,9 +76,37 @@ function loadMpvApi(): MpvApi {
 }
 
 function asFiniteNumber(value: string | null | undefined): number | undefined {
-  if (!value) return undefined;
+  if (value === undefined || value === null || value === "") return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function safeTrackLabel(value: string | undefined): string | undefined {
+  const label = value?.trim();
+  if (!label) return undefined;
+  const basename = label.replaceAll("\\", "/").split("/").at(-1)?.trim();
+  return basename && basename !== "." && basename !== ".." ? basename : undefined;
+}
+
+export function mpvTracksFromProperties(readProperty: (name: string) => string | undefined): {
+  audio: Array<{ id: string; label: string; selected?: boolean }>;
+  subtitles: Array<{ id: string; label: string; selected?: boolean }>;
+} {
+  const audio: Array<{ id: string; label: string; selected?: boolean }> = [];
+  const subtitles: Array<{ id: string; label: string; selected?: boolean }> = [];
+  const count = Math.floor(asFiniteNumber(readProperty("track-list/count")) ?? 0);
+  for (let index = 0; index < count && index < 128; index += 1) {
+    const type = readProperty(`track-list/${index}/type`);
+    const id = readProperty(`track-list/${index}/id`);
+    if (!type || !id) continue;
+    const title = safeTrackLabel(readProperty(`track-list/${index}/title`))
+      ?? safeTrackLabel(readProperty(`track-list/${index}/lang`))
+      ?? `${type} ${id}`;
+    const selected = readProperty(`track-list/${index}/selected`) === "yes";
+    if (type === "audio") audio.push({ id, label: title, ...(selected ? { selected: true } : {}) });
+    if (type === "sub") subtitles.push({ id, label: title, ...(selected ? { selected: true } : {}) });
+  }
+  return { audio, subtitles };
 }
 
 export class MpvNativePlayer implements PlayerEngine {
@@ -91,9 +120,12 @@ export class MpvNativePlayer implements PlayerEngine {
   private pendingStartPosition: number | undefined;
   private lastState: string | undefined;
   private lastTrackSignature: string | undefined;
+  private lastSettingsSignature: string | undefined;
+  private settings: AppPlaybackPreferences;
 
-  constructor(parent: BrowserWindow) {
+  constructor(parent: BrowserWindow, settings: AppPlaybackPreferences = { volume: 100, muted: false, speed: 1 }) {
     this.parent = parent;
+    this.settings = { ...settings };
   }
 
   async start(path: string, startPositionSec: number | undefined, onEvent: (event: PlayerEngineEvent) => void): Promise<void> {
@@ -115,15 +147,21 @@ export class MpvNativePlayer implements PlayerEngine {
       this.setOption("osc", "no");
       this.setOption("input-default-bindings", "no");
       this.setOption("input-vo-keyboard", "no");
+      this.setOption("keep-open", "yes");
       this.setOption("vo", "gpu");
       this.setOption("gpu-api", "d3d11");
       this.setOption("hwdec", "auto-safe");
       this.setOption("wid", this.host.handle.toString());
       this.assertSuccess(api.initialize(handle));
+      this.setProperty("volume", String(this.settings.volume));
+      this.setProperty("mute", this.settings.muted ? "yes" : "no");
+      this.setProperty("speed", String(this.settings.speed));
+      this.syncSettings();
       this.assertSuccess(api.command(handle, ["loadfile", path, "replace", null]));
       this.eventTimer = setInterval(() => this.pumpEvents(), 25);
       this.stateTimer = setInterval(() => this.syncState(), 250);
       this.host.resize();
+      this.host.show();
     } catch (error) {
       await this.stop();
       throw error;
@@ -132,6 +170,7 @@ export class MpvNativePlayer implements PlayerEngine {
 
   stop(): void {
     this.clearTimers();
+    this.host?.hide();
     const api = this.api;
     const handle = this.handle;
     this.handle = undefined;
@@ -139,6 +178,7 @@ export class MpvNativePlayer implements PlayerEngine {
     this.pendingStartPosition = undefined;
     this.lastState = undefined;
     this.lastTrackSignature = undefined;
+    this.lastSettingsSignature = undefined;
     if (api && handle) api.terminateDestroy(handle);
   }
 
@@ -149,6 +189,7 @@ export class MpvNativePlayer implements PlayerEngine {
   }
 
   play(): void {
+    if (this.readProperty("eof-reached") === "yes") this.setProperty("time-pos", "0");
     this.setProperty("pause", "no");
   }
 
@@ -159,6 +200,18 @@ export class MpvNativePlayer implements PlayerEngine {
   seek(positionSec: number): void {
     if (!Number.isFinite(positionSec)) return;
     this.setProperty("time-pos", String(Math.max(0, positionSec)));
+  }
+
+  setVolume(volume: number): void {
+    if (Number.isFinite(volume) && volume >= 0 && volume <= 100 && this.setProperty("volume", String(volume))) this.syncSettings();
+  }
+
+  setMuted(muted: boolean): void {
+    if (this.setProperty("mute", muted ? "yes" : "no")) this.syncSettings();
+  }
+
+  setSpeed(speed: number): void {
+    if (Number.isFinite(speed) && speed >= 0.25 && speed <= 3 && this.setProperty("speed", String(speed))) this.syncSettings();
   }
 
   setAudioTrack(trackId: string): void {
@@ -186,12 +239,13 @@ export class MpvNativePlayer implements PlayerEngine {
     this.assertSuccess(api.setOptionString(handle, name, value));
   }
 
-  private setProperty(name: string, value: string): void {
+  private setProperty(name: string, value: string): boolean {
     const api = this.api;
     const handle = this.handle;
-    if (!api || !handle) return;
+    if (!api || !handle) return false;
     const result = api.setPropertyString(handle, name, value);
-    if (result < 0) this.emit({ type: "error", message: "播放控制失败。" });
+    if (result < 0) this.emit({ type: "control-error", message: "播放控制失败。" });
+    return result >= 0;
   }
 
   private pumpEvents(): void {
@@ -247,30 +301,34 @@ export class MpvNativePlayer implements PlayerEngine {
     if (!this.handle) return;
     const paused = this.readProperty("pause") === "yes";
     const idle = this.readProperty("idle-active") === "yes";
+    const eofReached = this.readProperty("eof-reached") === "yes";
     const position = this.readNumber("time-pos");
     const duration = this.readNumber("duration");
-    const state = idle ? "ended" : paused ? "paused" : "playing";
+    const state = idle || eofReached ? "ended" : paused ? "paused" : "playing";
     if (force || this.lastState !== state) {
       this.lastState = state;
       this.emit({ type: "state", state });
     }
     if (position !== undefined) this.emit({ type: "position", positionSec: position, durationSec: duration });
+    this.syncSettings();
     this.emitTracks();
   }
 
+  private syncSettings(): void {
+    const volume = this.readNumber("volume");
+    const mute = this.readProperty("mute");
+    const speed = this.readNumber("speed");
+    if (volume === undefined || (mute !== "yes" && mute !== "no") || speed === undefined) return;
+    const settings = { volume, muted: mute === "yes", speed };
+    const signature = JSON.stringify(settings);
+    if (signature === this.lastSettingsSignature) return;
+    this.lastSettingsSignature = signature;
+    this.settings = settings;
+    this.emit({ type: "settings", ...settings });
+  }
+
   private emitTracks(): void {
-    const audio: Array<{ id: string; label: string; selected?: boolean }> = [];
-    const subtitles: Array<{ id: string; label: string; selected?: boolean }> = [];
-    const count = Math.floor(this.readNumber("track-list/count") ?? 0);
-    for (let index = 0; index < count && index < 128; index += 1) {
-      const type = this.readProperty(`track-list/${index}/type`);
-      const id = this.readProperty(`track-list/${index}/id`);
-      if (!type || !id) continue;
-      const title = this.readProperty(`track-list/${index}/title`) ?? this.readProperty(`track-list/${index}/lang`) ?? `${type} ${id}`;
-      const selected = this.readProperty(`track-list/${index}/selected`) === "yes";
-      if (type === "audio") audio.push({ id, label: title, ...(selected ? { selected: true } : {}) });
-      if (type === "sub") subtitles.push({ id, label: title, ...(selected ? { selected: true } : {}) });
-    }
+    const { audio, subtitles } = mpvTracksFromProperties((name) => this.readProperty(name));
     const signature = JSON.stringify({ audio, subtitles });
     if (signature === this.lastTrackSignature) return;
     this.lastTrackSignature = signature;

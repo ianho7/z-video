@@ -1,6 +1,30 @@
 # z-video Glossary
 
-This glossary defines the product language. It intentionally contains no implementation decisions.
+This glossary defines the product language. The local-library terms below are current product language; NAS terms remain for the rollback/protocol reference and future optional integration.
+
+## Local library
+
+The index owned by this application for media roots the user selected. It is usable without an account or NAS session and stores its index and viewing state under application userData.
+
+## Source
+
+A user-selected local directory or OS-readable share root. The source record owns availability and an opaque source ID; the renderer receives only a safe label and item count, never the root path.
+
+## Media file
+
+One playable local file discovered under a Source. A media file has a persistent opaque `mediaId`; its absolute and source-relative paths remain main/utility-process data.
+
+## Opaque media ID
+
+A persistent `media_<UUID>` handle used by renderer/main contracts. It is not a path, URL, NAS identifier, or provider ID. Only the main/local database owner may resolve it to a file path.
+
+## Local library database
+
+The SQLite database in application userData containing sources, collections, media files, artwork keys, playback state, and scan runs. One utility process owns its connection; renderer never opens it.
+
+## Local playback state
+
+Application-owned position, duration, watched flag, selected track IDs, and update time keyed by local `mediaId`. It is not NAS history and is never written to media/NFO files.
 
 ## NAS
 
@@ -14,9 +38,9 @@ The identity used to access a NAS. An account has permissions and may have more 
 
 A temporary authenticated relationship between the application, an account, and a NAS. A session is not the account itself and may expire or be revoked.
 
-## Media library
+## Media library (generic)
 
-The organized set of media collections and playable episodes visible to an account.
+The organized set of media collections and playable episodes visible to an account or indexed by the local library, depending on the active product data source.
 
 ## Collection
 

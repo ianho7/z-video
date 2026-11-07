@@ -2,9 +2,9 @@
 
 面向 Windows/macOS 的极空间影视客户端。当前默认桌面实现是 **Electron 45 + TypeScript**；旧的 Slint/Rust 实现保留在 Git 历史中作为回滚与协议参考。关注片库浏览、详情、选集、续播和原生播放体验，同时分别测量运行资源与磁盘占用。
 
-当前阶段：Electron 主进程、隔离 preload、renderer、NAS 片库/续播和 Windows libmpv 路径已实现；Windows portable package 与 fresh-process safeStorage 证据由 Ticket 05 维护。真实 NAS、硬解、DWM 实际画面、macOS 和公开分发仍未验收。
+当前阶段：Electron 主进程、隔离 preload、renderer、本地片库/续播和 Windows libmpv 路径已实现；默认启动是 account-free local library，旧 NAS 路径仅保留作 rollback/reference。Windows candidate package 与 fresh-process 证据由 Ticket 05 维护。真实 NAS、硬解、DWM 实际画面、macOS 和公开分发仍未验收。
 
-首版范围已确认：局域网访问、使用 NAS 现有片库并同步观看进度、基础播放体验、Windows 先交付、先个人自用。macOS、远程访问、高级影音能力及插件运行时后置，详见 [首版范围决策](docs/adr/0002-first-release-scope.md)。
+当前 local-library 首版范围已确认：本地磁盘/OS 可读 share、只读索引与 NFO/artwork、本地观看进度、基础播放、Windows 先交付、先个人自用。NAS 登录/同步是旧 rollback 范围；macOS、远程访问、高级影音能力及插件运行时后置，详见 [本地片库 Spec](docs/local-library/spec.md)。
 
 ## 开发入口
 
@@ -14,13 +14,14 @@
 npm install
 npm run start                 # build + Electron 开发运行
 npm run build                 # TypeScript + renderer assets
-npm run package               # 手工 Windows x64 portable folder
+npm run package               # 手工 Windows x64 candidate folder
 npm run verify:package        # 隔离 cwd 的包内 EXE/Koffi/libmpv smoke
-npm run measure:windows       # 开发依赖、portable 总量和 idle working-set
+npm run measure:windows       # 开发依赖、candidate 总量和 idle working-set
+npm run test:local-library-scale # owned 2,000/20,000 项扫描、并发查询和 offline smoke
 npm run test:safe-storage-process  # 两个 Electron 进程 + 本地 HTTP fixture
 ```
 
-portable 输出默认位于 `.scratch/electron-migration/05-package/z-video-win32-x64/`；不会读取普通用户会话，也不会连接私有 NAS。包清单会记录 Electron/Koffi/libmpv 版本、文件数、字节数和 DLL SHA-256。`npm run measure:windows` 的一次 Windows 记录为：node_modules 405,872,832 bytes、npm cache 491,439,771 bytes、portable 总目录 502,108,811 bytes、fresh idle packaged process working set 138,178,560 bytes；这些是分开的测量，不是节省承诺。libmpv 的公开再分发许可证来源尚未确认，因此该目录是个人使用验证包，不是签名或公开发布包。
+candidate 输出默认位于 `.scratch/local-library/package/z-video-win32-x64/`；不会读取普通用户会话，也不会连接私有 NAS。包生成器现在只允许同卷 hard link 或普通文件 copy，禁止 symlink/junction 回退；本机 D: 仅余约 33 MB 时，默认目标的完整 regular-copy 会明确以 `ENOSPC` 失败。最终独立 regular-copy candidate 位于授权 C: 路径 `C:\Users\admin\.codex\visualizations\2026\10\30\01a18d67-6765-7dc0-8bd1-47ac85ca8f26\local-library-package\z-video-win32-x64\`：503,138,932 bytes、231 files、0 个 reparse points；最新 idle packaged process working set 为 149,057,536 bytes。包清单会记录 Electron/Koffi/libmpv/XML 依赖闭包、文件数、字节数和 DLL SHA-256；libmpv 的公开再分发许可证来源尚未确认，因此该目录是个人使用验证候选，不是签名或公开发布包。2,000/20,000 项 owned scale 证据见 `.scratch/local-library/runs/scale-1793452793624-11380/`。
 
 已确认的首版需求、用户故事及验收边界见 [首版 Spec](docs/spec.md)；迁移范围和未通过项见 [Electron migration spec](docs/electron-migration-spec.md)。
 

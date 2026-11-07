@@ -1,3 +1,50 @@
+import type {
+  LocalLibraryApi,
+  LocalLibraryDetailResult,
+  LocalLibraryArtworkResult,
+  LocalLibraryListResult,
+  LocalLibraryQuery,
+  LocalLibraryState,
+  LocalImportOutcome,
+  LocalMediaItem,
+  LocalPlaybackState,
+  LocalPlaybackUpdate,
+  LocalPlaybackTarget,
+  LocalScanProgress,
+  LocalScanResult,
+  LocalSourceSummary,
+  LocalContinueWatchingItem,
+  LocalMediaDetail,
+} from "./local-library-contracts";
+import type {
+  LocalPlaybackApi,
+  LocalPlaybackControlCommand,
+  LocalPlaybackEvent,
+  LocalPlaybackOpenOptions,
+} from "./local-playback-contracts";
+import type { AppPreferences, AppPreferencesApi } from "./app-preferences-contracts";
+
+export type {
+  LocalLibraryApi,
+  LocalLibraryDetailResult,
+  LocalLibraryArtworkResult,
+  LocalLibraryListResult,
+  LocalLibraryQuery,
+  LocalLibraryState,
+  LocalImportOutcome,
+  LocalMediaItem,
+  LocalPlaybackState,
+  LocalPlaybackUpdate,
+  LocalPlaybackTarget,
+  LocalScanProgress,
+  LocalScanResult,
+  LocalSourceSummary,
+  LocalContinueWatchingItem,
+  LocalMediaDetail,
+} from "./local-library-contracts";
+export type { LocalPlaybackApi, LocalPlaybackControlCommand, LocalPlaybackEvent, LocalPlaybackOpenOptions } from "./local-playback-contracts";
+export type { AppPreferences, AppPreferencesApi } from "./app-preferences-contracts";
+
 /**
  * Renderer-safe contracts shared by the Electron main, preload and renderer.
  * Secrets, NAS tokens, opaque signs and private media paths intentionally do
@@ -221,6 +268,9 @@ export type PlaybackEvent =
   | { type: "closed"; episodeId?: string };
 
 export interface ElectronApi {
+  localLibrary: LocalLibraryApi;
+  localPlayback: LocalPlaybackApi;
+  appPreferences: AppPreferencesApi;
   appearance: {
     onState(listener: (state: WindowAppearanceState) => void): () => void;
   };

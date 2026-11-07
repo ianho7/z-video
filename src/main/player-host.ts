@@ -4,17 +4,33 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import type { PlaybackCommand, PlaybackEvent } from "../shared/contracts";
+import {
+  assertLocalPlaybackMediaId,
+  type LocalPlaybackControlCommand,
+  type LocalPlaybackEvent,
+  type LocalPlaybackOpenResult,
+  type LocalPlaybackOpenOptions,
+  type LocalPlaybackStore,
+} from "../shared/local-playback-contracts";
 import { IPC_CHANNELS } from "../shared/ipc-channels";
 import { MpvNativePlayer } from "./mpv-player";
-import { PlaybackCoordinator, type PlaybackIdentity, type PlaybackProgressSnapshot, type PlaybackTarget } from "./player";
+import { LocalPlaybackCoordinator, PlaybackCoordinator, type PlaybackIdentity, type PlaybackProgressSnapshot, type PlaybackTarget } from "./player";
 import { NasError, type AuthenticatedSession, type NasCollectionDetail, type NasEpisode, type NasPlaybackProgress, type NasPlaybackStream } from "./nas-client";
 import type { SessionController } from "./session-controller";
 import { rendererEpisodeId } from "./episode-identity";
+import { AppPreferencesStore } from "./app-preferences";
 
 export interface PlaybackHost {
   chooseLocalFile(): Promise<{ opened: boolean }>;
   chooseSubtitleFile(): Promise<{ loaded: boolean }>;
   handle(command: PlaybackCommand): Promise<void>;
+  close(): Promise<void>;
+}
+
+export interface LocalPlaybackHost {
+  open(mediaId: string, options?: LocalPlaybackOpenOptions): Promise<LocalPlaybackOpenResult>;
+  handle(command: LocalPlaybackControlCommand): Promise<void>;
+  chooseSubtitleFile(): Promise<{ loaded: boolean }>;
   close(): Promise<void>;
 }
 
@@ -159,6 +175,77 @@ export class MainPlaybackHost implements PlaybackHost {
     if (!context) return;
     const state = await context.sessions.invalidate({ kind: "unauthorized", code: errorCode(error), message: "NAS 登录已失效，请重新登录。" }, expectedSessionKey);
     if (!this.window.isDestroyed() && !this.window.webContents.isDestroyed()) this.window.webContents.send(IPC_CHANNELS.sessionState, state);
+  }
+}
+
+/** Main-owned local player. It deliberately has no Session/NAS dependency. */
+export class MainLocalPlaybackHost implements LocalPlaybackHost {
+  private readonly coordinator: LocalPlaybackCoordinator;
+  private closed = false;
+
+  constructor(
+    private readonly window: BrowserWindow,
+    store: LocalPlaybackStore,
+    private readonly fileDialog: PlaybackFileDialog = dialog,
+    private readonly appPreferences?: AppPreferencesStore,
+  ) {
+    const engine = new MpvNativePlayer(window, appPreferences?.get());
+    this.coordinator = new LocalPlaybackCoordinator(
+      engine,
+      (event) => {
+        this.send(event);
+        if (event.type === "settings") void this.persistNativeSettings(event);
+      },
+      (enabled) => {
+        if (!window.isDestroyed()) window.setFullScreen(enabled);
+      },
+      store,
+    );
+  }
+
+  async open(mediaId: string, options?: LocalPlaybackOpenOptions): Promise<LocalPlaybackOpenResult> {
+    if (this.closed || this.window.isDestroyed()) return { opened: false };
+    assertLocalPlaybackMediaId(mediaId);
+    await this.coordinator.open(mediaId, options);
+    return { opened: true };
+  }
+
+  handle(command: LocalPlaybackControlCommand): Promise<void> {
+    return this.coordinator.handle(command);
+  }
+
+  chooseSubtitleFile(): Promise<{ loaded: boolean }> {
+    if (this.closed || this.window.isDestroyed()) return Promise.resolve({ loaded: false });
+    return this.coordinator.chooseExternalSubtitle(async () => {
+      const result = await this.fileDialog.showOpenDialog(this.window, {
+        title: "加载外部字幕",
+        properties: ["openFile"],
+        filters: [{ name: "字幕文件", extensions: ["srt", "ass", "ssa", "vtt", "sub"] }],
+      });
+      return result.canceled ? undefined : result.filePaths[0];
+    });
+  }
+
+  async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    await this.coordinator.close();
+    await this.appPreferences?.flush();
+  }
+
+  private async persistNativeSettings(event: Extract<LocalPlaybackEvent, { type: "settings" }>): Promise<void> {
+    if (!this.appPreferences) return;
+    try {
+      await this.appPreferences.confirmPlayback({ volume: event.volume, muted: event.muted, speed: event.speed });
+    } catch {
+      this.send({ type: "control-error", mediaId: event.mediaId, message: "播放设置保存失败，当前播放不受影响。" });
+    }
+  }
+
+  private send(event: LocalPlaybackEvent): void {
+    if (!this.window.isDestroyed() && !this.window.webContents.isDestroyed()) {
+      this.window.webContents.send(IPC_CHANNELS.localPlaybackEvent, event);
+    }
   }
 }
 

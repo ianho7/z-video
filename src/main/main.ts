@@ -1,73 +1,82 @@
 import { app } from "electron";
+import { join } from "node:path";
 
-import { registerIpcHandlers } from "./ipc";
-import { LibraryController } from "./library-controller";
-import { NasApiClient } from "./nas-client";
-import { createElectronSecureSessionStore } from "./secure-session-store";
-import { SessionController } from "./session-controller";
+import { registerLocalLibraryIpcHandlers } from "./local-library-ipc";
+import { registerLocalPlaybackIpcHandlers } from "./local-playback-ipc";
+import { registerAppPreferencesIpcHandlers } from "./app-preferences-ipc";
+import { LocalLibraryDatabase } from "./local-library-database";
+import { LocalArtworkCache } from "./local-artwork-cache";
+import { MainLocalPlaybackHost } from "./player-host";
+import type { LocalPlaybackStore } from "../shared/local-playback-contracts";
 import { createMainWindow } from "./window";
-import { MainPlaybackHost, type PlaybackHost } from "./player-host";
+import { AppPreferencesStore } from "./app-preferences";
 
 let mainWindow: ReturnType<typeof createMainWindow> | undefined;
-let playbackHost: PlaybackHost | undefined;
-let playbackClose: Promise<void> | undefined;
+let localLibrary: LocalLibraryDatabase | undefined;
+let localArtworkCache: LocalArtworkCache | undefined;
+let appPreferences: AppPreferencesStore | undefined;
+let unregisterLocalLibraryIpc: (() => void) | undefined;
+let localPlayback: MainLocalPlaybackHost | undefined;
+let unregisterLocalPlaybackIpc: (() => void) | undefined;
+let unregisterAppPreferencesIpc: (() => void) | undefined;
+let playbackClosing: Promise<void> | undefined;
 let quitting = false;
-
-function closePlaybackHost(): Promise<void> {
-  if (playbackClose) return playbackClose;
-  const host = playbackHost;
-  playbackHost = undefined;
-  playbackClose = Promise.resolve(host?.close()).catch((error: unknown) => {
-    console.error("z-video playback shutdown failed", error instanceof Error ? error.message : "unknown error");
-  }).finally(() => {
-    playbackClose = undefined;
-  });
-  return playbackClose;
-}
 
 function attachWindowLifecycle(window: ReturnType<typeof createMainWindow>): void {
   window.once("closed", () => {
+    void closePlayback();
     mainWindow = undefined;
-    // macOS keeps the app process after the last window closes. Windows
-    // reaches this cleanup through before-quit after window-all-closed.
-    if (process.platform === "darwin") void closePlaybackHost();
   });
+}
+
+function createLocalWindow(): void {
+  if (!localLibrary) throw new Error("本地片库尚未启动");
+  const window = createMainWindow();
+  mainWindow = window;
+  if (!appPreferences) throw new Error("应用设置尚未启动");
+  localPlayback = new MainLocalPlaybackHost(window, localLibrary as unknown as LocalPlaybackStore, undefined, appPreferences);
+  if (!localArtworkCache) throw new Error("本地 artwork cache 尚未启动");
+  unregisterLocalLibraryIpc = registerLocalLibraryIpcHandlers(localLibrary, window, localArtworkCache);
+  unregisterLocalPlaybackIpc = registerLocalPlaybackIpcHandlers(localPlayback);
+  unregisterAppPreferencesIpc = registerAppPreferencesIpcHandlers(appPreferences);
+  attachWindowLifecycle(window);
+}
+
+function closePlayback(): Promise<void> {
+  const previousClose = playbackClosing;
+  unregisterLocalPlaybackIpc?.();
+  unregisterLocalPlaybackIpc = undefined;
+  unregisterLocalLibraryIpc?.();
+  unregisterLocalLibraryIpc = undefined;
+  unregisterAppPreferencesIpc?.();
+  unregisterAppPreferencesIpc = undefined;
+  const host = localPlayback;
+  localPlayback = undefined;
+  const close = Promise.all([previousClose ?? Promise.resolve(), host?.close() ?? Promise.resolve()]).then(() => undefined);
+  const tracked = close.finally(() => {
+    if (playbackClosing === tracked) playbackClosing = undefined;
+  });
+  playbackClosing = tracked;
+  return tracked;
 }
 
 async function bootstrap(): Promise<void> {
   await app.whenReady();
-  const nas = new NasApiClient();
-  const controller = new SessionController(nas, createElectronSecureSessionStore());
-  const playbackBridge: PlaybackHost = {
-    chooseLocalFile: () => playbackHost?.chooseLocalFile() ?? Promise.resolve({ opened: false }),
-    chooseSubtitleFile: () => playbackHost?.chooseSubtitleFile() ?? Promise.resolve({ loaded: false }),
-    handle: (command) => playbackHost?.handle(command) ?? Promise.resolve(),
-    close: () => playbackHost?.close() ?? Promise.resolve(),
-  };
-  const library = new LibraryController(controller, nas);
-  mainWindow = createMainWindow();
-  playbackHost = new MainPlaybackHost(mainWindow, undefined, {
-    sessions: controller,
-    nas,
-    onProgressSaved: (identity) => library.invalidateDetail(identity.collectionId, identity.classificationId),
-  });
-  registerIpcHandlers(controller, library, playbackBridge);
-  attachWindowLifecycle(mainWindow);
+  localLibrary = new LocalLibraryDatabase({ dbPath: join(app.getPath("userData"), "local-library", "library.sqlite") });
+  localArtworkCache = new LocalArtworkCache(join(app.getPath("userData"), "local-library", "artwork-cache"));
+  appPreferences = new AppPreferencesStore(join(app.getPath("userData"), "app-preferences.json"));
+  await appPreferences.load();
+  await localLibrary.start();
+  createLocalWindow();
   app.on("activate", () => {
     if (!mainWindow || mainWindow.isDestroyed()) {
-      mainWindow = createMainWindow();
-      playbackHost = new MainPlaybackHost(mainWindow, undefined, {
-        sessions: controller,
-        nas,
-        onProgressSaved: (identity) => library.invalidateDetail(identity.collectionId, identity.classificationId),
-      });
-      attachWindowLifecycle(mainWindow);
+      createLocalWindow();
     }
   });
 }
 
 void bootstrap().catch((error: unknown) => {
-  console.error("z-video failed to start", error instanceof Error ? error.message : "unknown error");
+  console.error("z-video failed to start local library", error instanceof Error ? error.message : "unknown error");
   app.exit(1);
 });
 
@@ -75,7 +84,8 @@ app.on("before-quit", (event) => {
   if (quitting) return;
   event.preventDefault();
   quitting = true;
-  void closePlaybackHost().finally(() => app.quit());
+  const close = closePlayback().then(() => localLibrary?.close());
+  void close.finally(() => app.quit());
 });
 
 app.on("window-all-closed", () => {

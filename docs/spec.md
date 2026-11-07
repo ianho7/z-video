@@ -1,12 +1,20 @@
-# z-video 首版 Spec：Electron / TypeScript 局域网影视客户端
+# z-video 首版 Spec：Electron / TypeScript 本地片库客户端
 
-状态：需求与验收边界已确认；Electron Windows 路径已实现，Ticket 05 的 package/窗口/safeStorage/资源记录已有本地证据，真实 NAS/硬解/DWM/macOS/公开分发仍待验收。日期：2026-10-31。
+状态：2026-10-31 已批准本地片库 scope；本文件中的本地片库章节是当前默认产品契约。旧 NAS-first 章节仅保留作 rollback/protocol reference，不得作为 `npm run start` 的启动前置。Windows 优先；macOS、真实硬解、DWM 采样和公开分发仍需单独验收。
 
 ## 当前实现状态
 
-Windows 默认桌面入口是 Electron 45 + TypeScript；`npm run start`、`npm run build` 和 `npm run package` 不依赖 Rust/Cargo。实现保留 NAS 协议字段边界、安全会话、片库分页/排序、Collection 详情、Episode 播放协调和 native libmpv 播放路径。窗口沿用 `1040x720` preferred、`900x640` minimum、侧栏可收起，并在 Windows native material 不可用或减少透明度/高对比时使用不透明回退。
+Windows 默认桌面入口是 Electron 45 + TypeScript；`npm run start`、`npm run build` 和 `npm run package` 不依赖 Rust/Cargo。默认启动进入本地片库，不要求账号、登录恢复、NAS discovery、ZSpace SDK、NAS HTTP API 或在线元数据服务。主进程/utilityProcess 持有本地数据库和私有路径，renderer 只收到 opaque mediaId 与 renderer-safe DTO。旧 NAS 协议、Session 和 native libmpv 代码保留作 rollback/后续 playback 参考。
 
-Ticket 05 的 package、Koffi/libmpv 资源隔离、真实 Electron 窗口回归、fresh-process Windows safeStorage synthetic fixture 和分项资源记录已有本地证据。真实 NAS、硬件解码、DWM 采样画面、mixed-DPI、macOS 和公开分发许可证仍是未验证/阻塞项；不得把本地 fixture、Chromium 截图或 package 启动存活当成这些证据。
+Ticket 01 的 Electron 45 utilityProcess + `node:sqlite` open/query/reopen gate、owned local DB、opaque media identity、local IPC 和 fresh-profile no-login window smoke 已有本地证据。实际用户媒体/share、NFO/artwork、native playback/resume、硬件解码、DWM 采样画面、mixed-DPI、macOS 和公开分发许可证仍未由这些 fixture 证明。
+
+## 当前批准的本地片库契约（2026-10-31）
+
+应用可以在没有 NAS 账户的情况下启动；用户通过文件夹选择或直接打开视频导入本机/操作系统可读 share。扫描只读媒体、NFO 和 artwork；数据库、扫描状态与观看状态写入应用自己的 userData，绝不写回视频文件或 NFO。首个 vertical slice 先导入一部电影，后续 ticket 扩展 NFO、增量扫描、播放续播和完整索引。
+
+`sources`、`collections`、`media_files`、`artwork`、`playback_state`、`scan_runs` 是共享 schema owner。utilityProcess 独占 SQLite 连接；main 只协调 picker、IPC 和未来 playback path resolve；renderer 不打开数据库、不接收绝对路径或相对私有路径。schema/IPC 版本和字段见 `docs/local-library/contracts.md`。
+
+本地媒体 ID 是持久 opaque `media_<UUID>`。同一 root + relative path + size + mtime 在重复导入时复用 ID；改变文件 fingerprint 会生成替代记录，不自动继承旧进度。任何 media path resolve 只允许发生在 main/utility owner 边界。
 
 ## Problem Statement
 
@@ -16,13 +24,21 @@ Ticket 05 的 package、Koffi/libmpv 资源隔离、真实 Electron 窗口回归
 
 ## Solution
 
-提供基于 Electron 45 + TypeScript 的 Windows 桌面应用。用户在本机登录自己的 NAS，浏览已有 Media library，进入 Collection 详情、选择 Episode、开始 native libmpv Playback session，并将观看进度同步至 NAS，以便再次打开时续播。
+提供基于 Electron 45 + TypeScript 的 Windows 桌面应用。用户打开应用即进入 local library；选择文件夹或视频后，utilityProcess 读取本地文件并写入自有 SQLite，片库卡片和详情通过 opaque mediaId 访问。后续 playback owner 只能让 main 根据 mediaId 解析路径，并把本地进度写回同一数据库。
 
-首版保证局域网使用，以 NAS 现有片库为主要事实来源，Windows 先交付，先个人自用。macOS 保持架构兼容但延后真实运行验收。预留 Scraper plugin 的数据与调用边界，首版不实现插件运行时。
+首版保证 Windows 本地磁盘和操作系统已授权的只读 share；不要求账号、服务端或额外数据库安装。macOS 是单独验收边界。metadata provider/scraper 只预留数据契约，不在 ticket01 引入运行时。
 
-本 spec 固定已讨论的产品行为和实现约束；播放引擎、协议未验证字段与渲染集成需要在开发中取得证据，不将候选方案写成已通过能力。
+本 spec 固定已批准的本地行为和边界；NFO、artwork、native playback、share/权限和跨平台能力必须按各自证据边界验收，不将候选方案写成已通过能力。
 
-## User Stories
+## 当前本地片库 User Stories
+
+1. 用户无需登录即可启动并看到空的本地片库。
+2. 用户可以选择文件夹导入第一部电影，也可以直接打开一个视频文件。
+3. 重复导入未变化文件时，片库保留同一 opaque mediaId，renderer 不接收私有路径。
+4. 应用关闭后重新打开仍能从自己的 userData 读取索引；媒体和 NFO 保持只读。
+5. 后续播放 owner 可以用 mediaId 在 main 边界解析文件并保存本地进度，不产生 NAS 写入。
+
+## Historical NAS-first User Stories (rollback branch only)
 
 1. As an 极空间用户, I want 在局域网连接自己的 NAS, so that 我可以在家中直接浏览和观看影视。
 2. As an Account 持有人, I want 在本机输入账号密码并完成所需短信验证, so that 我不必将凭证交给开发助手或人工写入配置。
@@ -62,7 +78,13 @@ Ticket 05 的 package、Koffi/libmpv 资源隔离、真实 Electron 窗口回归
 
 renderer 负责展示、交互和播放控制层；Electron main 协调会话、网络、模型、缓存及播放，preload 只暴露 renderer-safe DTO。网络、图片解码和媒体工作不阻塞 renderer，异步结果正确派发到窗口。视频走 native libmpv 路径，避免 CPU 逐帧读取再交给 HTML。
 
-### NAS 与数据归属
+### 本地片库与数据归属（当前默认）
+
+renderer 通过窄 preload bridge 调用 `local-library:*` IPC。main 的 folder/file picker 取得路径后交给一个 utilityProcess；utilityProcess 独占 SQLite、执行受界 root 的只读遍历并返回 public DTO。数据库文件在 userData/local-library 下，不能位于媒体 share；日志使用 regular file 且脱敏。
+
+首个 foundation 只选择第一个支持的视频文件，按 filename fallback 生成电影标题；NFO、artwork、增量 scan、show/episode mapping 归 ticket02。playback/resume 的 `mediaId` resolve 和 state 归 ticket03。没有 NAS/auth 调用是默认启动契约。
+
+### NAS 与数据归属（历史 rollback 实现）
 
 NAS 模块集中管理连接、Account/Session、分类、Collection、Episode、有效流地址及观看进度。首版只保证局域网业务访问；登录是否依赖云服务以真实流程为准，不承诺纯离线鉴权。
 
@@ -70,7 +92,7 @@ NAS 保持 Media library 与观看进度的主要事实来源；本地保存设�
 
 参考接口目录描述特定版本客户端构造过的请求，不等于完整后端规范。方法、编码、鉴权位置和返回字段按真实调用核对；不统一猜测为 Bearer token，也不将会话恢复接口直接当作 token 刷新接口。
 
-### 播放
+### 播放（ticket03 本地 owner；历史 NAS 路径保留）
 
 当前 Windows 播放路径使用 native libmpv + Koffi；仍需真实 NAS 流和硬件素材证明独立获取、解码和画面集成。播放在 Electron 窗口组合 native surface、控制层和全屏；若前提不成立，记录具体限制并调整方案，不能靠复用官方进程掩盖独立链路缺失。
 
@@ -100,7 +122,11 @@ Windows 先交付；平台代码集中处理，macOS 后续单独构建和运行
 
 ## Testing Decisions
 
-### 主要验收边界（用户已确认）
+### 当前本地片库验收边界（Ticket 01）
+
+主证明由四个 approved seams 承担：真实 owned filesystem + SQLite owner（schema、导入、重复 ID、路径不出 public DTO）；隔离 Electron window/IPC（无登录启动、文件夹/视频入口、列表/详情）；future native playback fresh-process persistence；packaged candidate（utility worker、node:sqlite、资源和 regular-file logs）。Ticket 01 已执行前两个 foundation seams 的 synthetic/owned proof；不宣称真实个人媒体、share、NFO 或 native playback 已通过。
+
+### Historical NAS-first 验收边界（rollback branch only）
 
 以 Windows 实际应用的“局域网登录 → 分类/片库 → Collection 详情/Episode → 播放 → NAS 进度保存 → 再次打开续播”为主要验收路径。只验证外部行为、持久化结果和独立协议契约，不冻结内部函数、组件树或调用次数。
 
@@ -124,9 +150,9 @@ Windows 先交付；平台代码集中处理，macOS 后续单独构建和运行
 
 完成要求：上述范围内的真实行为有证据，当前无已知阻塞；没有以未验证的代理、播放或保存行为替代通过结果。macOS、远程和高级影音不参与首版通过判断。
 
-## Out of Scope
+## 当前 Out of Scope
 
-首版不包含远程穿透、云端中转保障、多 NAS 通用框架、独立媒体扫描/索引/刮削系统、离线片库、NAS 配套服务、HTTP 守护后台、Web 前端、可执行插件运行时和插件市场。
+当前 Ticket 01 不包含远程穿透、云端中转、NAS/auth、NFO/artwork parser、完整增量扫描、show/episode mapping、native playback/resume、自动 watcher、在线 metadata provider、可执行插件运行时或插件市场。后续 ticket 按 `docs/local-library/spec.md` 的 DAG 追加，不在本 ticket 预建 provider framework。
 
 不承诺 macOS 已可运行、HDR、杜比视界、音频直通、所有编码/容器/字幕格式或所有硬件均可硬解。不要求多播放引擎、独立播放器进程、自动连播、字幕在线搜索下载、第三方影视服务或自动更新。
 
@@ -136,7 +162,7 @@ Windows 先交付；平台代码集中处理，macOS 后续单独构建和运行
 
 ## Further Notes
 
-已确认：Electron＋TypeScript；局域网首版；沿用 NAS 片库；基础播放；Windows 优先；先个人自用；插件只预留边界。验收边界已在本轮由用户确认。
+已确认：Electron＋TypeScript；默认无账号的本地片库；Windows 优先；媒体/NFO 只读；应用 userData 保存索引/进度；schema/IPC 由 ticket01 交给 ticket02/03。旧 NAS-first 分支保留 rollback，不是当前启动路径。
 
 尚未技术证明：Electron 独立登录及媒体流获取、MFA/Session 细节、流地址有效期、native libmpv 硬解和音字幕覆盖。开发从独立连接与原生播放前提入手，这些是实现调查工作，不是要求用户再次选择产品范围。
 

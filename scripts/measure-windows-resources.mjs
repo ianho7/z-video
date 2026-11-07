@@ -1,4 +1,4 @@
-import { closeSync, openSync } from "node:fs";
+import { closeSync, existsSync, openSync } from "node:fs";
 import { once } from "node:events";
 import { execFile, spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
@@ -8,11 +8,11 @@ import { fileURLToPath } from "node:url";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const root = resolve(scriptDirectory, "..");
-const packageRoot = resolve(process.env.Z_VIDEO_PACKAGE_DIR ?? join(root, ".scratch", "electron-migration", "05-package", "z-video-win32-x64"));
+const packageRoot = resolve(process.env.Z_VIDEO_PACKAGE_DIR ?? join(root, ".scratch", "local-library", "package", "z-video-win32-x64"));
 const packageExecutable = join(packageRoot, "z-video.exe");
-const nodeModules = join(root, "node_modules");
+const nodeModules = resolve(process.env.Z_VIDEO_NODE_MODULES_DIR ?? [join(root, "node_modules"), resolve(root, "..", "..", "node_modules")].find((candidate) => existsSync(candidate)) ?? join(root, "node_modules"));
 const npmCache = process.env.npm_config_cache ?? join(process.env.LOCALAPPDATA ?? join(tmpdir(), "z-video-no-localappdata"), "npm-cache");
-const evidenceDir = join(root, ".scratch", "electron-migration", "runs", `05-resources-${Date.now()}-${process.pid}`);
+const evidenceDir = join(root, ".scratch", "local-library", "runs", `05-resources-${Date.now()}-${process.pid}`);
 const appLogPath = join(evidenceDir, "packaged-app.log");
 const reportPath = join(evidenceDir, "resource-measurement.json");
 
@@ -29,9 +29,12 @@ async function treeSize(path) {
       bytes += nested.bytes;
       files += nested.files;
       directories += nested.directories;
-    } else if (entry.isFile()) {
-      bytes += (await stat(child)).size;
-      files += 1;
+    } else if (entry.isFile() || entry.isSymbolicLink()) {
+      const metadata = await stat(child).catch(() => undefined);
+      if (metadata?.isFile()) {
+        bytes += metadata.size;
+        files += 1;
+      }
     }
   }
   return { bytes, files, directories };
@@ -86,7 +89,7 @@ const developer = {
   nodeModules: await measureTree(nodeModules),
   npmCache: await measureTree(npmCache),
 };
-const portable = await measureTree(packageRoot);
+const candidate = await measureTree(packageRoot);
 let appProcess;
 let appLogFd;
 let profile;
@@ -135,17 +138,17 @@ const report = {
   measuredAt: new Date().toISOString(),
   platform: { platform: process.platform, arch: process.arch, node: process.version },
   developer,
-  portable,
+  candidate,
   runtime,
   limits: [
     "node_modules and npm cache are developer dependency/cache measurements, not an installed-app size",
-    "portable is the complete unpacked folder measured on disk after package generation",
+    "candidate is the complete unpacked folder measured logically after following package file links",
     "runtime is one idle packaged z-video.exe working-set sample after 3 seconds; it is not a performance budget or playback sample",
   ],
 };
 await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
 console.log(`DEVELOPER_NODE_MODULES: ${developer.nodeModules.bytes} bytes (${developer.nodeModules.files} files)`);
 console.log(`DEVELOPER_NPM_CACHE: ${developer.npmCache.exists ? `${developer.npmCache.bytes} bytes (${developer.npmCache.files} files)` : `unavailable (${developer.npmCache.reason})`}`);
-console.log(`PORTABLE_PACKAGE: ${portable.bytes} bytes (${portable.files} files)`);
+console.log(`CANDIDATE_PACKAGE: ${candidate.bytes} bytes (${candidate.files} files)`);
 console.log(`RUNTIME_WORKING_SET: ${runtime.workingSetBytes} bytes (pid=${runtime.pid}, sample=${runtime.sample})`);
 console.log(`REPORT: ${reportPath}`);

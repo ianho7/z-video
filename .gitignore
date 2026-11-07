@@ -5,6 +5,8 @@ node_modules/
 dist/
 .scratch/electron-migration/runs/
 .scratch/electron-migration/05-package/
+.scratch/local-library/runs/
+.scratch/local-library/package/
 **/*.rs.bk
 *.log
 .env

@@ -1,0 +1,13 @@
+# Official client hands-on responsiveness observation
+
+Date: 2026-10-31. Computer Use only, using the existing user-authenticated official client window. No login, settings change, write operation, media playback, synthetic workload, or network inspection was performed. No private media titles, paths or screenshots are saved in this report.
+
+Actions: opened 极影视 from desktop, entered movie category, scrolled poster grid, opened filter panel. Opening a detail was attempted but the helper reported concurrent user input; the action outcome is not counted as a successful detail check and subsequent automation stopped after reobservation.
+
+Observed: the first snapshot about 361ms after the launch action showed a dark content area. A later snapshot about 5.3s after the action showed the loaded homepage; this is a sampled observation interval, not a measured 5.3s load time. Movie-category content appeared in a later snapshot within the roughly 6s observation interval; exact completion time is unknown. Poster grid visibly scrolled and the filter panel appeared. No prolonged freeze was reproduced in these limited actions. Header CPU readings observed ranged roughly 8–17%, RAM 55%; those UI readings do not establish disk latency, process-specific CPU or instantaneous frame performance. Automation call durations include capture/tool overhead and are not performance benchmarks.
+
+User reports heavier stutter when other NAS apps or file reads/writes are active. That concurrent-load condition was not independently reproduced. Prioritize candidate causes: NAS disk IO/metadata lookup contention, server worker/CPU contention, network throughput, and frontend behavior while waiting for list/images. Low sampled CPU does not exclude IO stalls. No candidate is confirmed; Electron/Vue/VLC architecture alone does not establish a cause.
+
+Useful future comparison: same category, same scroll/detail sequence with and without naturally occurring NAS activity. Record list/detail/image wait separately from UI input responsiveness; observe NAS disk latency/queue, per-service resource use and network concurrently. Do not generate copying/download workloads merely to manufacture a result without a separate scope decision.
+
+Implication for the proposed independent local app: retain local metadata index, local bounded poster-thumbnail cache, render already-indexed content before background refresh, bound scan/image IO and allow cancellation. A busy/disconnected share must not block UI navigation or erase indexed items. These reduce dependence on NAS metadata service response but cannot remove contention when actual video bytes are read from the same disk/network. These are design proposals, not implemented fixes or measured speedups.

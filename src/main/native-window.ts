@@ -3,10 +3,8 @@ import type { BrowserWindow } from "electron";
 import koffi from "koffi";
 
 const WS_CHILD = 0x40000000;
-const WS_VISIBLE = 0x10000000;
 const WS_CLIPSIBLINGS = 0x04000000;
 const WS_CLIPCHILDREN = 0x02000000;
-const SWP_NOZORDER = 0x0004;
 const SWP_NOACTIVATE = 0x0010;
 const SWP_SHOWWINDOW = 0x0040;
 const SW_HIDE = 0;
@@ -53,7 +51,7 @@ function getWin32Api(): Win32Api {
       "void *",
     ]),
     destroyWindow: user32.func("__stdcall", "DestroyWindow", "int", ["void *"]),
-    getClientRect: user32.func("__stdcall", "GetClientRect", "int", ["void *", koffi.pointer(RECT)]),
+    getClientRect: user32.func("__stdcall", "GetClientRect", "int", ["void *", koffi.out(koffi.pointer(RECT))]),
     getDpiForWindow: user32.func("__stdcall", "GetDpiForWindow", "uint32_t", ["void *"]),
     setWindowPos: user32.func("__stdcall", "SetWindowPos", "int", [
       "void *",
@@ -78,6 +76,7 @@ function bufferToHandle(buffer: Buffer): NativeHandle {
 export class NativeVideoWindow {
   readonly handle: NativeHandle;
   private destroyed = false;
+  private visible = false;
   private readonly resizeListener: () => void;
   private readonly fullScreenListener: () => void;
   private readonly displayMetricsListener: () => void;
@@ -97,7 +96,7 @@ export class NativeVideoWindow {
   static create(parent: BrowserWindow): NativeVideoWindow {
     const api = getWin32Api();
     const parentHandle = bufferToHandle(parent.getNativeWindowHandle());
-    const style = WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
+    const style = WS_CHILD | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
     const handle = api.createWindow(0, "STATIC", "", style, 0, 0, 1, 1, parentHandle, 0n, 0n, 0n) as NativeHandle;
     if (!handle) throw new Error("failed to create the native video host");
     return new NativeVideoWindow(parent, handle, api);
@@ -111,12 +110,20 @@ export class NativeVideoWindow {
     const controlsHeight = Math.round((152 * dpi) / 96);
     const width = Math.max(1, Number(rect.right) - Number(rect.left));
     const height = Math.max(1, Number(rect.bottom) - Number(rect.top) - controlsHeight);
-    this.api.setWindowPos(this.handle, 0n, 0, 0, width, height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
-    this.api.showWindow(this.handle, SW_SHOW);
+    this.api.setWindowPos(this.handle, 0n, 0, 0, width, height, SWP_NOACTIVATE | (this.visible ? SWP_SHOWWINDOW : 0));
+    this.api.showWindow(this.handle, this.visible ? SW_SHOW : SW_HIDE);
+  }
+
+  show(): void {
+    if (this.destroyed) return;
+    this.visible = true;
+    this.resize();
   }
 
   hide(): void {
-    if (!this.destroyed) this.api.showWindow(this.handle, SW_HIDE);
+    if (this.destroyed) return;
+    this.visible = false;
+    this.api.showWindow(this.handle, SW_HIDE);
   }
 
   destroy(): void {

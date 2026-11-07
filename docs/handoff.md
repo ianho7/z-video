@@ -2,17 +2,21 @@
 
 ## Electron cutover handoff（2026-10-31）
 
-审查修复已集成至 `ae53280`（修复提交 `cc2188c`、`bacdcbd`），Standards 与 Spec 复核均通过。最终本地测试包重新构建并通过生产 renderer 就绪和包内 Koffi/libmpv 检查；完整 portable 目录为 `111` files、`502,125,744` bytes（约 `478.86 MiB`），其中 manifest 的内容小计不包含 manifest/README 自身。最终构建、日志路径和验证范围见 `.scratch/electron-migration/final-local-evidence.md`。下面的首轮资源采样保留为历史记录，不代表整个 Electron 进程树内存，也不是最终包的完整目录计数。
+Ticket 05 已在 `codex/local-05` 完成本地片库 Windows candidate 交付；旧 Electron migration package 仍保留作 rollback/reference，未被覆盖。新的默认包输出为 `.scratch/local-library/package/z-video-win32-x64/`，最终 package/verify/scale/resource 证据和限制见本目录的 `docs/local-library/completions/05.md` 及 `.scratch/local-library/runs/`。
 
-当前默认入口是 Electron 45 + TypeScript：`npm run start`、`npm run build`、`npm run package`。Windows portable 包默认输出到 `.scratch/electron-migration/05-package/z-video-win32-x64/`，包内使用 Electron runtime、Koffi Windows x64 prebuild 和一份 `vendor/mpv/libmpv-2.dll`；`resources/app` 不含 Rust、测试、reference、source maps 或开发依赖。`npm run verify:package` 会在隔离 cwd 和 fresh `--user-data-dir` 下验证包内 EXE 启动，并用 Electron Node runtime 加载包内 Koffi 与 libmpv。
+当前默认入口是 Electron 45 + TypeScript：`npm run start`、`npm run build`、`npm run package`。Windows candidate 包默认输出到 `.scratch/local-library/package/z-video-win32-x64/`，包内使用 Electron runtime、utility worker、built-in `node:sqlite`、fast-xml-parser runtime closure、Koffi Windows x64 prebuild 和一份 `vendor/mpv/libmpv-2.dll`；`resources/app` 不含 Rust、测试、reference、source maps 或开发依赖。`npm run verify:package` 会在隔离 cwd 和 fresh `--user-data-dir` 下验证包内 EXE、Koffi/libmpv/XML、renderer-ready 和 production local SQLite query。
 
 Ticket 05 已补齐旧窗口契约：preferred `1040x720`、minimum `900x640`、sidebar collapse、Windows `backgroundMaterial: "acrylic"` 以及 nativeTheme/high-contrast/reduced-transparency/unsupported-build 的不透明回退。主进程退出会等待播放器关闭，以便完成已开始的观看进度 flush。真实窗口侧栏/回退和两个独立 Electron 进程的 Windows safeStorage synthetic fixture 有本地证据；没有读取用户会话或连接真实 NAS。
 
-本次 Windows 资源记录位于 `.scratch/electron-migration/runs/05-resources-1793418913399-24128/resource-measurement.json`：node_modules `405,872,832` bytes、npm cache `491,439,771` bytes、portable 总目录 `502,108,811` bytes（109 files）、fresh packaged `z-video.exe` idle working set `138,178,560` bytes。它们分别代表开发依赖/cache、distributable folder 和一次 idle runtime sample，不代表 Rust release 对比或性能预算。
+本次 D: 默认目标的资源记录位于 `.scratch/local-library/runs/05-resources-1793453085388-22392/resource-measurement.json`：node_modules `417,551,541` bytes、npm cache `499,840,259` bytes、candidate 总目录 `503,139,196` bytes（231 files）、fresh packaged `z-video.exe` idle working set `145,829,888` bytes；该目录是早期 constrained link-fallback 观测，不是最终独立交付包。当前生成器已禁止 symlink/junction，只允许 hard link 或 regular copy，D: 余量不足时明确 `ENOSPC`。
+
+为交付一个可脱离依赖根运行的 regular-copy candidate，另在授权 C: 路径 `C:\Users\admin\.codex\visualizations\2026\10\30\01a18d67-6765-7dc0-8bd1-47ac85ca8f26\local-library-package\z-video-win32-x64\` 生成了 `Z_VIDEO_PACKAGE_LINK_MODE=copy` 包：`503,138,932` bytes、231 个 regular files、0 个 symbolic link/junction/hard link；该包已通过 fresh-profile package verify，最终资源记录见 `.scratch/local-library/runs/05-resources-1793453281140-22652/resource-measurement.json`（idle working set `149,057,536` bytes）。D: 默认目标仍保留作历史/本地工作区复核，旧 NAS package 未覆盖。
+
+包内 native/XML/renderer/SQLite 证据位于 `.scratch/local-library/runs/05-package-1793453274759-19900/`；2,000/20,000 项扫描、并发查询和 offline 保留证据位于 `.scratch/local-library/runs/scale-1793452793624-11380/`。规模运行只使用 owned fixtures，未读取私有目录或 NAS。
 
 本次可复核证据目录：window/sidebar `.scratch/electron-migration/runs/05-window-1793419011005-12080/window.log`；reduced-transparency/geometry `.scratch/electron-migration/runs/05-appearance-1793418898412-24420/appearance.log`；packaged EXE/Koffi/libmpv `.scratch/electron-migration/runs/05-package-1793418903414-10632/packaged-app.log`；fresh-process safeStorage `.scratch/electron-migration/runs/05-safe-storage-1793418547179-11752/{save,restore}.log`。这些日志没有用户凭证、token、NAS 地址或媒体 URI。
 
-仍未通过的边界：真实 NAS 登录/流、真实 NAS 进度读回、硬解选择、DWM 实际采样画面、mixed-DPI、多显示器、macOS、签名/安装器/自动更新和公开分发许可证。libmpv 包含来源 archive 名称与 DLL SHA-256，但仓库没有足够的许可证 notice 证明公开再分发；不要把 portable 目录标为 public-ready。
+仍未通过的边界：真实 NAS 登录/流、真实 NAS 进度读回、硬解选择、DWM 实际采样画面、mixed-DPI、多显示器、macOS、签名/安装器/自动更新和公开分发许可证。libmpv 包含来源 archive 名称与 DLL SHA-256，但仓库没有足够的许可证 notice 证明公开再分发；C: regular-copy candidate 可独立运行但仍不是签名或 public-ready。
 
 记录日期：2026-10-16。此目录已经包含报告和设计文档，尚无应用代码。后续在 `D:\project\z-video` 开发；无需重新执行 REA 安装或复制全部历史输出。
 
