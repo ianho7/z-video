@@ -45,6 +45,7 @@ async function run(): Promise<void> {
     warningCount: 0,
     warnings: [],
   }));
+  ipcMain.handle("local-library:source-remove", async () => { state.sources = []; return state; });
   ipcMain.handle("local-library:open-video", async () => ({ status: "imported", item, state }));
   ipcMain.handle("local-library:list", async (_event, query) => {
     queries.push((query ?? {}) as Record<string, unknown>);
@@ -154,8 +155,18 @@ async function run(): Promise<void> {
   await waitFor("search query", async () => queries.at(-1)?.query, (value) => value === "窗口");
   assert.equal(queries.at(-1)?.query, "窗口");
 
+  await window.webContents.executeJavaScript("document.querySelector('#manage-sources-button').click()", true);
+  assert.equal(await window.webContents.executeJavaScript("document.querySelector('#sources-page').hidden", true), false);
+  assert.match(await window.webContents.executeJavaScript("document.querySelector('#source-list').textContent", true), /owned-fixture/);
+  await window.webContents.executeJavaScript("document.querySelector('[data-remove-source-id]').click()", true);
+  assert.equal(await window.webContents.executeJavaScript("document.querySelector('#remove-source-dialog').open", true), true);
+  assert.match(await window.webContents.executeJavaScript("document.querySelector('#remove-source-copy').textContent", true), /不删除源文件/);
+  assert.equal(await window.webContents.executeJavaScript("document.activeElement.id", true), "remove-source-cancel");
+  await window.webContents.executeJavaScript("document.querySelector('#remove-source-cancel').click(); document.querySelector('[data-remove-source-id]').click(); document.querySelector('#remove-source-confirm').click()", true);
+  await waitFor("removed source", () => window.webContents.executeJavaScript("document.querySelector('#source-list').textContent", true) as Promise<string>, (text) => /尚未添加来源/.test(text));
+
   window.close();
-  for (const channel of ["local-library:state", "local-library:choose-folder", "local-library:open-video", "local-library:list", "local-library:get", "local-library:artwork", "local-library:continue-watching", "app-preferences:get", "app-preferences:set-sort"]) ipcMain.removeHandler(channel);
+  for (const channel of ["local-library:state", "local-library:source-remove", "local-library:choose-folder", "local-library:open-video", "local-library:list", "local-library:get", "local-library:artwork", "local-library:continue-watching", "app-preferences:get", "app-preferences:set-sort"]) ipcMain.removeHandler(channel);
 }
 
 run().then(() => app.quit()).catch((error: unknown) => {

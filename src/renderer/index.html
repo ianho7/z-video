@@ -27,14 +27,13 @@
       </header>
 
       <main class="library-layout">
-        <aside class="source-sidebar" aria-label="本地片库来源" hidden>
-          <p class="eyebrow">SOURCES</p>
-          <h2>我的来源</h2>
-          <button id="all-sources-button" class="source-all" type="button" aria-pressed="true">全部来源 <span id="all-source-count">0</span></button>
-          <div id="source-list" class="source-list" role="list"></div>
-          <p class="muted source-note">媒体只读；移除来源只清理应用索引，不删除源文件。</p>
-        </aside>
-
+        <section id="sources-page" class="sources-page" hidden aria-labelledby="sources-title">
+          <button type="button" class="text-button" data-nav="home">← 返回首页</button>
+          <div class="sources-heading"><div><p class="eyebrow">SOURCES</p><h1 id="sources-title">我的来源</h1><p class="muted">管理你的本地媒体文件夹</p></div><div><button type="button" class="secondary-button" data-import="video">打开单个视频</button> <button type="button" class="primary-button" data-import="folder">添加文件夹</button></div></div>
+          <p id="sources-message" class="status" role="status" aria-live="polite"></p><div id="scan-panel" class="scan-panel" hidden aria-live="polite"><h2 id="scan-panel-title"></h2><p id="scan-counts"></p><ul id="scan-warnings"></ul><button type="button" class="secondary-button" data-cancel-scan hidden>取消扫描</button></div>
+          <span id="all-source-count" hidden>0</span><div id="source-list" class="source-list" role="list"></div><p class="muted source-note">媒体只读；移除来源只清理应用索引，不删除源文件。</p>
+        </section>
+        <dialog id="remove-source-dialog" aria-labelledby="remove-source-title" aria-describedby="remove-source-copy"><h2 id="remove-source-title">移除来源？</h2><p id="remove-source-copy"></p><div class="dialog-actions"><button type="button" class="secondary-button" id="remove-source-cancel">取消</button><button type="button" class="primary-button" id="remove-source-confirm">移除来源</button></div></dialog>
         <section class="library-content" aria-labelledby="library-title">
           <div class="content-heading">
             <div>
@@ -67,6 +66,7 @@
 
           <div id="library-message" class="status" role="status" aria-live="polite"></div>
 
+            <div id="onboarding" class="onboarding" hidden><p class="eyebrow">WELCOME</p><h1>你的私人影院，从这里开始</h1><p>添加本地文件夹，或直接打开一个视频。</p><button type="button" class="primary-button" data-import="folder">添加文件夹</button> <button type="button" class="secondary-button" data-import="video">打开单个视频</button></div>
           <section id="home-hero" class="home-hero" hidden><div id="hero-artwork" class="hero-artwork"></div><div class="hero-copy"><p id="hero-label" class="eyebrow"></p><h1 id="hero-title"></h1><div class="hero-episode"><strong id="hero-episode"></strong><span id="hero-meta"></span></div><svg class="hero-progress" viewBox="0 0 360 18" preserveAspectRatio="none" aria-hidden="true"><path id="hero-progress-track"/><path id="hero-progress-fill" pathLength="100"/></svg><div class="hero-actions"><button id="hero-play" class="primary-button" type="button">继续观看</button><button id="hero-restart" class="secondary-button" type="button">从头播放</button><button id="hero-detail" class="secondary-button" type="button">详情</button></div></div></section>
           <section id="continue-section" class="continue-section" hidden aria-labelledby="continue-title">
             <div class="section-heading"><h2 id="continue-title">继续观看</h2><span id="continue-scope" class="muted"></span><button type="button" data-shelf="all">查看全部 →</button></div>

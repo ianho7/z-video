@@ -1,52 +1,18 @@
-import type { LocalLibraryState } from "../../shared/local-library-contracts";
-
-export function renderSources(next: LocalLibraryState, sourceId: string | undefined, allSourceCount: HTMLElement | null, sourceList: HTMLElement | null): void {
-  if (allSourceCount) allSourceCount.textContent = String(next.sources.reduce((total, source) => total + source.itemCount, 0));
-  if (sourceList) {
-    sourceList.replaceChildren(...next.sources.map((source) => {
-      const row = document.createElement("div");
-      row.className = `source-row${sourceId === source.sourceId ? " selected" : ""}`;
-      row.dataset.sourceId = source.sourceId;
-      row.setAttribute("role", "listitem");
-      const select = document.createElement("button");
-      select.className = "source-select";
-      select.type = "button";
-      select.dataset.sourceId = source.sourceId;
-      select.setAttribute("aria-pressed", String(sourceId === source.sourceId));
-      const dot = document.createElement("span");
-      dot.className = `source-dot${source.available ? "" : " offline"}`;
-      const label = document.createElement("span");
-      label.className = "source-label";
-      label.textContent = source.label;
-      const count = document.createElement("span");
-      count.className = "source-count";
-      count.textContent = String(source.itemCount);
-      select.append(dot, label, count);
-      const actions = document.createElement("span");
-      actions.className = "source-actions";
-      const refresh = document.createElement("button");
-      refresh.type = "button";
-      refresh.className = "source-action";
-      refresh.dataset.refreshSourceId = source.sourceId;
-      refresh.title = "刷新来源";
-      refresh.setAttribute("aria-label", `刷新 ${source.label}`);
-      refresh.textContent = "↻";
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "source-action danger";
-      remove.dataset.removeSourceId = source.sourceId;
-      remove.title = "移除来源索引";
-      remove.setAttribute("aria-label", `移除 ${source.label}`);
-      remove.textContent = "×";
-      actions.append(refresh, remove);
-      row.append(select, actions);
-      return row;
-    }));
-    if (next.sources.length === 0) {
-      const empty = document.createElement("p");
-      empty.className = "muted";
-      empty.textContent = "尚未添加来源";
-      sourceList.append(empty);
-    }
-  }
+import type { LocalLibraryState, LocalScanProgress } from "../../shared/local-library-contracts";
+export function renderSources(next: LocalLibraryState, progress: LocalScanProgress | undefined, sourceList: HTMLElement | null): void {
+  if (!sourceList) return;
+  sourceList.replaceChildren(...next.sources.map((source) => {
+    const row = document.createElement("article"); row.className = "source-card"; row.setAttribute("role", "listitem");
+    const title = document.createElement("h2"); title.textContent = source.label;
+    const count = document.createElement("p"); count.className = "source-card-count"; count.textContent = String(source.itemCount);
+    const caption = document.createElement("p"); caption.textContent = "个媒体条目";
+    const status = document.createElement("span"); status.className = "source-chip";
+    const current = progress?.sourceId === source.sourceId ? progress.status : undefined;
+    status.textContent = current === "running" ? "扫描中" : current === "partial" ? "部分完成" : !source.available || current === "unavailable" ? "离线" : "可用";
+    const actions = document.createElement("div"); actions.className = "source-card-actions";
+    const refresh = document.createElement("button"); refresh.type = "button"; refresh.className = "secondary-button"; refresh.dataset.refreshSourceId = source.sourceId; refresh.textContent = "重新扫描"; if (current === "running") { delete refresh.dataset.refreshSourceId; refresh.dataset.cancelSourceScan = source.sourceId; refresh.textContent = "取消扫描"; } else refresh.disabled = progress?.status === "running";
+    const remove = document.createElement("button"); remove.type = "button"; remove.className = "secondary-button"; remove.dataset.removeSourceId = source.sourceId; remove.textContent = "移除"; remove.disabled = progress?.status === "running";
+    actions.append(refresh, remove); row.append(status, title, count, caption, actions); return row;
+  }));
+  if (!next.sources.length) { const empty = document.createElement("p"); empty.className = "muted"; empty.textContent = "尚未添加来源"; sourceList.append(empty); }
 }
