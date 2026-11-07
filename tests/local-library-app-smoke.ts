@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { app, BrowserWindow, dialog } from "electron";
 
 const LONG_TITLE = "Owned UX Audit Feature Film 2026 — Long Detail Title";
-const LONG_PLOT = "这是用于本地片库窗口验收的自有长剧情素材。它故意包含多行文字，验证详情页在长标题和长剧情下仍然把播放操作放在首屏，并允许用户展开或收起剧情简介。第二段继续描述一个不应遮挡播放按钮的本地媒体故事，内容只服务于隔离测试，不代表真实用户片名或路径。";
+const LONG_PLOT = "这是用于本地片库窗口验收的自有长剧情素材。它故意包含多行文字，验证详情页在长标题和长剧情下仍然把播放操作放在首屏，并允许用户展开或收起剧情简介。第二段继续描述一个不应遮挡播放按钮的本地媒体故事，内容只服务于隔离测试，不代表真实用户片名或路径。".repeat(3);
 const INDEX_FILE_COUNT = 1_500;
 const APP_TIMEOUT_MS = 55_000;
 let appDeadline = 0;
@@ -132,9 +132,14 @@ async function run(): Promise<void> {
     );
     assert.equal(detail.title, LONG_TITLE);
     assert.equal(detail.plot, LONG_PLOT);
+    assert.ok(detail.button.left >= 0 && detail.button.right <= detail.viewport.width && detail.button.top >= 0 && detail.button.bottom <= detail.viewport.height);
 
     window.setSize(900, 640);
-    const minDetail = await evaluate(window, "(() => { const button = document.querySelector('#media-detail-open')?.getBoundingClientRect(); const viewport = { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight }; return { visible: Boolean(button && button.left >= 0 && button.right <= viewport.width && button.top >= 0 && button.bottom <= viewport.height) }; })()");
+    const minOuter = window.getSize();
+    const minContent = window.getContentSize();
+    const minDetail = await evaluate(window, "(() => { const button = document.querySelector('#media-detail-open')?.getBoundingClientRect(); const viewport = { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight }; return { visible: Boolean(button && button.left >= 0 && button.right <= viewport.width && button.top >= 0 && button.bottom <= viewport.height), viewport }; })()");
+    assert.ok(minOuter[0] >= 900 && minOuter[1] >= 640);
+    assert.ok(Math.abs(minContent[0] - minDetail.viewport.width) <= 4 && Math.abs(minContent[1] - minDetail.viewport.height) <= 4);
     assert.equal(minDetail.visible, true);
 
     await evaluate(window, "document.querySelector('#library-search-clear')?.click()");
@@ -142,7 +147,7 @@ async function run(): Promise<void> {
     const player = await waitFor(
       "player title and controls",
       () => evaluate(window, "(() => { const view = document.querySelector('[data-view=\"player\"]'); const surface = document.querySelector('.player-surface')?.getBoundingClientRect(); const controls = document.querySelector('.player-controls')?.getBoundingClientRect(); const title = document.querySelector('#player-current-title')?.getBoundingClientRect(); const toggle = document.querySelector('#player-toggle-button'); return { visible: view?.hidden === false, currentTitle: document.querySelector('#player-current-title')?.textContent || '', ready: toggle?.disabled === false, controlsHeight: controls?.height || 0, titleInControls: Boolean(title && controls && title.top >= controls.top && title.bottom <= controls.bottom), titleOutsideSurface: Boolean(title && surface && title.top >= surface.bottom) }; })()"),
-      (value) => value.visible && value.currentTitle === LONG_TITLE && value.controlsHeight >= 152 && value.titleInControls && value.titleOutsideSurface && value.ready,
+      (value) => value.visible && value.currentTitle === LONG_TITLE && Math.abs(value.controlsHeight - 152) < 1 && value.titleInControls && value.titleOutsideSurface && value.ready,
       15_000,
     );
     assert.equal(player.currentTitle, LONG_TITLE);
@@ -152,20 +157,25 @@ async function run(): Promise<void> {
     await evaluate(window, "document.querySelector('#player-close-button')?.click()");
     const continueMin = await waitFor(
       "continue row at minimum size",
-      () => evaluate(window, "(() => { const card = document.querySelector('.continue-card strong'); return { hidden: document.querySelector('#continue-section')?.hidden, title: card?.textContent || '', top: card?.getBoundingClientRect().top || -1, bottom: card?.getBoundingClientRect().bottom || -1, height: document.documentElement.clientHeight }; })()"),
-      (value) => value.hidden === false && value.title === LONG_TITLE && value.top >= 0 && value.bottom <= value.height,
+      () => evaluate(window, "(() => { const card = document.querySelector('.continue-card strong'); const firstTitle = document.querySelector('.media-card-title'); const firstRect = firstTitle?.getBoundingClientRect(); return { hidden: document.querySelector('#continue-section')?.hidden, title: card?.textContent || '', top: card?.getBoundingClientRect().top || -1, bottom: card?.getBoundingClientRect().bottom || -1, firstTitle: firstTitle?.textContent || '', firstTop: firstRect?.top || -1, firstBottom: firstRect?.bottom || -1, height: document.documentElement.clientHeight }; })()"),
+      (value) => value.hidden === false && value.title === LONG_TITLE && value.top >= 0 && value.bottom <= value.height && value.firstTitle.length > 0 && value.firstTop >= 0 && value.firstBottom <= value.height,
       10_000,
     );
     assert.equal(continueMin.title, LONG_TITLE);
+    assert.ok(continueMin.firstTitle.length > 0 && continueMin.firstTop >= 0 && continueMin.firstBottom <= continueMin.height);
 
     window.setSize(1040, 720);
+    const defaultAfterContinueOuter = window.getSize();
+    const defaultAfterContinueContent = window.getContentSize();
     const continueDefault = await waitFor(
       "continue row at default size",
-      () => evaluate(window, "({ outer: window.outerWidth, content: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight }, hidden: document.querySelector('#continue-section')?.hidden, title: document.querySelector('.continue-card strong')?.textContent || '' })"),
-      (value) => value.hidden === false && value.title === LONG_TITLE,
+      () => evaluate(window, "(() => { const firstTitle = document.querySelector('.media-card-title'); const rect = firstTitle?.getBoundingClientRect(); return { outer: { width: window.outerWidth, height: window.outerHeight }, content: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight }, hidden: document.querySelector('#continue-section')?.hidden, title: document.querySelector('.continue-card strong')?.textContent || '', firstTitle: firstTitle?.textContent || '', firstTop: rect?.top || -1, firstBottom: rect?.bottom || -1 }; })()"),
+      (value) => value.hidden === false && value.title === LONG_TITLE && value.firstTitle.length > 0 && value.firstTop >= 0 && value.firstBottom <= value.content.height,
     );
-    assert.ok(continueDefault.outer >= 1040);
+    assert.ok(defaultAfterContinueOuter[0] >= 1040 && defaultAfterContinueOuter[1] >= 720);
+    assert.ok(Math.abs(defaultAfterContinueContent[0] - continueDefault.content.width) <= 4 && Math.abs(defaultAfterContinueContent[1] - continueDefault.content.height) <= 4);
     assert.ok(continueDefault.content.width > 0 && continueDefault.content.height > 0);
+    assert.ok(continueDefault.firstTitle.length > 0 && continueDefault.firstTop >= 0 && continueDefault.firstBottom <= continueDefault.content.height);
 
     await quitProductionApp();
     const diagnostics = await readFile(join(logDir, "diagnostics.jsonl"), "utf8").catch(() => "");
