@@ -1,4 +1,5 @@
 import type { LocalMediaItem, LocalPlaybackState } from "../../shared/local-library-contracts";
+import { biscuitPath, wavePath } from "../shapes.js";
 import { formatBytes, formatTime } from "./shared.js";
 
 export function episodeRows(episodes: LocalMediaItem[], selectedMediaId: string, playback?: LocalPlaybackState): HTMLButtonElement[] {
@@ -35,13 +36,34 @@ export function episodeRows(episodes: LocalMediaItem[], selectedMediaId: string,
     const mark = document.createElement("span");
     mark.className = "episode-watched-mark";
     mark.setAttribute("aria-hidden", "true");
-    mark.textContent = watched ? "✓" : "";
+    const markShape = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    markShape.setAttribute("viewBox", "0 0 32 32");
+    const biscuit = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    biscuit.setAttribute("d", biscuitPath(14, 2, 8));
+    biscuit.setAttribute("class", "episode-watched-biscuit");
+    const check = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    check.setAttribute("d", "M8 16 L13.5 21.5 L24 10.5");
+    check.setAttribute("class", "episode-watched-check");
+    markShape.append(biscuit, check);
+    mark.append(markShape);
     button.append(poster, number, copy, mark);
     if (selected && playback && playback.durationSec && playback.durationSec > 0) {
-      const progress = document.createElement("span");
-      progress.className = "episode-progress";
+      const percentage = Math.min(100, playback.positionSec / playback.durationSec * 100);
+      const progress = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      progress.classList.add("episode-progress");
       progress.setAttribute("aria-label", `播放进度 ${Math.min(100, playback.positionSec / playback.durationSec * 100).toFixed(0)}%`);
-      progress.style.setProperty("--progress", `${Math.min(100, playback.positionSec / playback.durationSec * 100)}%`);
+      progress.setAttribute("role", "img");
+      progress.setAttribute("viewBox", "0 0 100 10");
+      const path = wavePath(100, 5, 1.6, 6);
+      const track = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      track.setAttribute("d", path);
+      track.setAttribute("class", "episode-progress-track");
+      const played = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      played.setAttribute("d", path);
+      played.setAttribute("pathLength", "100");
+      played.setAttribute("stroke-dasharray", `${percentage} 100`);
+      played.setAttribute("class", "episode-progress-played");
+      progress.append(track, played);
       button.append(progress);
     }
     return button;

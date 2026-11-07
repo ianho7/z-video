@@ -3,7 +3,8 @@
 - 改造剧集 / 电影详情头部，接入已有动态色调、继续播放和从头播放状态；长简介默认显示三行并可展开，缺失简介时提示补充 NFO / 海报。
 - 剧集页按季切换，显示海报位、集号、名称、当前媒体的已看状态和已有播放进度。电影显示文件大小、修改时间、来源与播放进度；来源离线时显示提示并禁用播放。
 - 返回后恢复打开详情前的媒体卡焦点；保留 `#media-detail` 和现有交互入口。未修改 IPC、preload 或 DTO。
-- `npm run typecheck`：通过。`git diff --check`：通过。
-- `npm test`：build 阶段通过；后续测试因当前环境无法下载 Electron 二进制而失败，旧 NAS 网络 fixture 也受限。本 ticket 的窗口 smoke 断言已补充，`test:window` 与 `test:local-library-app` 留给集成者串行执行。
-- Windows 实机截图：待集成验收；macOS 未验收。
-- DTO 当前不含逐集时长、逐集观看历史或剧集截图地址；详情页只显示可由现有 DTO 证明的当前媒体进度，并以海报引用填充剧集缩略图。
+- 简介是否可展开按实际渲染高度判断，超过三行时折叠；评分与已看标记使用饼干 SVG，当前集已有进度时显示波浪线。
+- 片库每次后续列表请求都会显示加载骨架。UI smoke 覆盖短简介换行、评分徽章和非首次列表加载。
+- `npm run typecheck`：通过。`npm test`：69/69 通过。`npm run test:local-library-app`：通过。`git diff --check`：通过。
+- Windows 界面截图沿用 `evidence/windows-fixture/` 中集成验收截图；macOS 未验收。
+- DTO 当前不含逐集时长、逐集观看历史或剧集截图地址；详情仍只能依据当前媒体 playback 渲染已看标记和进度，不展示无法证明的逐集时长/完整观看状态，并以海报引用填充剧集缩略图。

@@ -56,6 +56,9 @@ button:disabled { cursor: wait; opacity: .55; }
 .detail-copy h2 { margin: 12px 0 0; overflow-wrap: anywhere; font-size: clamp(38px, 4.2vw, 56px); font-weight: 900; line-height: 1.05; }
 .detail-meta { display: flex; flex-wrap: wrap; gap: 7px; margin: 0; color: var(--text-muted); font-size: 13px; font-weight: 800; }
 .detail-meta::first-letter { color: var(--tone-container, var(--lavender)); }
+.detail-rating-badge { position: relative; display: grid; width: 48px; height: 48px; place-items: center; color: var(--warning-on); font: 900 14px Nunito, sans-serif; }
+.detail-rating-badge svg { position: absolute; inset: 0; width: 100%; height: 100%; fill: var(--warning); }
+.detail-rating-badge span { position: relative; }
 .detail-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 24px 0 12px; }
 .detail-actions .primary-button, .detail-actions .secondary-button { min-height: 50px; padding-inline: 23px; border: 0; border-radius: var(--r-pill); font-weight: 900; }
 .detail-actions .primary-button { color: var(--tone-on, var(--lavender-on)); background: var(--tone-container, var(--lavender)); }
@@ -85,9 +88,15 @@ button:disabled { cursor: wait; opacity: .55; }
 .episode-copy { display: grid; gap: 5px; min-width: 0; }
 .episode-title { overflow: hidden; color: var(--text); font-size: 15px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
 .episode-duration { color: var(--text-muted); font-size: 12px; }
-.episode-watched-mark { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 40% 60% 45% 55%; color: var(--mint-on); background: var(--mint); font-size: 17px; font-weight: 900; }
+.episode-watched-mark { width: 32px; height: 32px; display: grid; place-items: center; }
+.episode-watched-mark svg { width: 100%; height: 100%; }
+.episode-watched-biscuit { fill: var(--mint); }
+.episode-watched-check { fill: none; stroke: var(--mint-on); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
 .episode-row:not(.watched) .episode-watched-mark { visibility: hidden; }
-.episode-progress { position: absolute; right: 18px; bottom: 0; left: 18px; height: 3px; background: linear-gradient(90deg, var(--tone-container, var(--lavender)) var(--progress, 0%), #ffffff22 var(--progress, 0%)); }
+.episode-progress { position: absolute; right: 18px; bottom: 0; left: 18px; width: calc(100% - 36px); height: 10px; overflow: visible; pointer-events: none; }
+.episode-progress-track, .episode-progress-played { fill: none; stroke-width: 2.4; stroke-linecap: round; }
+.episode-progress-track { stroke: #ffffff38; }
+.episode-progress-played { stroke: var(--tone-container, var(--lavender)); }
 .detail-file-info { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 12px 0 0; }
 .detail-file-info > div { min-width: 0; padding: 16px 18px; border-radius: var(--r-card); background: var(--surface); }
 .detail-file-info dt { color: var(--text-muted); font-size: 12px; }

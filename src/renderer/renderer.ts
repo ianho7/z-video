@@ -6,7 +6,7 @@ import { renderSources } from "./views/sources.js";
 import { episodeRows, renderMovieFileInfo, renderSeasonTabs } from "./views/detail.js";
 import { renderTrackOptions } from "./views/player.js";
 import { renderContinueCards } from "./views/home.js";
-import { wavePath } from "./shapes.js";
+import { biscuitPath, wavePath } from "./shapes.js";
 import type {
   LocalArtworkReference,
   LocalContinueWatchingItem,
@@ -737,7 +737,7 @@ async function loadLibrary(): Promise<boolean> {
   }
   const epoch = ++requestEpoch;
   const query = { ...currentQuery };
-  if (libraryGrid && libraryEmpty && activePage === undefined) {
+  if (libraryGrid && libraryEmpty) {
     libraryEmpty.hidden = true;
     libraryGrid.setAttribute("aria-busy", "true");
     libraryGrid.replaceChildren(...Array.from({ length: 8 }, () => {
@@ -764,7 +764,11 @@ async function loadLibrary(): Promise<boolean> {
     return true;
   } catch (error) {
     if (epoch === requestEpoch) {
-      if (state?.status === "error") return false;
+      if (state?.status === "error") {
+        libraryGrid?.removeAttribute("aria-busy");
+        libraryGrid?.replaceChildren();
+        return false;
+      }
       setMessage(error instanceof Error ? error.message : "本地片库加载失败。", true);
       if (libraryGrid) { libraryGrid.removeAttribute("aria-busy"); libraryGrid.replaceChildren(); }
       if (libraryEmpty) libraryEmpty.hidden = false;
@@ -840,19 +844,46 @@ function renderDetail(detailValue: LocalMediaDetail): void {
   if (playerCurrentTitle) playerCurrentTitle.textContent = activePlaybackTitle;
   if (detailTitle) detailTitle.textContent = detailValue.collectionTitle && detailValue.collectionKind === "show" ? detailValue.collectionTitle : item.title;
   if (detailMeta) {
-    const parts = [kindLabel(item.kind)];
-    if (item.year !== undefined) parts.push(String(item.year));
-    if (item.rating !== undefined) parts.push(`★ ${item.rating.toFixed(1)}`);
-    if (item.seasonNumber !== undefined && item.episodeNumber !== undefined) parts.push(`S${String(item.seasonNumber).padStart(2, "0")}E${String(item.episodeNumber).padStart(2, "0")}`);
-    detailMeta.textContent = parts.join(" · ");
+    const parts: HTMLElement[] = [];
+    for (const value of [kindLabel(item.kind), ...(item.year === undefined ? [] : [String(item.year)]), ...(item.seasonNumber !== undefined && item.episodeNumber !== undefined ? [`S${String(item.seasonNumber).padStart(2, "0")}E${String(item.episodeNumber).padStart(2, "0")}`] : [])]) {
+      const part = document.createElement("span");
+      part.textContent = value;
+      parts.push(part);
+    }
+    if (item.rating !== undefined) {
+      const score = item.rating.toFixed(1);
+      const badge = document.createElement("span");
+      badge.className = "detail-rating-badge";
+      badge.setAttribute("role", "img");
+      badge.setAttribute("aria-label", `评分 ${score}`);
+      const shape = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      shape.setAttribute("viewBox", "0 0 96 96");
+      shape.setAttribute("aria-hidden", "true");
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", biscuitPath(42, 6, 8));
+      shape.append(path);
+      const value = document.createElement("span");
+      value.textContent = score;
+      badge.append(shape, value);
+      parts.push(badge);
+    }
+    detailMeta.replaceChildren(...parts);
   }
   const plot = item.plot?.trim() ?? "";
-  if (detailPlot) detailPlot.textContent = plot;
+  if (detailPlotSection) detailPlotSection.hidden = !plot;
+  let plotNeedsDisclosure = false;
+  if (detailPlot) {
+    detailPlot.textContent = plot;
+    detailPlot.classList.remove("collapsed");
+    if (plot) {
+      const lineHeight = Number.parseFloat(getComputedStyle(detailPlot).lineHeight);
+      plotNeedsDisclosure = Number.isFinite(lineHeight) && detailPlot.scrollHeight > lineHeight * 3 + 1;
+    }
+    detailPlot.classList.toggle("collapsed", plotNeedsDisclosure);
+  }
   if (detailPlotSection) {
-    detailPlotSection.hidden = !plot;
-    detailPlot?.classList.toggle("collapsed", plot.length > 180);
     if (detailPlotToggle) {
-      detailPlotToggle.hidden = plot.length <= 180;
+      detailPlotToggle.hidden = !plotNeedsDisclosure;
       detailPlotToggle.setAttribute("aria-expanded", "false");
       const label = detailPlotToggle.querySelector("span");
       if (label) label.textContent = "展开";

@@ -2,14 +2,23 @@ import assert from "node:assert/strict";
 import { copyFile, mkdtemp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { app, BrowserWindow, dialog } from "electron";
+import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import { IPC_CHANNELS } from "../src/shared/ipc-channels";
 
 const LONG_TITLE = "Owned UX Audit Feature Film 2026 — Long Detail Title";
-const LONG_PLOT = "这是用于本地片库窗口验收的自有长剧情素材。它故意包含多行文字，验证详情页在长标题和长剧情下仍然把播放操作放在首屏，并允许用户展开或收起剧情简介。第二段继续描述一个不应遮挡播放按钮的本地媒体故事，内容只服务于隔离测试，不代表真实用户片名或路径。".repeat(3);
+const LONG_PLOT = "海边小城的旧电影院迎来新经理，他计划修复影厅并重新放映。".repeat(6);
 const INDEX_FILE_COUNT = 8_000;
 const APP_TIMEOUT_MS = 100_000;
 let appDeadline = 0;
+let delayNextLibraryList = false;
+const originalIpcHandle = ipcMain.handle.bind(ipcMain);
+ipcMain.handle = (channel, listener) => originalIpcHandle(channel, async (event, ...args) => {
+  if (channel === IPC_CHANNELS.localLibraryList && delayNextLibraryList) {
+    delayNextLibraryList = false;
+    await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+  return listener(event, ...args);
+});
 
 async function createFixture(profile: string): Promise<string> {
   const root = join(profile, "owned-fixture");
@@ -145,6 +154,18 @@ async function run(): Promise<void> {
       35_000,
     );
 
+    delayNextLibraryList = true;
+    await evaluate(window, "document.querySelector('#library-filter-buttons [data-filter=movie]')?.click()");
+    const loading = await waitFor(
+      "skeleton during a later library request",
+      () => evaluate(window, "({ busy: document.querySelector('#library-grid')?.getAttribute('aria-busy'), skeletons: document.querySelectorAll('#library-grid .media-skeleton').length, emptyHidden: document.querySelector('#library-empty')?.hidden })"),
+      (value) => value.busy === "true" && value.skeletons === 8 && value.emptyHidden === true,
+    );
+    assert.equal(loading.skeletons, 8, "subsequent list requests show loading skeleton cards");
+    await waitFor("movie list after skeleton", () => evaluate(window, "document.querySelector('#library-grid')?.getAttribute('aria-busy') || ''"), (value) => value === "");
+    await evaluate(window, "document.querySelector('#library-filter-buttons [data-filter=all]')?.click()");
+    await waitFor("all media after skeleton", () => evaluate(window, "document.querySelector('#library-grid')?.getAttribute('aria-busy') || ''"), (value) => value === "");
+
     await evaluate(window, "document.querySelector('[data-nav=all]')?.click()");
     await waitFor("visible all-media page", () => evaluate(window, "document.querySelector('#collection-section')?.hidden"), (hidden) => hidden === false);
     await waitFor("all navigation active", () => evaluate(window, "document.querySelector('[data-nav=all]')?.getAttribute('aria-current')"), (value) => value === "page");
@@ -208,16 +229,18 @@ async function run(): Promise<void> {
 
     const detail = await waitFor(
       "long detail view",
-      () => evaluate(window, "(() => { const button = document.querySelector('#media-detail-open')?.getBoundingClientRect(); const plot = document.querySelector('#media-detail-plot'); const toggle = document.querySelector('#media-detail-plot-toggle'); return { hidden: document.querySelector('#media-detail')?.hidden, title: document.querySelector('#media-detail-title')?.textContent || '', meta: document.querySelector('#media-detail-meta')?.textContent || '', plot: plot?.textContent || '', plotCollapsed: plot?.classList.contains('collapsed'), plotExpanded: toggle?.getAttribute('aria-expanded'), movieInfo: document.querySelector('#detail-file-info')?.textContent || '', episodesHidden: document.querySelector('#detail-episodes-section')?.hidden, button: button ? { left: button.left, right: button.right, top: button.top, bottom: button.bottom } : undefined, viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight } }; })()"),
+      () => evaluate(window, "(() => { const button = document.querySelector('#media-detail-open')?.getBoundingClientRect(); const plot = document.querySelector('#media-detail-plot'); const toggle = document.querySelector('#media-detail-plot-toggle'); const rating = document.querySelector('.detail-rating-badge'); const style = plot ? getComputedStyle(plot) : undefined; return { hidden: document.querySelector('#media-detail')?.hidden, title: document.querySelector('#media-detail-title')?.textContent || '', meta: document.querySelector('#media-detail-meta')?.textContent || '', ratingLabel: rating?.getAttribute('aria-label') || '', ratingShape: rating?.querySelector('path')?.getAttribute('d') || '', plot: plot?.textContent || '', plotCollapsed: plot?.classList.contains('collapsed'), plotMeasure: plot && style ? { width: plot.clientWidth, scrollHeight: plot.scrollHeight, lineHeight: style.lineHeight, display: style.display } : undefined, toggleHidden: toggle?.hidden, plotExpanded: toggle?.getAttribute('aria-expanded'), movieInfo: document.querySelector('#detail-file-info')?.textContent || '', episodesHidden: document.querySelector('#detail-episodes-section')?.hidden, button: button ? { left: button.left, right: button.right, top: button.top, bottom: button.bottom } : undefined, viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight } }; })()"),
       (value) => value.hidden === false && value.title === LONG_TITLE && value.plot.length >= LONG_PLOT.length && Boolean(value.button),
     );
     await capture("movie-detail");
     assert.equal(detail.title, LONG_TITLE);
     assert.equal(detail.plot, LONG_PLOT);
-    assert.equal(detail.plotCollapsed, true, "long synopsis starts collapsed to three lines");
+    assert.equal(detail.plotCollapsed, true, `synopsis starts collapsed to three visual lines: ${JSON.stringify(detail.plotMeasure)}`);
+    assert.equal(detail.toggleHidden, false, "a short synopsis spanning four visual lines can be expanded");
     assert.equal(detail.plotExpanded, "false");
     assert.match(detail.meta, /2026/);
-    assert.match(detail.meta, /8\.7/);
+    assert.equal(detail.ratingLabel, "评分 8.7");
+    assert.ok(detail.ratingShape.length > 0, "rating is rendered on a biscuit shape");
     assert.match(detail.movieInfo, /owned-fixture/i);
     assert.equal(detail.episodesHidden, true, "movies do not show an episode list");
     assert.ok(detail.button.left >= 0 && detail.button.right <= detail.viewport.width && detail.button.top >= 0 && detail.button.bottom <= detail.viewport.height);
