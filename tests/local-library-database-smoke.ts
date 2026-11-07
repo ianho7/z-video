@@ -14,6 +14,15 @@ async function run(): Promise<void> {
   await mkdir(fixtureRoot, { recursive: true });
   const moviePath = join(fixtureRoot, "Owned Movie 2026.mkv");
   await writeFile(moviePath, Buffer.from("owned local fixture; not a playable sample"));
+  const rootScanRoot = join(profile, "root-scan-fixture");
+  await mkdir(rootScanRoot, { recursive: true });
+  const rootScanMoviePath = join(rootScanRoot, "Root Scan Movie.mkv");
+  await writeFile(rootScanMoviePath, Buffer.from("root scan fixture"));
+  await writeFile(join(rootScanRoot, "Root Scan Movie.nfo"), `<movie>
+  <title>Root Scan Movie Title</title>
+  <year>2026</year>
+  <rating>8.7</rating>
+</movie>`);
   const metadataRoot = join(profile, "metadata");
   const cancelledRoot = join(profile, "cancelled-fixture");
   const movieDirectory = join(metadataRoot, "Metadata Movie");
@@ -87,6 +96,19 @@ async function run(): Promise<void> {
     assert.equal(page.items.length, 1);
     assert.equal(Object.prototype.hasOwnProperty.call(page.items[0], "path"), false);
     assert.equal(await database.resolveMediaPath(imported.item.mediaId), moviePath);
+
+    const rootScan = await database.scanFolder(rootScanRoot);
+    assert.equal(rootScan.status, "completed");
+    assert.equal(rootScan.scannedFiles, 1);
+    assert.equal(rootScan.importedFiles, 1);
+    assert.equal(rootScan.updatedFiles, 0);
+    assert.equal(rootScan.warningCount, 0);
+    assert.deepEqual(rootScan.warnings, []);
+    const rootScanned = await database.list({ page: 1, pageSize: 50, query: "Root Scan Movie Title" });
+    assert.equal(rootScanned.totalCount, 1);
+    assert.equal(rootScanned.items[0]?.title, "Root Scan Movie Title");
+    assert.equal(rootScanned.items[0]?.year, 2026);
+    await database.removeSource(rootScan.sourceId);
 
     const scan = await database.scanFolder(metadataRoot);
     assert.equal(scan.status, "completed");

@@ -697,7 +697,7 @@ async function discoverMedia(
   const show = Boolean(showContext) || nfo?.kind === "tvshow" || nfo?.kind === "episode";
   const kind = collectionKind(nfo?.kind, episode, show);
   const collectionDirectory = showContext?.directory ?? dirname(filePath);
-  const collectionRelativePath = makeRelative(rootPath, collectionDirectory) || ".";
+  const collectionRelativePath = collectionDirectory === rootPath ? "." : makeRelative(rootPath, collectionDirectory);
   const collectionTitle = showContext?.metadata?.title ?? nfo?.showTitle ?? (show ? basename(collectionDirectory) : metadataTitle(nfo, baseName));
   const collectionNfo = showContext?.metadata ?? nfo;
   const displayTitle = episode ? metadataTitle(nfo, baseName) : metadataTitle(nfo, collectionTitle);
