@@ -116,3 +116,15 @@ button:disabled { cursor: wait; opacity: .55; }
   .player-speed-control select { min-width: 70px; padding-right: 5px; padding-left: 5px; }
   #player-volume { width: 72px; }
 }
+
+@media (max-height: 620px) {
+  .app-header { padding-top: 8px; padding-bottom: 8px; }
+  .library-content { padding-top: 8px; padding-bottom: 12px; }
+  .content-heading { margin-bottom: 4px; }
+  .status { min-height: 16px; margin-bottom: 4px; }
+  .library-toolbar { min-height: 30px; }
+  .continue-section { margin: 0 0 4px; }
+  .section-heading { margin-bottom: 4px; }
+  .continue-row { padding-bottom: 0; }
+  .continue-image { height: 52px; }
+}

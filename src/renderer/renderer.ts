@@ -891,8 +891,10 @@ async function runScan(operation: () => Promise<LocalScanResult>): Promise<void>
     await loadContinueWatching();
   } catch (error) {
     scanProgress = undefined;
+    if (!isDetailOrPlayerVisible()) requestEpoch += 1;
     scanCommit = scanRenderedCommit;
     scanRefreshQueued = false;
+    if (scanStatus) scanStatus.textContent = "扫描失败";
     setMessage(error instanceof Error ? error.message : "扫描失败。", true);
   } finally {
     sourceBusy = false;
