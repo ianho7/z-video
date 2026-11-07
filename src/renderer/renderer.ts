@@ -6,6 +6,7 @@ import { renderSources } from "./views/sources.js";
 import { episodeRows } from "./views/detail.js";
 import { renderTrackOptions } from "./views/player.js";
 import { renderContinueCards } from "./views/home.js";
+import { wavePath } from "./shapes.js";
 import type {
   LocalArtworkReference,
   LocalContinueWatchingItem,
@@ -466,14 +467,20 @@ function renderHomeHero(): void {
   const title = hero.querySelector<HTMLElement>("#hero-title");
   const label = hero.querySelector<HTMLElement>("#hero-label");
   const meta = hero.querySelector<HTMLElement>("#hero-meta");
-  const progress = hero.querySelector<HTMLElement>("#hero-progress-fill");
+  const progress = hero.querySelector<SVGPathElement>("#hero-progress-fill");
+  const track = hero.querySelector<SVGPathElement>("#hero-progress-track");
+  const episode = hero.querySelector<HTMLElement>("#hero-episode");
   const restart = hero.querySelector<HTMLButtonElement>("#hero-restart");
   const play = hero.querySelector<HTMLButtonElement>("#hero-play");
   const background = hero.querySelector<HTMLElement>("#hero-artwork");
   if (title) title.textContent = item.title;
   if (label) label.textContent = entry ? "继续观看" : "最近添加";
-  if (meta) meta.textContent = [item.seasonNumber !== undefined ? `S${item.seasonNumber}` : "", item.episodeNumber !== undefined ? `E${String(item.episodeNumber).padStart(2, "0")}` : "", entry ? `已观看 ${formatTime(entry.playback.positionSec)}` : kindLabel(item.kind)].filter(Boolean).join(" · ");
-  if (progress) progress.style.width = entry?.playback.durationSec ? `${Math.min(100, entry.playback.positionSec / entry.playback.durationSec * 100)}%` : "0%";
+  if (episode) episode.textContent = item.episodeNumber !== undefined ? `E${String(item.episodeNumber).padStart(2, "0")}` : "";
+  if (meta) meta.textContent = [item.seasonNumber !== undefined ? `第 ${item.seasonNumber} 季` : kindLabel(item.kind), entry ? `已观看 ${formatTime(entry.playback.positionSec)}` : ""].filter(Boolean).join(" · ");
+  const percent = entry?.playback.durationSec ? Math.min(100, entry.playback.positionSec / entry.playback.durationSec * 100) : 0;
+  track?.setAttribute("d", wavePath(360, 9, 4, 6));
+  progress?.setAttribute("d", wavePath(360, 9, 4, 6));
+  progress?.setAttribute("stroke-dasharray", `${percent} 100`);
   if (restart) { restart.hidden = !entry; restart.disabled = !item.available; }
   if (play) { play.textContent = entry ? "继续观看" : "播放"; play.disabled = !item.available; }
   applyTone(hero, coverData(item).tone);
