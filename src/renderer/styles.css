@@ -197,3 +197,4 @@ button:disabled { cursor: wait; opacity: .55; }
 .continue-image { width: 100%; height: auto; aspect-ratio: 2 / 3; border-radius: var(--r-poster); }
 .continue-copy { gap: 6px; }
 .shelf-row .media-card { flex-basis: 160px; }
+@media (max-width: 980px) { .player-controls { padding-block: 16px; } }

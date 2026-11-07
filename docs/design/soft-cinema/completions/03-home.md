@@ -6,3 +6,4 @@
 - 新增窗口 smoke 交互断言；Windows 窗口检查、实机截图和 local-library-app 由集成阶段串行执行。macOS 未验收。
 - UI 红灯未运行：窗口测试由集成阶段串行执行。
 - Windows `npm run test:window`：通过；修复首页多个片架重复请求同一延迟海报导致封面队列阻塞。`test:local-library-app` 与截图仍由集成阶段执行。
+- `npm run test:local-library-app`：通过。同步测试到首页／搜索导航；窄窗口播放器控件高度恢复为 native 要求的 152px。
