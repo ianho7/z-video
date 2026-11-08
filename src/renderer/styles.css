@@ -240,6 +240,8 @@ button:disabled { cursor: wait; opacity: .55; }
 .media-card-button { gap: 8px; }
 .media-card-title { font-size: 14px; font-weight: 800; }
 .media-card-meta { font: 800 12px Nunito, "Microsoft YaHei UI", sans-serif; }
+.media-card-progress { overflow: hidden; color: var(--tone-container, var(--lavender)); font: 700 11px Nunito, "Microsoft YaHei UI", sans-serif; text-overflow: ellipsis; white-space: nowrap; }
+.media-card.unavailable .media-card-progress { color: var(--warning); }
 .media-card.unavailable { opacity: .6; }
 .offline-badge { position: absolute; top: 10px; left: 10px; padding: 5px 10px; border-radius: var(--r-pill); color: var(--warning-on); background: var(--warning); font: 900 11px "Microsoft YaHei UI", sans-serif; }
 .library-pagination { justify-content: center; gap: 8px; margin: 24px 0 12px; }

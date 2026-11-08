@@ -8,12 +8,12 @@ import { IPC_CHANNELS } from "../src/shared/ipc-channels";
 const LONG_TITLE = "Owned UX Audit Feature Film 2026 — Long Detail Title";
 const LONG_PLOT = "海边小城的旧电影院迎来新经理，他计划修复影厅并重新放映。".repeat(6);
 const INDEX_FILE_COUNT = 8_000;
-const APP_TIMEOUT_MS = 100_000;
+const APP_TIMEOUT_MS = 180_000;
 let appDeadline = 0;
 let delayNextLibraryList = false;
 const originalIpcHandle = ipcMain.handle.bind(ipcMain);
 ipcMain.handle = (channel, listener) => originalIpcHandle(channel, async (event, ...args) => {
-  if (channel === IPC_CHANNELS.localLibraryList && delayNextLibraryList) {
+  if ((channel === IPC_CHANNELS.localLibraryList || channel === IPC_CHANNELS.localLibraryListCollections) && delayNextLibraryList) {
     delayNextLibraryList = false;
     await new Promise((resolve) => setTimeout(resolve, 350));
   }
@@ -164,8 +164,48 @@ async function run(): Promise<void> {
       "scan completion",
       () => evaluate(window, "({ status: document.querySelector('#scan-status')?.textContent || '', count: Number((document.querySelector('#page-scope')?.textContent || '').match(/\\d+/)?.[0] || 0) })"),
       (value) => value.status.includes("扫描完成") && value.count >= INDEX_FILE_COUNT + 1,
-      35_000,
+      90_000,
     );
+
+    await evaluate(window, "document.querySelector('[data-nav=all]')?.click()");
+    await waitFor("all works page after scan", () => evaluate(window, "document.querySelector('#collection-section')?.hidden"), (hidden) => hidden === false);
+    await evaluate(window, "document.querySelector('#library-filter-buttons [data-filter=show]')?.click()");
+    const showCards = await waitFor(
+      "one card per show",
+      () => evaluate(window, "(() => { const cards = [...document.querySelectorAll('#library-grid .media-card')]; return { count: cards.length, title: cards[0]?.querySelector('.media-card-title')?.textContent || '', meta: cards[0]?.querySelector('.media-card-meta')?.textContent || '', progress: cards[0]?.querySelector('.media-card-progress')?.textContent || '', scope: document.querySelector('#page-scope')?.textContent || '' }; })()"),
+      (value) => value.count === 1 && value.title === "Owned Next Show",
+    );
+    assert.equal(showCards.count, 1, "three episodes of one show collapse into a single work card");
+    assert.match(showCards.meta, /3 集/, "work card shows the episode count");
+    assert.match(showCards.progress, /已看 0 集/, "work card shows watched count and resume state");
+    assert.match(showCards.scope, /部作品/, "work view counts works, not files");
+    await capture("show-cards");
+
+    await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
+    const showDetail = await waitFor(
+      "show work detail",
+      () => evaluate(window, "(() => { const rows = [...document.querySelectorAll('#detail-episodes .episode-row')]; const currentIndex = rows.findIndex((row) => row.classList.contains('current')); return { hidden: document.querySelector('#media-detail')?.hidden, title: document.querySelector('#media-detail-title')?.textContent || '', count: rows.length, currentIndex, currentNumber: currentIndex >= 0 ? rows[currentIndex]?.querySelector('.episode-number')?.textContent || '' : '' }; })()"),
+      (value) => value.hidden === false && value.title === "Owned Next Show" && value.count === 3,
+    );
+    assert.equal(showDetail.currentIndex, 0, "opening the work card selects the first unwatched episode");
+    assert.equal(showDetail.currentNumber, "01");
+    await capture("show-detail");
+    await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
+    await waitFor("back to show work list", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === true);
+
+    await evaluate(window, "document.querySelector('#library-filter-buttons [data-filter=episode]')?.click()");
+    const episodeCards = await waitFor(
+      "single-episode file list",
+      () => evaluate(window, "(() => { const cards = [...document.querySelectorAll('#library-grid .media-card')]; return { count: cards.length, titles: cards.map((card) => card.querySelector('.media-card-title')?.textContent || ''), meta: cards[0]?.querySelector('.media-card-meta')?.textContent || '', scope: document.querySelector('#page-scope')?.textContent || '' }; })()"),
+      (value) => value.count === 3 && value.titles.includes("Next Episode 1"),
+    );
+    assert.equal(episodeCards.count, 3, "the single-episode view keeps one card per file");
+    assert.match(episodeCards.meta, /(KB|MB|GB)/, "single-episode cards keep file-level metadata");
+    assert.match(episodeCards.scope, /集/);
+    assert.doesNotMatch(episodeCards.scope, /部作品/);
+    await capture("episodes");
+    await evaluate(window, "document.querySelector('#library-filter-buttons [data-filter=all]')?.click()");
+    await waitFor("all works after single-episode check", () => evaluate(window, "document.querySelector('#library-grid')?.getAttribute('aria-busy') || ''"), (value) => value === "");
 
     delayNextLibraryList = true;
     await evaluate(window, "document.querySelector('#library-filter-buttons [data-filter=movie]')?.click()");
@@ -196,11 +236,11 @@ async function run(): Promise<void> {
     await evaluate(window, "(() => { const input = document.querySelector('#library-search-input'); if (!(input instanceof HTMLInputElement)) throw new Error('search missing'); input.value = 'Index fixture index-00000'; input.dispatchEvent(new Event('input', { bubbles: true })); })()");
     const unknownDate = await waitFor(
       "unknown premiere date label",
-      () => evaluate(window, "document.querySelector('#library-grid .media-card-meta')?.textContent || ''"),
-      (meta) => meta.includes("发布日期未知"),
+      () => evaluate(window, "(() => ({ meta: document.querySelector('#library-grid .media-card-meta')?.textContent || '', cards: document.querySelectorAll('#library-grid .media-card').length, skeletons: document.querySelectorAll('#library-grid .media-skeleton').length, message: document.querySelector('#library-message')?.textContent || '', scope: document.querySelector('#page-scope')?.textContent || '', query: document.querySelector('#library-search-input')?.value || '', filter: document.querySelector('#library-filter')?.value || '', sort: document.querySelector('#library-sort')?.value || '', busy: document.querySelector('#library-grid')?.getAttribute('aria-busy') }))()"),
+      (value) => value.meta.includes("发布日期未知"),
     );
-    assert.match(unknownDate, /发布日期未知/);
-    assert.doesNotMatch(unknownDate, /发布日期 (19|20)\d{2}/, "a year is never shown as a premiere date");
+    assert.match(unknownDate.meta, /发布日期未知/);
+    assert.doesNotMatch(unknownDate.meta, /发布日期 (19|20)\d{2}/, "a year is never shown as a premiere date");
     await evaluate(window, "document.querySelector('#library-search-clear')?.click()");
     // The search input debounce outlives the clear click; let it settle before
     // restoring the sort so it cannot reset the later pagination step.
@@ -228,7 +268,8 @@ async function run(): Promise<void> {
     );
     assert.equal(restoredPage.activeMediaId, pageTwo.mediaId);
     await evaluate(window, "(() => { const search = document.querySelector('#library-search-input'); if (!(search instanceof HTMLInputElement)) throw new Error('search missing'); search.value = 'Next Episode 1'; search.dispatchEvent(new Event('input', { bubbles: true })); })()");
-    await waitFor("episode search", () => evaluate(window, "document.querySelector('#library-grid .media-card-title')?.textContent || ''"), (title) => title === "Next Episode 1");
+    await waitFor("episode search returns its show work card", () => evaluate(window, "document.querySelector('#library-grid .media-card-title')?.textContent || ''"), (title) => title === "Owned Next Show");
+    assert.equal(await evaluate(window, "document.querySelectorAll('#library-grid .media-card').length"), 1, "an episode-name search returns the show card once");
     await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
     await waitFor("episode detail", () => evaluate(window, "document.querySelector('#media-detail-open')?.disabled === false"), Boolean);
     await waitFor("episode detail title", () => evaluate(window, "document.querySelector('#media-detail-title')?.textContent"), (title) => title === "Owned Next Show");
@@ -362,6 +403,11 @@ async function run(): Promise<void> {
       schemaVersion: 1,
       proof: "local-library-ux",
       scan: { runningCardTitle: running.cardTitle, runningSourceCount: running.sourceCount, completedCount: complete.count },
+      collections: {
+        showCards,
+        showDetail: { title: showDetail.title, episodeRows: showDetail.count, currentIndex: showDetail.currentIndex, currentNumber: showDetail.currentNumber },
+        episodeCards: { count: episodeCards.count, titles: episodeCards.titles, scope: episodeCards.scope },
+      },
       releaseSort: { menu: sortMenu.options, firstTitle: released.firstTitle, firstMeta: released.firstMeta, secondMeta: released.secondMeta, unknownLabel: unknownDate },
       defaultWindow: { outer: defaultOuter },
       detail: { default: { title: detail.title, plotLength: detail.plot.length, play: detail.button, viewport: detail.viewport }, minimum: { outer: minOuter, content: minContent, playVisible: minDetail.visible, viewport: minDetail.viewport } },

@@ -15,7 +15,7 @@ export function formatTime(seconds: number): string {
 }
 
 export function kindLabel(kind: LocalMediaItem["kind"]): string {
-  return kind === "movie" ? "电影" : kind === "show" ? "电视剧" : kind === "episode" ? "剧集" : "未分类";
+  return kind === "movie" ? "电影" : kind === "show" ? "剧集" : kind === "episode" ? "单集" : "未分类";
 }
 
 export function formatBytes(bytes: number): string {

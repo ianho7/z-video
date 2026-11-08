@@ -9,6 +9,8 @@ import {
   type LocalImportOutcome,
   type LocalLibraryPage,
   type LocalLibraryQuery,
+  type LocalCollectionPage,
+  type LocalCollectionQuery,
   type LocalMediaDetail,
   type LocalContinueWatchingItem,
   type LocalLibraryState,
@@ -28,6 +30,7 @@ type WorkerCommand =
   | { command: "scan"; rootPath: string }
   | { command: "cancel-scan"; scanId: string }
   | { command: "list"; query: LocalLibraryQuery }
+  | { command: "list-collections"; query: LocalCollectionQuery }
   | { command: "get"; mediaId: string }
   | { command: "get-detail"; mediaId: string }
   | { command: "list-continue-watching" }
@@ -186,6 +189,11 @@ export class LocalLibraryDatabase {
 
   async list(query: LocalLibraryQuery): Promise<LocalLibraryPage> {
     const result = await this.call<{ totalCount: number; items: LocalMediaItem[] }>({ command: "list", query });
+    return { query: { ...query }, page: query.page, pageSize: query.pageSize, ...result };
+  }
+
+  async listCollections(query: LocalCollectionQuery): Promise<LocalCollectionPage> {
+    const result = await this.call<{ totalCount: number; items: LocalCollectionPage["items"] }>({ command: "list-collections", query });
     return { query: { ...query }, page: query.page, pageSize: query.pageSize, ...result };
   }
 
