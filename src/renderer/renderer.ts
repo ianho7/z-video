@@ -13,7 +13,7 @@ window.zVideo.onWindowMaximized((maximized) => {
 });
 import { applyTone, posterTone } from "./tone.js";
 import { escapeHtml, formatTime, kindLabel, formatBytes, artworkKind } from "./views/shared.js";
-import { card, collectionCard } from "./views/all.js";
+import { card, collectionAsMediaItem, collectionCard } from "./views/all.js";
 import { renderSources } from "./views/sources.js";
 import { episodeRows, renderMovieFileInfo, renderSeasonTabs } from "./views/detail.js";
 import { renderTrackOptions } from "./views/player.js";
@@ -717,6 +717,10 @@ function renderHomeHero(): void {
   const item = entry?.item ?? recentItems[0];
   hero.hidden = !homeVisible || !item || detail?.hidden === false;
   if (!item) return;
+  // The poster, tone and title follow the work, never the episode file name.
+  const heroItem: LocalMediaItem = entry
+    ? { ...item, title: entry.collectionTitle, kind: entry.collectionKind }
+    : item;
   const title = hero.querySelector<HTMLElement>("#hero-title");
   const label = hero.querySelector<HTMLElement>("#hero-label");
   const meta = hero.querySelector<HTMLElement>("#hero-meta");
@@ -726,20 +730,26 @@ function renderHomeHero(): void {
   const restart = hero.querySelector<HTMLButtonElement>("#hero-restart");
   const play = hero.querySelector<HTMLButtonElement>("#hero-play");
   const poster = hero.querySelector<HTMLElement>("#hero-poster");
-  if (title) title.textContent = item.title;
-  if (label) label.textContent = entry ? "继续观看" : "最近添加";
-  if (episode) episode.textContent = item.episodeNumber !== undefined ? `E${String(item.episodeNumber).padStart(2, "0")}` : "";
-  if (meta) meta.textContent = [item.seasonNumber !== undefined ? `第 ${item.seasonNumber} 季` : kindLabel(item.kind), entry ? `已观看 ${formatTime(entry.playback.positionSec)}` : ""].filter(Boolean).join(" · ");
+  if (title) title.textContent = heroItem.title;
+  if (label) label.textContent = entry ? "继续观看" : "最近加入";
+  const heroEpisodeNumber = entry?.episodeNumber ?? item.episodeNumber;
+  if (episode) episode.textContent = heroEpisodeNumber !== undefined ? `E${String(heroEpisodeNumber).padStart(2, "0")}` : "";
+  if (meta) {
+    const parts = entry
+      ? [kindLabel(entry.collectionKind), entry.seasonNumber !== undefined ? `第 ${entry.seasonNumber} 季` : "", `已观看 ${formatTime(entry.playback.positionSec)}`]
+      : [kindLabel(item.kind), item.year !== undefined ? String(item.year) : ""];
+    meta.textContent = parts.filter(Boolean).join(" · ");
+  }
   const percent = entry?.playback.durationSec ? Math.min(100, entry.playback.positionSec / entry.playback.durationSec * 100) : 0;
   track?.setAttribute("d", wavePath(360, 9, 4, 6));
   progress?.setAttribute("d", wavePath(360, 9, 4, 6));
   progress?.setAttribute("stroke-dasharray", `${percent} 100`);
   if (restart) { restart.hidden = !entry; restart.disabled = !item.available; }
   if (play) { play.textContent = entry ? "继续观看" : "播放"; play.disabled = !item.available; }
-  applyTone(hero, coverData(item).tone);
+  applyTone(hero, coverData(heroItem).tone);
   if (poster) {
-    poster.className = `hero-poster cover-shape-${coverData(item).shape}`;
-    poster.replaceChildren(generatedCover(item));
+    poster.className = `hero-poster cover-shape-${coverData(heroItem).shape}`;
+    poster.replaceChildren(generatedCover(heroItem));
     poster.dataset.artworkGeneration = String(Number(poster.dataset.artworkGeneration ?? 0) + 1);
     delete poster.dataset.artworkMediaId; delete poster.dataset.artworkKind; delete poster.dataset.artworkLoaded; delete poster.dataset.artworkLoading;
     if (item.artwork?.some((art) => art.kind === "poster")) { poster.dataset.artworkMediaId = item.mediaId; poster.dataset.artworkKind = "poster"; enqueueArtwork(poster, 2); }
@@ -750,15 +760,17 @@ async function loadHomeShelves(): Promise<void> {
   const epoch = ++homeEpoch;
   try {
     const [recent, shows] = await Promise.all([
-      window.zVideo.localLibrary.list({ page: 1, pageSize: 12, sort: "added_desc", filter: "all" }),
-      window.zVideo.localLibrary.list({ page: 1, pageSize: 12, filter: "show" }),
+      window.zVideo.localLibrary.listCollections({ page: 1, pageSize: 12, sort: "added_desc" }),
+      window.zVideo.localLibrary.listCollections({ page: 1, pageSize: 12, filter: "show" }),
     ]);
     if (epoch !== homeEpoch) return;
-    recentItems = recent.page?.items ?? [];
-    for (const [section, selector, items] of [[recentSection, "#recent-row", recentItems], [showsSection, "#shows-row", shows.page?.items ?? []]] as const) {
+    const recentCollections = recent.page?.items ?? [];
+    const showCollections = shows.page?.items ?? [];
+    recentItems = recentCollections.map(collectionAsMediaItem);
+    for (const [section, selector, items] of [[recentSection, "#recent-row", recentCollections], [showsSection, "#shows-row", showCollections]] as const) {
       const row = document.querySelector<HTMLElement>(selector);
       if (!row || !section) continue;
-      row.replaceChildren(...items.map((item) => card(item)));
+      row.replaceChildren(...items.map((item) => collectionCard(item)));
       row.querySelectorAll<HTMLElement>("[data-artwork-media-id]").forEach((element) => enqueueArtwork(element, 1));
       section.hidden = !homeVisible || items.length === 0 || detail?.hidden === false;
     }
@@ -778,7 +790,7 @@ function renderContinue(items: LocalContinueWatchingItem[]): void {
     return;
   }
   continueSection.hidden = false;
-  if (continueScope) continueScope.textContent = `${items.length} 项`;
+  if (continueScope) continueScope.textContent = `${items.length} 部作品`;
   renderContinueCards(items, continueRow, enqueueArtwork);
 }
 

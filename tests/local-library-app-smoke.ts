@@ -124,6 +124,7 @@ async function run(): Promise<void> {
     await evaluate(window, "document.querySelector('[data-window-action=minimize]').click()");
     await waitFor("custom minimize", async () => window.isMinimized(), Boolean);
     window.restore();
+    await waitFor("custom restore after minimize", async () => window.isMinimized(), (minimized) => minimized === false);
 
     const initial = await waitFor(
       "fresh local-library empty state",
@@ -257,10 +258,58 @@ async function run(): Promise<void> {
     await evaluate(window, "document.querySelector('#app-notice-close')?.click()");
     await waitFor("completed notice dismissed", readScanUi, (value) => value.noticeVisible === false);
 
+    await evaluate(window, "document.querySelector('[data-nav=home]')?.click()");
+    const homeShelves = await waitFor(
+      "home shelves use one collection card per work",
+      () => evaluate(window, `(() => {
+        const read = (selector) => [...document.querySelectorAll(selector + ' .media-card')].map((card) => ({
+          title: card.querySelector('.media-card-title')?.textContent || '',
+          meta: card.querySelector('.media-card-meta')?.textContent || '',
+          progress: card.querySelector('.media-card-progress')?.textContent || '',
+        }));
+        return {
+          recentHidden: document.querySelector('#recent-section')?.hidden,
+          showsHidden: document.querySelector('#shows-section')?.hidden,
+          recentHeading: document.querySelector('#recent-section h2')?.textContent || '',
+          recent: read('#recent-row'),
+          shows: read('#shows-row'),
+          continueScope: document.querySelector('#continue-scope')?.textContent || '',
+          sortLabels: [...document.querySelectorAll('#library-sort option')].map((option) => option.textContent || ''),
+        };
+      })()`),
+      (value) => value.recentHidden === false && value.showsHidden === false && value.shows.length === 1 && value.shows[0]?.title === "Owned Next Show",
+    );
+    assert.equal(homeShelves.shows.length, 1, "the three episodes of one show become one home shelf card");
+    assert.match(homeShelves.shows[0]!.meta, /3 集/);
+    assert.doesNotMatch(homeShelves.shows[0]!.meta, /(KB|MB|GB)/, "work cards never show a file size");
+    assert.match(homeShelves.shows[0]!.progress, /已看 0 集/);
+    assert.ok(homeShelves.recent.length > 0 && homeShelves.recent.length <= 12, "the recent shelf stays bounded");
+    assert.doesNotMatch(homeShelves.recent[0]!.meta, /(KB|MB|GB)/, "the recent home shelf uses work cards");
+    assert.ok(homeShelves.recent.every((item: { progress: string }) => item.progress.length > 0), "home shelf work cards expose watched state");
+    assert.equal(homeShelves.recentHeading, "最近加入", "the home shelf is named after the work-level added date");
+    assert.deepEqual(homeShelves.sortLabels.slice(0, 3), ["最近观看", "最近加入", "最近发布"], "sort labels describe work-level ordering");
+    await capture("home-shelves");
+
     await evaluate(window, "document.querySelector('[data-nav=all]')?.click()");
     await waitFor("visible all-media page", () => evaluate(window, "document.querySelector('#collection-section')?.hidden"), (hidden) => hidden === false);
     await waitFor("all navigation active", () => evaluate(window, "document.querySelector('[data-nav=all]')?.getAttribute('aria-current')"), (value) => value === "page");
-    await capture("all");
+    const allWorks = await waitFor(
+      "all view counts works",
+      () => evaluate(window, "(() => { const scope = document.querySelector('#page-scope')?.textContent || ''; return { scope, busy: document.querySelector('#library-grid')?.getAttribute('aria-busy'), count: Number(scope.match(/共 (\\d+) 部作品/)?.[1] || 0) }; })()"),
+      (value) => value.busy === null && value.count > 0,
+    );
+    assert.match(allWorks.scope, /部作品/);
+    await evaluate(window, "document.querySelector('#library-filter-buttons [data-filter=movie]')?.click()");
+    const movieWorks = await waitFor(
+      "movie view counts works",
+      () => evaluate(window, "(() => { const cards = [...document.querySelectorAll('#library-grid .media-card')]; return { scope: document.querySelector('#page-scope')?.textContent || '', busy: document.querySelector('#library-grid')?.getAttribute('aria-busy'), count: Number((document.querySelector('#page-scope')?.textContent || '').match(/共 (\\d+) 部作品/)?.[1] || 0), firstMeta: cards[0]?.querySelector('.media-card-meta')?.textContent || '' }; })()"),
+      (value) => value.busy === null && value.count > 0,
+    );
+    assert.match(movieWorks.scope, /部作品/);
+    assert.match(movieWorks.firstMeta, /电影/);
+    assert.doesNotMatch(movieWorks.firstMeta, /(KB|MB|GB)/, "movie work cards omit file size too");
+    assert.equal(movieWorks.count, allWorks.count - 1, "only the one show work is excluded from the movie work count");
+    await capture("movie-works");
     await evaluate(window, "document.querySelector('#library-filter-buttons [data-filter=show]')?.click()");
     const showCards = await waitFor(
       "one card per show",
@@ -269,6 +318,7 @@ async function run(): Promise<void> {
     );
     assert.equal(showCards.count, 1, "three episodes of one show collapse into a single work card");
     assert.match(showCards.meta, /3 集/, "work card shows the episode count");
+    assert.doesNotMatch(showCards.meta, /(KB|MB|GB)/, "work cards do not show a file size");
     assert.match(showCards.progress, /已看 0 集/, "work card shows watched count and resume state");
     assert.match(showCards.scope, /部作品/, "work view counts works, not files");
     await capture("show-cards");
@@ -309,6 +359,8 @@ async function run(): Promise<void> {
     );
     assert.match(released.firstMeta, /2026-02-14/, "dated work shows its real NFO premiere date");
     assert.match(released.secondMeta, /2025-09-01/, "dated show ranks after the newer movie");
+    const storedSort = await evaluate(window, "window.zVideo.appPreferences.get()");
+    assert.equal(storedSort.sort, "released_desc", "the renderer persists the work-level sort preference through main");
     await evaluate(window, "(() => { const input = document.querySelector('#library-search-input'); if (!(input instanceof HTMLInputElement)) throw new Error('search missing'); input.value = 'Index fixture index-00000'; input.dispatchEvent(new Event('input', { bubbles: true })); })()");
     const unknownDate = await waitFor(
       "unknown premiere date label",
@@ -319,8 +371,16 @@ async function run(): Promise<void> {
     assert.doesNotMatch(unknownDate.meta, /发布日期 (19|20)\d{2}/, "a year is never shown as a premiere date");
     await evaluate(window, "document.querySelector('#library-search-clear')?.click()");
     // The search input debounce outlives the clear click; let it settle before
-    // restoring the sort so it cannot reset the later pagination step.
+    // reloading, so the preference check observes a completed library request.
     await new Promise((resolve) => setTimeout(resolve, 300));
+    window.webContents.reload();
+    const restoredSort = await waitFor(
+      "saved work-level sort preference restored after reload",
+      () => evaluate(window, "({ sort: document.querySelector('#library-sort')?.value || '', busy: document.querySelector('#library-grid')?.getAttribute('aria-busy') })"),
+      (value) => value.sort === "released_desc" && value.busy === null,
+      20_000,
+    );
+    assert.equal(restoredSort.sort, "released_desc", "a saved sort preference still wins after a fresh renderer load");
     await evaluate(window, "(() => { const select = document.querySelector('#library-sort'); select.value = 'recent'; select.dispatchEvent(new Event('change', { bubbles: true })); })()");
     await waitFor("sort restored", () => evaluate(window, "document.querySelector('#library-sort')?.value"), (value) => value === "recent");
     await waitFor("library settled after sort restore", () => evaluate(window, "document.querySelector('#library-grid')?.getAttribute('aria-busy')"), (value) => value === null);
@@ -349,6 +409,9 @@ async function run(): Promise<void> {
     await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
     await waitFor("episode detail", () => evaluate(window, "document.querySelector('#media-detail-open')?.disabled === false"), Boolean);
     await waitFor("episode detail title", () => evaluate(window, "document.querySelector('#media-detail-title')?.textContent"), (title) => title === "Owned Next Show");
+    const showEpisodeIds = await evaluate(window, "[...document.querySelectorAll('#detail-episodes .episode-row')].map((row) => row.dataset.mediaId || '')");
+    assert.equal(showEpisodeIds.length, 3, "the show detail lists three episodes");
+    assert.equal(showEpisodeIds.every(Boolean), true);
     await capture("episode-detail");
     await evaluate(window, "document.querySelector('#media-detail-open')?.click()");
     await waitFor("episode playback", () => evaluate(window, "document.querySelector('#player-toggle-button')?.disabled === false"), Boolean);
@@ -357,6 +420,8 @@ async function run(): Promise<void> {
     await waitFor("player settings visible", () => evaluate(window, "document.querySelector('#player-settings')?.hidden === false"), Boolean);
     await capture("player-menu");
     await evaluate(window, "document.querySelector('#player-settings-close')?.click()");
+    await evaluate(window, "window.zVideo.localPlayback.command({ type: 'seek', positionSec: 1 })");
+    await new Promise((resolve) => setTimeout(resolve, 400));
     await evaluate(window, "window.zVideo.localPlayback.command({ type: 'pause' })");
     await waitFor("episode paused", () => evaluate(window, "document.querySelector('#player-toggle-button')?.textContent"), (text) => text === "播放");
     window.webContents.send("local-playback:event", { type: "state", state: "ended" });
@@ -369,8 +434,19 @@ async function run(): Promise<void> {
     window.webContents.send("local-playback:event", { type: "state", state: "ended" });
     await evaluate(window, "document.querySelector('#player-play-next')?.click()");
     await waitFor("next episode opened", () => evaluate(window, "document.querySelector('#player-current-title')?.textContent"), (title) => title === "Next Episode 2");
+    await waitFor("next episode ready", () => evaluate(window, "({ title: document.querySelector('#player-current-title')?.textContent || '', ready: document.querySelector('#player-toggle-button')?.disabled === false })"), (value) => value.title === "Next Episode 2" && value.ready);
+    await evaluate(window, "window.zVideo.localPlayback.command({ type: 'seek', positionSec: 1 })");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await evaluate(window, "window.zVideo.localPlayback.command({ type: 'pause' })");
+    await new Promise((resolve) => setTimeout(resolve, 250));
     await evaluate(window, "document.querySelector('#player-close-button')?.click()");
     await waitFor("player closed", () => evaluate(window, "document.querySelector('[data-view=player]')?.hidden"), Boolean);
+    const episodeProgress = await waitFor(
+      "both show episodes keep in-progress playback",
+      () => evaluate(window, `Promise.all(${JSON.stringify(showEpisodeIds.slice(0, 2))}.map((mediaId) => window.zVideo.localLibrary.get(mediaId))).then((results) => results.map((result) => result.detail?.playback?.positionSec ?? 0))`),
+      (positions: number[]) => positions.every((position) => position > 0),
+    );
+    assert.equal(episodeProgress.length, 2, "two episodes of the same work hold progress before the dedupe check");
 
     await evaluate(window, "(() => { const search = document.querySelector('#library-search-input'); if (!(search instanceof HTMLInputElement)) throw new Error('search missing'); search.value = 'Owned UX Audit Feature Film 2026'; search.dispatchEvent(new Event('input', { bubbles: true })); })()");
     await waitFor("long title card", () => evaluate(window, "document.querySelector('#library-grid .media-card-title')?.textContent || ''"), (value) => value === LONG_TITLE);
@@ -440,20 +516,34 @@ async function run(): Promise<void> {
     await evaluate(window, "document.querySelector('#scan-pill-cancel')?.click()");
     const preservationCancelled = await waitFor("cancel-preservation summary", readScanUi, (value) => value.noticeVisible && /扫描已取消/.test(value.noticeTitle), 20_000);
     assert.match(preservationCancelled.noticeText, /播放进度/);
+    await waitFor("cancel-preservation scan fully settled", readScanUi, (value) => value.pillHidden === true && value.cardHidden === true);
     await evaluate(window, "document.querySelector('#app-notice-close')?.click()");
     const playbackAfterCancel = await evaluate(window, `window.zVideo.localLibrary.get(${JSON.stringify(openedMediaId)}).then((result) => result.detail?.playback?.positionSec ?? 0)`);
     assert.equal(playbackAfterCancel, savedPlayback, "cancelling a scan preserves saved playback progress");
     await evaluate(window, "document.querySelector('[data-nav=home]')?.click()");
     const continueMin = await waitFor(
       "continue row at minimum size",
-      () => evaluate(window, "(() => { const card = document.querySelector('.continue-card .continue-copy > strong'); const firstTitle = document.querySelector('.media-card-title'); const firstRect = firstTitle?.getBoundingClientRect(); return { hidden: document.querySelector('#continue-section')?.hidden, title: card?.textContent || '', top: card?.getBoundingClientRect().top || -1, bottom: card?.getBoundingClientRect().bottom || -1, firstTitle: firstTitle?.textContent || '', firstTop: firstRect?.top || -1, firstBottom: firstRect?.bottom || -1, height: document.documentElement.clientHeight }; })()"),
-      (value) => value.hidden === false && value.title === LONG_TITLE && value.title.length > 0 && value.firstTitle.length > 0,
+      () => evaluate(window, "(() => { const card = document.querySelector('.continue-card .continue-copy > strong'); const firstTitle = document.querySelector('.media-card-title'); const firstRect = firstTitle?.getBoundingClientRect(); const cards = [...document.querySelectorAll('.continue-card')]; return { hidden: document.querySelector('#continue-section')?.hidden, title: card?.textContent || '', top: card?.getBoundingClientRect().top || -1, bottom: card?.getBoundingClientRect().bottom || -1, firstTitle: firstTitle?.textContent || '', firstTop: firstRect?.top || -1, firstBottom: firstRect?.bottom || -1, height: document.documentElement.clientHeight, scope: document.querySelector('#continue-scope')?.textContent || '', cards: cards.map((entry) => ({ title: entry.querySelector('.continue-copy > strong')?.textContent || '', detail: entry.querySelector('.continue-copy > span')?.textContent || '', collectionId: entry.dataset.collectionId || '', mediaId: entry.dataset.mediaId || '' })) }; })()"),
+      (value) => value.hidden === false && value.title === LONG_TITLE && value.title.length > 0 && value.firstTitle.length > 0 && value.cards.length > 1,
       10_000,
     );
     await capture("home");
     assert.equal(continueMin.title, LONG_TITLE);
     assert.ok(continueMin.firstTitle.length > 0);
+    assert.equal(continueMin.cards.length, 2, "continue watching shows one movie and one show work");
+    assert.equal(new Set(continueMin.cards.map((entry: { collectionId: string }) => entry.collectionId)).size, continueMin.cards.length, "each work appears at most once in continue watching");
+    assert.equal(continueMin.cards.every((entry: { collectionId: string; mediaId: string }) => Boolean(entry.collectionId && entry.mediaId)), true, "continue cards keep the opaque work and episode identities");
+    const showContinueCard = continueMin.cards.find((entry: { title: string }) => entry.title === "Owned Next Show");
+    assert.ok(showContinueCard, "continue watching uses the collection title instead of an episode file title");
+    assert.match(showContinueCard!.detail, /第 1 季 第 2 集/, `continue copy names the season and episode: ${JSON.stringify(showContinueCard)}`);
+    assert.doesNotMatch(continueMin.cards.map((entry: { title: string }) => entry.title).join(" | "), /Next Episode/, "episode file titles never leak into the home continue shelf");
+    assert.match(continueMin.scope, /2 部作品/, "continue count matches the number of work cards");
+    assert.equal(Number(continueMin.scope.match(/(\d+) 部作品/)?.[1] ?? 0), continueMin.cards.length);
 
+    window.restore();
+    window.show();
+    window.focus();
+    await waitFor("window focus for default size check", async () => window.isMinimized(), (minimized) => minimized === false);
     window.setSize(1040, 720);
     const defaultAfterContinueOuter = window.getSize();
     const continueDefault = await waitFor(
@@ -468,9 +558,10 @@ async function run(): Promise<void> {
 
     await rename(fixtureRoot, fixtureRoot + "-offline");
     await evaluate(window, "document.querySelector('#manage-sources-button')?.click()");
-    await waitFor("source refresh available", () => evaluate(window, "Boolean(document.querySelector('[data-refresh-source-id]'))"), Boolean);
+    await waitFor("source refresh available", () => evaluate(window, "(() => { const button = document.querySelector('[data-refresh-source-id]'); return { exists: Boolean(button), disabled: Boolean(button && button.disabled), chooseDisabled: Boolean(document.querySelector('#choose-folder-button')?.disabled), text: document.querySelector('#source-list')?.textContent || '' }; })()"), (value) => value.exists && value.disabled === false && value.chooseDisabled === false);
     await evaluate(window, "document.querySelector('[data-refresh-source-id]')?.click()");
-    await waitFor("source offline", () => evaluate(window, "document.querySelector('#source-list')?.textContent || ''"), (value) => value.includes("离线"));
+    const offlineSource = await waitFor("source offline", () => evaluate(window, "(() => ({ text: document.querySelector('#source-list')?.textContent || '', notice: document.querySelector('#app-notice')?.textContent || '', refreshDisabled: Boolean(document.querySelector('[data-refresh-source-id]')?.disabled) }))()"), (value) => value.text.includes("离线"));
+    assert.match(offlineSource.text, /离线/);
     await evaluate(window, "document.querySelector('[data-nav=all]')?.click()");
     await evaluate(window, "(() => { const search = document.querySelector('#library-search-input'); search.value = 'Owned UX Audit Feature Film 2026'; search.dispatchEvent(new Event('input', { bubbles: true })); })()");
     await waitFor("offline movie card", () => evaluate(window, "document.querySelector('#library-grid .media-card-title')?.textContent || ''"), (value) => value === LONG_TITLE);
@@ -482,6 +573,7 @@ async function run(): Promise<void> {
     const diagnostics = await readFile(join(logDir, "diagnostics.jsonl"), "utf8").catch(() => "");
     assert.match(diagnostics, /"operation":"window\.renderer-ready"/);
     assert.match(diagnostics, /"operation":"local-library\.list"/);
+    assert.match(diagnostics, /"operation":"local-library\.list-collections"/);
     assert.doesNotMatch(diagnostics, /session\.restore|session\.login|discovery\.start/);
     const resultPath = process.env.Z_VIDEO_LOCAL_LIBRARY_APP_RESULT;
     if (!resultPath) throw new Error("Z_VIDEO_LOCAL_LIBRARY_APP_RESULT is required");
@@ -489,18 +581,21 @@ async function run(): Promise<void> {
       schemaVersion: 1,
       proof: "local-library-ux",
       scan: { runningPill: firstRunning.pillText, runningCard: firstRunning.cardText.slice(0, 160), welcomeCoexists: firstRunning.onboardingVisible, cancelledPageTotal: preserved.pageTotal, cancelledNotice: cancelled.noticeTitle, completedPageTotal: completedTotal.pageTotal, completedNotice: complete.noticeTitle, summary: summaryText.slice(0, 200), compact: { pill: compactScan.pillRect, card: compactScan.cardRect, viewport: compactScan.viewport } },
+      home: { recentHeading: homeShelves.recentHeading, recentCount: homeShelves.recent.length, recent: homeShelves.recent.slice(0, 3), shows: homeShelves.shows, sortLabels: homeShelves.sortLabels },
       collections: {
         showCards,
         showDetail: { title: showDetail.title, episodeRows: showDetail.count, currentIndex: showDetail.currentIndex, currentNumber: showDetail.currentNumber },
         episodeCards: { count: episodeCards.count, titles: episodeCards.titles, scope: episodeCards.scope },
+        allScope: allWorks.scope,
+        movieScope: movieWorks.scope,
       },
-      releaseSort: { menu: sortMenu.options, firstTitle: released.firstTitle, firstMeta: released.firstMeta, secondMeta: released.secondMeta, unknownLabel: unknownDate },
+      releaseSort: { menu: sortMenu.options, firstTitle: released.firstTitle, firstMeta: released.firstMeta, secondMeta: released.secondMeta, unknownLabel: unknownDate, restored: restoredSort },
       defaultWindow: { outer: defaultOuter },
       detail: { default: { title: detail.title, plotLength: detail.plot.length, play: detail.button, viewport: detail.viewport }, minimum: { outer: minOuter, content: minContent, playVisible: minDetail.visible, viewport: minDetail.viewport } },
       player: { currentTitle: player.currentTitle, controlsHeight: player.controlsHeight, titleInControls: player.titleInControls, titleOutsideSurface: player.titleOutsideSurface },
-      continueWatching: { minimum: continueMin, default: continueDefault, defaultContent: continueDefault.windowContent, defaultOuter: defaultAfterContinueOuter },
+      continueWatching: { minimum: continueMin, scope: continueMin.scope, cards: continueMin.cards, default: continueDefault, defaultContent: continueDefault.windowContent, defaultOuter: defaultAfterContinueOuter },
     }, null, 2) + "\n", "utf8");
-    process.stdout.write("PASS: production local-library UX smoke (running scan, detail/player layout, continue row)\n");
+    process.stdout.write("PASS: production local-library UX smoke (home work shelves, continue row, all/movie/work counts, single-episode fallback, saved sort)\n");
     await quitProductionApp();
   } finally {
     dialog.showOpenDialog = originalShowOpenDialog;

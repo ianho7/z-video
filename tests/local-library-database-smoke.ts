@@ -57,6 +57,19 @@ async function run(): Promise<void> {
   await writeFile(join(collectionRoot, "Aggregate Film.nfo"), `<movie><title>Aggregate Film</title><year>2019</year></movie>`);
   await writeFile(join(collectionRoot, "Second Film.mkv"), Buffer.from("second film fixture"));
   await writeFile(join(collectionRoot, "Second Film.nfo"), `<movie><title>Second Film</title><year>2018</year></movie>`);
+  const continueRoot = join(profile, "continue-fixture");
+  const continueShowDirectory = join(continueRoot, "Continue Show");
+  await mkdir(continueShowDirectory, { recursive: true });
+  await writeFile(join(continueShowDirectory, "tvshow.nfo"), `<tvshow><title>Continue Show</title><year>2024</year></tvshow>`);
+  for (const number of [1, 2]) {
+    const stem = `Continue Show - S01E0${number}`;
+    await writeFile(join(continueShowDirectory, `${stem}.mkv`), Buffer.from(`continue episode ${number}`));
+    await writeFile(join(continueShowDirectory, `${stem}.nfo`), `<episodedetails><title>Continue Episode ${number}</title><season>1</season><episode>${number}</episode></episodedetails>`);
+  }
+  await writeFile(join(continueRoot, "Continue Movie.mkv"), Buffer.from("continue movie fixture"));
+  await writeFile(join(continueRoot, "Continue Movie.nfo"), `<movie><title>Continue Movie</title></movie>`);
+  await writeFile(join(continueRoot, "Continue Short Movie.mkv"), Buffer.from("continue short movie fixture"));
+  await writeFile(join(continueRoot, "Continue Short Movie.nfo"), `<movie><title>Continue Short Movie</title></movie>`);
   const metadataMoviePath = join(movieDirectory, "Metadata Movie.mkv");
   const episodePath = join(showDirectory, "Example Show - S01E02.mkv");
   const brokenMoviePath = join(brokenDirectory, "Broken Movie.mkv");
@@ -381,6 +394,35 @@ async function run(): Promise<void> {
     assert.equal(updatedDetail?.playback?.audioTrackId, "audio-1");
     const continueWatching = await database.listContinueWatching();
     assert.equal(continueWatching.some((entry) => entry.item.mediaId === episodeId && entry.playback.positionSec === 42), true);
+
+    const continueScan = await database.scanFolder(continueRoot);
+    assert.equal(continueScan.status, "completed");
+    const continueFiles = await database.list({ page: 1, pageSize: 50, sourceId: continueScan.sourceId });
+    const continueEpisodeOne = continueFiles.items.find((item) => item.title === "Continue Episode 1");
+    const continueEpisodeTwo = continueFiles.items.find((item) => item.title === "Continue Episode 2");
+    const continueMovie = continueFiles.items.find((item) => item.title === "Continue Movie");
+    const continueShortMovie = continueFiles.items.find((item) => item.title === "Continue Short Movie");
+    assert.ok(continueEpisodeOne && continueEpisodeTwo && continueMovie && continueShortMovie, "continue fixture was indexed");
+    const earlier = Date.now();
+    await database.savePlayback(continueEpisodeOne.mediaId, { positionSec: 42, durationSec: 1800, watched: false, updatedAtMs: earlier });
+    await database.savePlayback(continueMovie.mediaId, { positionSec: 42, durationSec: 1800, watched: false, updatedAtMs: earlier + 5 });
+    await database.savePlayback(continueEpisodeTwo.mediaId, { positionSec: 50, durationSec: 1800, watched: false, updatedAtMs: earlier + 10 });
+    await database.savePlayback(continueShortMovie.mediaId, { positionSec: 2, durationSec: 100, watched: false, updatedAtMs: earlier + 15 });
+    const groupedContinue = await database.listContinueWatching();
+    const showEntries = groupedContinue.filter((entry) => entry.collectionTitle === "Continue Show");
+    assert.equal(showEntries.length, 1, "one work has at most one continue-watching entry");
+    assert.equal(showEntries[0]?.item.mediaId, continueEpisodeTwo.mediaId, "the most recent in-progress episode represents the work");
+    assert.equal(showEntries[0]?.collectionKind, "show");
+    assert.equal(showEntries[0]?.episodeTitle, "Continue Episode 2");
+    assert.equal(showEntries[0]?.seasonNumber, 1);
+    assert.equal(showEntries[0]?.episodeNumber, 2);
+    assert.equal(groupedContinue.some((entry) => entry.collectionTitle === "Continue Movie"), true, "movies keep one continue entry per work");
+    assert.equal(new Set(groupedContinue.map((entry) => entry.item.collectionId)).size, groupedContinue.length, "continue watching never duplicates a work");
+    assert.equal(groupedContinue.some((entry) => entry.collectionTitle === "Continue Short Movie"), false, "a two-percent position on a ten-minute work is not resume-worthy");
+    assert.equal(JSON.stringify(groupedContinue).includes(continueRoot), false, "continue entries never expose the source root");
+    await database.savePlayback(continueShortMovie.mediaId, { positionSec: 4, durationSec: 100, watched: false, updatedAtMs: earlier + 20 });
+    const shortMovieQualified = await database.listContinueWatching();
+    assert.equal(shortMovieQualified.some((entry) => entry.collectionTitle === "Continue Short Movie"), true, "a four-percent position on a short work qualifies");
 
     const sourceCountBeforeNestedImport = (await database.getState()).sources.length;
     const nestedImport = await database.importVideo(episodePath, showDirectory);

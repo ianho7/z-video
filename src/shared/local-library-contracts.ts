@@ -74,6 +74,13 @@ export interface LocalMediaDetail {
 export interface LocalContinueWatchingItem {
   item: LocalMediaItem;
   playback: LocalPlaybackState;
+  /** Collection identity for the work-level home card. */
+  collectionTitle: string;
+  collectionKind: LocalCollectionKind;
+  /** Episode title; for a movie this repeats the work title. */
+  episodeTitle: string;
+  seasonNumber?: number;
+  episodeNumber?: number;
 }
 
 /** Playback owner contract. The mediaId is the only renderer-to-main target. */
