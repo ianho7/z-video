@@ -4,7 +4,7 @@
  * may resolve those values.
  */
 
-export const LOCAL_LIBRARY_SCHEMA_VERSION = 1 as const;
+export const LOCAL_LIBRARY_SCHEMA_VERSION = 2 as const;
 
 export const LOCAL_LIBRARY_SCHEMA_TABLES = [
   "sources",
@@ -34,7 +34,7 @@ export interface LocalSourceSummary {
 export type LocalMediaKind = "movie" | "show" | "episode" | "unclassified";
 
 export type LocalLibraryFilter = "all" | LocalMediaKind;
-export type LocalLibrarySort = "recent" | "title" | "year_desc" | "score_desc" | "added_desc";
+export type LocalLibrarySort = "recent" | "title" | "year_desc" | "score_desc" | "added_desc" | "released_desc";
 
 export interface LocalArtworkReference {
   kind: "poster" | "fanart";
@@ -51,6 +51,8 @@ export interface LocalMediaItem {
   modifiedAtMs: number;
   available: boolean;
   year?: number;
+  /** NFO premiere date as YYYY-MM-DD; null when the source has no real date. */
+  premieredDate?: string | null;
   plot?: string;
   genres?: string[];
   rating?: number;

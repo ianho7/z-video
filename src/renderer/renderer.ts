@@ -577,7 +577,7 @@ function renderPage(page: { items: LocalMediaItem[]; totalCount: number; page: n
   const focusedMediaId = preserveGridFocus();
   if (!libraryGrid || !libraryEmpty) return;
   artworkObserver?.disconnect();
-  libraryGrid.replaceChildren(...page.items.map(card));
+  libraryGrid.replaceChildren(...page.items.map((item) => card(item, currentQuery.sort === "released_desc")));
   libraryEmpty.hidden = page.items.length > 0;
   updateEmptyCopy(page.totalCount);
   if (searchAllTypesButton) searchAllTypesButton.hidden = !(page.items.length === 0 && Boolean(currentQuery.query) && currentQuery.filter !== "all");
@@ -685,7 +685,7 @@ async function loadHomeShelves(): Promise<void> {
     for (const [section, selector, items] of [[recentSection, "#recent-row", recentItems], [showsSection, "#shows-row", shows.page?.items ?? []]] as const) {
       const row = document.querySelector<HTMLElement>(selector);
       if (!row || !section) continue;
-      row.replaceChildren(...items.map(card));
+      row.replaceChildren(...items.map((item) => card(item)));
       row.querySelectorAll<HTMLElement>("[data-artwork-media-id]").forEach((element) => enqueueArtwork(element, 1));
       section.hidden = !homeVisible || items.length === 0 || detail?.hidden === false;
     }
@@ -907,7 +907,7 @@ function renderDetail(detailValue: LocalMediaDetail): void {
   if (detailTitle) detailTitle.textContent = detailValue.collectionTitle && detailValue.collectionKind === "show" ? detailValue.collectionTitle : item.title;
   if (detailMeta) {
     const parts: HTMLElement[] = [];
-    for (const value of [kindLabel(item.kind), ...(item.year === undefined ? [] : [String(item.year)]), ...(item.seasonNumber !== undefined && item.episodeNumber !== undefined ? [`S${String(item.seasonNumber).padStart(2, "0")}E${String(item.episodeNumber).padStart(2, "0")}`] : [])]) {
+    for (const value of [kindLabel(item.kind), ...(item.year === undefined ? [] : [String(item.year)]), item.premieredDate ? `发布日期 ${item.premieredDate}` : "发布日期未知", ...(item.seasonNumber !== undefined && item.episodeNumber !== undefined ? [`S${String(item.seasonNumber).padStart(2, "0")}E${String(item.episodeNumber).padStart(2, "0")}`] : [])]) {
       const part = document.createElement("span");
       part.textContent = value;
       parts.push(part);

@@ -5,8 +5,16 @@ import { dirname, join } from "node:path";
 
 import { app } from "electron";
 
+import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
+
 import { isOpaqueMediaId } from "../src/shared/local-library-contracts";
 import { LocalLibraryDatabase } from "../src/main/local-library-database";
+
+function openSqlite(filePath: string): DatabaseSyncType {
+  const sqlite = require("node:sqlite") as { DatabaseSync?: new (path: string) => DatabaseSyncType };
+  if (typeof sqlite.DatabaseSync !== "function") throw new Error("node:sqlite is unavailable");
+  return new sqlite.DatabaseSync(filePath);
+}
 
 async function run(): Promise<void> {
   const profile = await mkdtemp(join(process.env.TEMP ?? process.cwd(), "z-video-local-db-smoke-"));
@@ -42,6 +50,7 @@ async function run(): Promise<void> {
 <movie>
   <title>Metadata Movie Title</title>
   <year>2026</year>
+  <premiered>2026-10-05</premiered>
   <plot>A local-only plot.</plot>
   <genre>Drama</genre>
   <genre>Indie</genre>
@@ -77,7 +86,7 @@ async function run(): Promise<void> {
     const state = await database.start();
     assert.equal(state.status, "ready");
     assert.equal(state.sqliteAvailable, true);
-    assert.equal(state.schemaVersion, 1);
+    assert.equal(state.schemaVersion, 2);
 
     const imported = await database.importFirstMovieInFolder(fixtureRoot);
     assert.equal(imported.status, "imported");
@@ -123,7 +132,41 @@ async function run(): Promise<void> {
     assert.deepEqual(scanned.items[0]?.genres, ["Drama", "Indie"]);
     assert.equal(scanned.items[0]?.rating, 8.4);
     assert.equal(scanned.items[0]?.artwork?.[0]?.kind, "poster");
+    assert.equal(scanned.items[0]?.premieredDate, "2026-10-05");
     assert.equal(JSON.stringify(scanned.items[0]).includes(movieDirectory), false);
+
+    const releaseRoot = join(profile, "release-sort-fixture");
+    await mkdir(releaseRoot, { recursive: true });
+    const releaseMovies: Array<{ stem: string; nfo: string }> = [
+      { stem: "Newest Movie", nfo: "<movie><title>Newest Movie</title><year>2020</year><premiered>2026-03-01</premiered></movie>" },
+      { stem: "Older Movie", nfo: "<movie><title>Older Movie</title><year>2030</year><premiered>2024-01-15</premiered></movie>" },
+      { stem: "Released Only Movie", nfo: "<movie><title>Released Only Movie</title><year>2001</year><releasedate>2022-07-04</releasedate></movie>" },
+      { stem: "Year Only Movie", nfo: "<movie><title>Year Only Movie</title><year>2035</year></movie>" },
+      { stem: "Invalid Date Movie", nfo: "<movie><title>Invalid Date Movie</title><year>2031</year><premiered>2026-02-30</premiered></movie>" },
+    ];
+    for (const movie of releaseMovies) {
+      await writeFile(join(releaseRoot, `${movie.stem}.mkv`), Buffer.from("release sort fixture"));
+      await writeFile(join(releaseRoot, `${movie.stem}.nfo`), movie.nfo);
+    }
+    const releaseScan = await database.scanFolder(releaseRoot);
+    assert.equal(releaseScan.status, "completed");
+    assert.equal(releaseScan.importedFiles, 5);
+    const releasedPage = await database.list({ page: 1, pageSize: 10, sourceId: releaseScan.sourceId, sort: "released_desc" });
+    assert.deepEqual(
+      releasedPage.items.map((item) => item.title),
+      ["Newest Movie", "Older Movie", "Released Only Movie", "Year Only Movie", "Invalid Date Movie"],
+      "released_desc sorts real dates newest-first, then year/added tiebreakers, and never by a disguised year",
+    );
+    assert.deepEqual(
+      releasedPage.items.map((item) => item.premieredDate),
+      ["2026-03-01", "2024-01-15", "2022-07-04", null, null],
+      "missing or invalid dates stay null instead of borrowing the year",
+    );
+    assert.equal(releasedPage.items.some((item) => item.premieredDate === "2035" || item.premieredDate === "2031"), false);
+    assert.equal(JSON.stringify(releasedPage.items).includes(releaseRoot), false);
+    const defaultPage = await database.list({ page: 1, pageSize: 10, sourceId: releaseScan.sourceId });
+    assert.equal(defaultPage.totalCount, 5);
+    assert.equal(defaultPage.items.length, 5);
 
     const reparseRoot = join(profile, "reparse-fixture");
     const reparseMovieDirectory = join(reparseRoot, "Reparse Movie");
@@ -172,7 +215,7 @@ async function run(): Promise<void> {
     assert.equal(episodePage.items[0]?.title, "Second Episode");
 
     const metadataMediaId = scanned.items[0]?.mediaId;
-    await writeFile(join(movieDirectory, "Metadata Movie.nfo"), `<movie><title>Metadata Movie Updated</title><year>2026</year><plot>Updated plot.</plot><genre>Drama</genre><rating>8.7</rating><thumb aspect="poster">poster.jpg</thumb></movie>`);
+    await writeFile(join(movieDirectory, "Metadata Movie.nfo"), `<movie><title>Metadata Movie Updated</title><year>2026</year><premiered>2026-10-05</premiered><plot>Updated plot.</plot><genre>Drama</genre><rating>8.7</rating><thumb aspect="poster">poster.jpg</thumb></movie>`);
     const repeatedScan = await database.scanFolder(metadataRoot);
     assert.equal(repeatedScan.status, "completed");
     assert.equal(repeatedScan.importedFiles, 0);
@@ -180,6 +223,7 @@ async function run(): Promise<void> {
     const updated = await database.list({ page: 1, pageSize: 50, query: "Metadata Movie Updated" });
     assert.equal(updated.items[0]?.mediaId, metadataMediaId);
     assert.equal(updated.items[0]?.rating, 8.7);
+    assert.equal(updated.items[0]?.premieredDate, "2026-10-05");
 
     const episodeId = episodePage.items[0]?.mediaId;
     if (!episodeId) throw new Error("episode fixture did not produce a mediaId");
@@ -303,10 +347,54 @@ async function run(): Promise<void> {
     const reopened = new LocalLibraryDatabase({ dbPath, workerPath });
     const reopenedState = await reopened.start();
     assert.equal(reopenedState.status, "ready");
+    assert.equal(reopenedState.schemaVersion, 2);
     const reopenedPage = await reopened.list({ page: 1, pageSize: 50 });
     assert.equal(reopenedPage.items.some((item) => item.mediaId === imported.item.mediaId), false);
     await reopened.close();
-    process.stdout.write("PASS: local DB owner imported one fixture, reused stable opaque mediaId, listed without paths, and resolved only in main owner\n");
+
+    const legacyPath = join(profile, "legacy-v1.sqlite");
+    const snapshot = openSqlite(dbPath);
+    try {
+      snapshot.exec(`VACUUM INTO '${legacyPath.replace(/'/g, "''")}'`);
+    } finally {
+      snapshot.close();
+    }
+    const legacy = openSqlite(legacyPath);
+    try {
+      legacy.exec("DROP INDEX IF EXISTS collections_premiered_at;");
+      legacy.exec("ALTER TABLE collections DROP COLUMN premiered_at;");
+      legacy.exec("PRAGMA user_version = 1;");
+      const legacyVersion = legacy.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
+      assert.equal(Number(legacyVersion?.user_version), 1);
+      const legacyColumns = legacy.prepare("PRAGMA table_info(collections)").all() as Array<{ name?: string }>;
+      assert.equal(legacyColumns.some((column) => column.name === "premiered_at"), false);
+    } finally {
+      legacy.close();
+    }
+    const legacyDb = new LocalLibraryDatabase({ dbPath: legacyPath, workerPath });
+    assert.equal((await legacyDb.start()).schemaVersion, 2);
+    const migratedPage = await legacyDb.list({ page: 1, pageSize: 50, sort: "released_desc" });
+    assert.equal(migratedPage.totalCount > 0, true);
+    assert.equal(migratedPage.items.every((item) => item.premieredDate === null), true, "migration never guesses a date for old rows");
+    await legacyDb.close();
+    const migratedAgain = new LocalLibraryDatabase({ dbPath: legacyPath, workerPath });
+    assert.equal((await migratedAgain.start()).schemaVersion, 2, "re-running the v2 migration is idempotent");
+    const migratedAgainPage = await migratedAgain.list({ page: 1, pageSize: 50, sort: "released_desc" });
+    assert.equal(migratedAgainPage.totalCount, migratedPage.totalCount);
+    assert.equal(migratedAgainPage.items.every((item) => item.premieredDate === null), true);
+    await migratedAgain.close();
+    const migratedDb = openSqlite(legacyPath);
+    try {
+      const version = migratedDb.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
+      assert.equal(Number(version?.user_version), 2);
+      const columns = migratedDb.prepare("PRAGMA table_info(collections)").all() as Array<{ name?: string }>;
+      assert.equal(columns.some((column) => column.name === "premiered_at"), true);
+      const index = migratedDb.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'collections_premiered_at'").get();
+      assert.ok(index, "v2 migration creates the premiere-date index");
+    } finally {
+      migratedDb.close();
+    }
+    process.stdout.write("PASS: local DB owner imported one fixture, reused stable opaque mediaId, listed without paths, resolved only in main owner, parsed real premiere dates, sorted released_desc with unknown dates last, and migrated v1 data without guessing dates\n");
   } finally {
     await rm(profile, { recursive: true, force: true }).catch(() => undefined);
   }

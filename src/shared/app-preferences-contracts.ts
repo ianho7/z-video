@@ -22,7 +22,7 @@ export interface AppPreferencesApi {
 }
 
 export function isLocalLibrarySort(value: unknown): value is LocalLibrarySort {
-  return value === "recent" || value === "title" || value === "year_desc" || value === "score_desc" || value === "added_desc";
+  return value === "recent" || value === "title" || value === "year_desc" || value === "score_desc" || value === "added_desc" || value === "released_desc";
 }
 
 export function isAppPlaybackPreferences(value: unknown): value is AppPlaybackPreferences {

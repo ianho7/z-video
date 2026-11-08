@@ -116,7 +116,7 @@ function parseLocalLibraryQuery(value: unknown): LocalLibraryQuery {
   if (page < 1 || pageSize < 1 || pageSize > 100) throw new Error("本地片库分页参数无效");
   if (record.query !== undefined && record.query !== null && typeof record.query !== "string") throw new Error("本地片库搜索词格式无效");
   const filters = new Set(["all", "movie", "show", "episode", "unclassified"]);
-  const sorts = new Set(["recent", "title", "year_desc", "score_desc", "added_desc"]);
+  const sorts = new Set(["recent", "title", "year_desc", "score_desc", "added_desc", "released_desc"]);
   if (record.filter !== undefined && (!filters.has(String(record.filter)))) throw new Error("本地片库筛选条件无效");
   if (record.sort !== undefined && (!sorts.has(String(record.sort)))) throw new Error("本地片库排序条件无效");
   if (record.sourceId !== undefined && (typeof record.sourceId !== "string" || !/^source_[0-9a-f-]{36}$/i.test(record.sourceId))) throw new Error("本地片库来源格式无效");
