@@ -2,7 +2,7 @@ import { coverData, generatedCover } from "../cover.js";
 import type { LocalMediaItem } from "../../shared/local-library-contracts";
 import { artworkKind, kindLabel, formatBytes } from "./shared.js";
 
-export function card(item: LocalMediaItem): HTMLElement {
+export function card(item: LocalMediaItem, includeReleaseDate = false): HTMLElement {
   const article = document.createElement("article");
   article.className = `media-card${item.available ? "" : " unavailable"}`;
   article.setAttribute("role", "listitem");
@@ -28,6 +28,7 @@ export function card(item: LocalMediaItem): HTMLElement {
   meta.className = "media-card-meta";
   const parts = [kindLabel(item.kind)];
   if (item.year !== undefined) parts.push(String(item.year));
+  if (includeReleaseDate) parts.push(item.premieredDate ?? "发布日期未知");
   if (item.rating !== undefined) parts.push(`★ ${item.rating.toFixed(1)}`);
   meta.textContent = `${parts.join(" · ")} · ${formatBytes(item.sizeBytes)}`;
   button.append(poster);

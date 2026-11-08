@@ -30,6 +30,7 @@ async function createFixture(profile: string): Promise<string> {
     "<movie>",
     "  <title>" + LONG_TITLE + "</title>",
     "  <year>2026</year>",
+    "  <premiered>2026-02-14</premiered>",
     "  <rating>8.7</rating>",
     "  <genre>Drama</genre>",
     "  <plot>" + LONG_PLOT + "</plot>",
@@ -40,7 +41,7 @@ async function createFixture(profile: string): Promise<string> {
 
   const showRoot = join(root, "owned-show");
   await mkdir(showRoot);
-  await writeFile(join(showRoot, "tvshow.nfo"), "<tvshow><title>Owned Next Show</title></tvshow>");
+  await writeFile(join(showRoot, "tvshow.nfo"), "<tvshow><title>Owned Next Show</title><premiered>2025-09-01</premiered></tvshow>");
   for (const number of [1, 2, 3]) {
     const stem = `Owned Next Show - S01E0${number}`;
     await copyFile(join(process.cwd(), "assets", "test_video.mp4"), join(showRoot, stem + ".mp4"));
@@ -134,7 +135,7 @@ async function run(): Promise<void> {
     await waitFor("onboarding visible", () => evaluate(window, "document.querySelector('#onboarding')?.hidden === false"), Boolean);
     await capture("onboarding");
 
-    window.webContents.send(IPC_CHANNELS.localLibraryState, { status: "error", schemaVersion: 1, sqliteAvailable: false, sources: [], error: { code: "storage", message: "片库暂时不可用" } });
+    window.webContents.send(IPC_CHANNELS.localLibraryState, { status: "error", schemaVersion: 2, sqliteAvailable: false, sources: [], error: { code: "storage", message: "片库暂时不可用" } });
     const errorState = await waitFor("library error card", () => evaluate(window, `({ visible: !document.querySelector('#library-error').hidden, text: document.querySelector('#library-error').textContent, buttons: [...document.querySelectorAll('#library-error button')].map(button => button.textContent) })`), (value) => value.visible);
     await capture("error");
     assert.match(errorState.text, /storage/);
@@ -182,6 +183,31 @@ async function run(): Promise<void> {
     await waitFor("visible all-media page", () => evaluate(window, "document.querySelector('#collection-section')?.hidden"), (hidden) => hidden === false);
     await waitFor("all navigation active", () => evaluate(window, "document.querySelector('[data-nav=all]')?.getAttribute('aria-current')"), (value) => value === "page");
     await capture("all");
+    const sortMenu = await evaluate(window, "(() => { const select = document.querySelector('#library-sort'); return { options: [...select.options].map((option) => ({ value: option.value, label: option.textContent })), value: select.value }; })()");
+    assert.ok(sortMenu.options.some((option: { value: string; label: string }) => option.value === "released_desc" && option.label === "最近发布"), "sort menu exposes 最近发布");
+    await evaluate(window, "(() => { const select = document.querySelector('#library-sort'); select.value = 'released_desc'; select.dispatchEvent(new Event('change', { bubbles: true })); })()");
+    const released = await waitFor(
+      "released_desc ordering",
+      () => evaluate(window, "(() => { const cards = [...document.querySelectorAll('#library-grid .media-card')]; return { value: document.querySelector('#library-sort')?.value, firstTitle: cards[0]?.querySelector('.media-card-title')?.textContent || '', firstMeta: cards[0]?.querySelector('.media-card-meta')?.textContent || '', secondMeta: cards[1]?.querySelector('.media-card-meta')?.textContent || '' }; })()"),
+      (value) => value.value === "released_desc" && value.firstTitle === LONG_TITLE,
+    );
+    assert.match(released.firstMeta, /2026-02-14/, "dated work shows its real NFO premiere date");
+    assert.match(released.secondMeta, /2025-09-01/, "dated show ranks after the newer movie");
+    await evaluate(window, "(() => { const input = document.querySelector('#library-search-input'); if (!(input instanceof HTMLInputElement)) throw new Error('search missing'); input.value = 'Index fixture index-00000'; input.dispatchEvent(new Event('input', { bubbles: true })); })()");
+    const unknownDate = await waitFor(
+      "unknown premiere date label",
+      () => evaluate(window, "document.querySelector('#library-grid .media-card-meta')?.textContent || ''"),
+      (meta) => meta.includes("发布日期未知"),
+    );
+    assert.match(unknownDate, /发布日期未知/);
+    assert.doesNotMatch(unknownDate, /发布日期 (19|20)\d{2}/, "a year is never shown as a premiere date");
+    await evaluate(window, "document.querySelector('#library-search-clear')?.click()");
+    // The search input debounce outlives the clear click; let it settle before
+    // restoring the sort so it cannot reset the later pagination step.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await evaluate(window, "(() => { const select = document.querySelector('#library-sort'); select.value = 'recent'; select.dispatchEvent(new Event('change', { bubbles: true })); })()");
+    await waitFor("sort restored", () => evaluate(window, "document.querySelector('#library-sort')?.value"), (value) => value === "recent");
+    await waitFor("library settled after sort restore", () => evaluate(window, "document.querySelector('#library-grid')?.getAttribute('aria-busy')"), (value) => value === null);
     await evaluate(window, "document.querySelector('#manage-sources-button')?.click()");
     await waitFor("sources visible", () => evaluate(window, "document.querySelector('#source-list')?.getBoundingClientRect().width > 0"), Boolean);
     await capture("sources");
@@ -251,6 +277,7 @@ async function run(): Promise<void> {
     assert.equal(detail.toggleHidden, false, "a short synopsis spanning four visual lines can be expanded");
     assert.equal(detail.plotExpanded, "false");
     assert.match(detail.meta, /2026/);
+    assert.match(detail.meta, /2026-02-14/, "detail exposes the NFO premiere date");
     assert.equal(detail.ratingLabel, "评分 8.7");
     assert.ok(detail.ratingShape.length > 0, "rating is rendered on a biscuit shape");
     assert.match(detail.movieInfo, /owned-fixture/i);
@@ -335,6 +362,7 @@ async function run(): Promise<void> {
       schemaVersion: 1,
       proof: "local-library-ux",
       scan: { runningCardTitle: running.cardTitle, runningSourceCount: running.sourceCount, completedCount: complete.count },
+      releaseSort: { menu: sortMenu.options, firstTitle: released.firstTitle, firstMeta: released.firstMeta, secondMeta: released.secondMeta, unknownLabel: unknownDate },
       defaultWindow: { outer: defaultOuter },
       detail: { default: { title: detail.title, plotLength: detail.plot.length, play: detail.button, viewport: detail.viewport }, minimum: { outer: minOuter, content: minContent, playVisible: minDetail.visible, viewport: minDetail.viewport } },
       player: { currentTitle: player.currentTitle, controlsHeight: player.controlsHeight, titleInControls: player.titleInControls, titleOutsideSurface: player.titleOutsideSurface },

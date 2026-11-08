@@ -7,6 +7,8 @@ export interface ParsedNfo {
   title?: string;
   showTitle?: string;
   year?: number;
+  /** NFO premiere date as YYYY-MM-DD; null when missing or not a real calendar date. */
+  premieredDate: string | null;
   plot?: string;
   genres: string[];
   rating?: number;
@@ -56,6 +58,7 @@ export function parseNfo(xml: string): ParsedNfo {
     title: firstString(root.title),
     showTitle: firstString(root.showtitle),
     year: integerValue(root.year) ?? yearFrom(firstString(root.premiered)),
+    premieredDate: parsePremieredDate(firstString(root.premiered)) ?? parsePremieredDate(firstString(root.releasedate)),
     plot: firstString(root.plot) ?? firstString(root.outline) ?? firstString(root.description),
     genres,
     ...(rating !== undefined ? { rating } : {}),
@@ -71,6 +74,25 @@ export function parseEpisodeNumbers(value: string): EpisodeNumbers {
   const xEpisode = /(?:^|[^0-9])(\d{1,2})x(\d{1,3})(?:[^0-9]|$)/i.exec(value);
   if (xEpisode) return { seasonNumber: Number(xEpisode[1]), episodeNumber: Number(xEpisode[2]) };
   return {};
+}
+
+/**
+ * Accepts only a real calendar date written as YYYY-MM-DD. A bare year, an
+ * impossible day/month, or an ISO timestamp is rejected so a year can never be
+ * disguised as a premiere date.
+ */
+export function parsePremieredDate(value: unknown): string | null {
+  const text = typeof value === "string" ? value.trim() : "";
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (month < 1 || month > 12 || day < 1) return null;
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (day > daysInMonth[month - 1]) return null;
+  return text;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
