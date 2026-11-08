@@ -398,3 +398,32 @@ dialog::backdrop { background: #000b; }.dialog-actions { justify-content: flex-e
 @keyframes soft-cinema-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes soft-cinema-dialog-enter { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @keyframes soft-cinema-backdrop-enter { from { opacity: 0; } to { opacity: 1; } }
+
+/* Ticket 06 · B4a detail page states: wrapping title, local skeleton, failure and offline copy. */
+.detail-copy h2 { max-width: 100%; overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+.detail-copy h2:focus { outline: none; }
+.detail-copy h2:focus-visible { outline: 3px solid var(--lavender); outline-offset: 6px; }
+.detail-skeleton { display: grid; gap: 24px; margin-top: 8px; padding: clamp(20px, 3vw, 40px); border-radius: var(--r-panel); background: var(--surface); }
+.detail-skeleton-hero { display: grid; grid-template-columns: minmax(190px, 260px) minmax(0, 1fr); align-items: center; gap: clamp(22px, 4vw, 56px); }
+.detail-skeleton-block { display: block; border-radius: 16px; background: var(--surface-2); }
+.detail-skeleton-poster { width: 100%; aspect-ratio: 2 / 3; border-radius: var(--r-poster); }
+.detail-skeleton-copy { display: grid; align-content: center; gap: 12px; }
+.detail-skeleton-meta { width: 38%; height: 14px; }
+.detail-skeleton-title { width: 92%; height: 38px; }
+.detail-skeleton-title-short { width: 64%; }
+.detail-skeleton-action { width: 160px; height: 50px; border-radius: var(--r-pill); }
+.detail-skeleton-line { width: 80%; height: 14px; }
+.detail-skeleton-rows { display: grid; gap: 10px; }
+.detail-skeleton-rows .detail-skeleton-block { height: 84px; border-radius: var(--r-card); }
+@media (max-width: 760px) {
+  .detail-skeleton-hero { grid-template-columns: minmax(110px, 34%) minmax(0, 1fr); gap: 18px; }
+  .detail-skeleton-title { height: 30px; }
+}
+.detail-error { display: grid; justify-items: start; gap: 12px; margin-top: 12px; padding: clamp(22px, 3vw, 40px); border-radius: var(--r-panel); color: var(--error); background: var(--error-surface); }
+.detail-error h2 { margin: 0; color: var(--error); font-size: clamp(22px, 3vw, 30px); }
+.detail-error h2:focus { outline: none; }
+.detail-error h2:focus-visible { outline: 3px solid var(--lavender); outline-offset: 4px; }
+.detail-error p { max-width: 70ch; margin: 0; overflow-wrap: anywhere; color: var(--text); }
+.detail-error-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
+.detail-playback-note { margin: 0 0 14px; padding: 10px 14px; border-radius: var(--r-pill); color: var(--warning); background: var(--warning-on); font-size: 12px; font-weight: 800; }
+.detail-actions .secondary-button:disabled { cursor: not-allowed; opacity: .55; }

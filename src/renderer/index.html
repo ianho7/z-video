@@ -112,35 +112,63 @@
               <button id="media-detail-back" class="text-button" type="button">← 返回片库</button>
               <span class="detail-kicker">你的本地片库</span>
             </div>
-            <div id="detail-offline-banner" class="detail-offline" hidden role="status">
-              <span>来源离线，当前无法播放。已缓存的索引仍可查看。</span>
-              <a href="#source-list">查看来源</a>
-            </div>
-            <div class="detail-hero">
-              <div id="detail-poster" class="detail-poster"><span class="poster-fallback">封面不可用</span></div>
-              <div class="detail-copy">
-                <p id="media-detail-meta" class="detail-meta"></p>
-                <h2 id="media-detail-title"></h2>
-                <div class="detail-actions">
-                  <button id="media-detail-open" class="primary-button" type="button">播放</button>
-                  <button id="media-detail-restart" class="secondary-button" type="button" hidden>从头播放</button>
-                </div>
-                <p id="media-detail-resume" class="detail-resume" hidden></p>
-                <section id="media-detail-plot-section" class="detail-plot-section">
-                  <button id="media-detail-plot-toggle" class="detail-plot-toggle" type="button" aria-expanded="false">剧情简介 <span>展开</span></button>
-                  <p id="media-detail-plot" class="detail-plot collapsed"></p>
-                </section>
-                <p id="detail-plot-empty" class="detail-plot-empty" hidden>暂无简介。为影片添加 NFO 文件和海报后，重新扫描来源即可补全信息。</p>
+            <div id="detail-skeleton" class="detail-skeleton" hidden role="status" aria-label="正在加载详情">
+              <div class="detail-skeleton-hero" aria-hidden="true">
+                <span class="detail-skeleton-block detail-skeleton-poster"></span>
+                <span class="detail-skeleton-copy">
+                  <span class="detail-skeleton-block detail-skeleton-meta"></span>
+                  <span class="detail-skeleton-block detail-skeleton-title"></span>
+                  <span class="detail-skeleton-block detail-skeleton-title detail-skeleton-title-short"></span>
+                  <span class="detail-skeleton-block detail-skeleton-action"></span>
+                  <span class="detail-skeleton-block detail-skeleton-line"></span>
+                </span>
+              </div>
+              <div class="detail-skeleton-rows" aria-hidden="true">
+                <span class="detail-skeleton-block"></span>
+                <span class="detail-skeleton-block"></span>
+                <span class="detail-skeleton-block"></span>
               </div>
             </div>
-            <section id="detail-episodes-section" class="detail-section" hidden aria-labelledby="detail-episodes-title">
-              <div class="section-heading"><h3 id="detail-episodes-title">选集</h3><div id="detail-season-tabs" class="season-tabs" role="group" aria-label="选择季度"></div></div>
-              <div id="detail-episodes" class="episode-list"></div>
-            </section>
-            <section id="detail-file-section" class="detail-section" hidden aria-labelledby="detail-file-title">
-              <h3 id="detail-file-title">文件信息</h3>
-              <dl id="detail-file-info" class="detail-file-info"></dl>
-            </section>
+            <div id="detail-error" class="detail-error" hidden role="alert" aria-labelledby="detail-error-title">
+              <h2 id="detail-error-title" tabindex="-1">详情加载失败</h2>
+              <p id="detail-error-message"></p>
+              <div class="detail-error-actions">
+                <button id="detail-error-retry" class="primary-button" type="button">重试</button>
+                <button id="detail-error-back" class="secondary-button" type="button">返回片库</button>
+              </div>
+            </div>
+            <div id="detail-content">
+              <div id="detail-offline-banner" class="detail-offline" hidden role="status">
+                <span>来源离线：播放和从头播放已禁用。重新连接驱动器或网络位置后，在文件夹页重新扫描。</span>
+                <a href="#source-list">查看文件夹</a>
+              </div>
+              <div class="detail-hero">
+                <div id="detail-poster" class="detail-poster"><span class="poster-fallback">封面不可用</span></div>
+                <div class="detail-copy">
+                  <p id="media-detail-meta" class="detail-meta"></p>
+                  <h2 id="media-detail-title" tabindex="-1"></h2>
+                  <div class="detail-actions">
+                    <button id="media-detail-open" class="primary-button" type="button">播放</button>
+                    <button id="media-detail-restart" class="secondary-button" type="button" hidden>从头播放</button>
+                  </div>
+                  <p id="detail-playback-note" class="detail-playback-note" hidden></p>
+                  <p id="media-detail-resume" class="detail-resume" hidden></p>
+                  <section id="media-detail-plot-section" class="detail-plot-section">
+                    <button id="media-detail-plot-toggle" class="detail-plot-toggle" type="button" aria-expanded="false">剧情简介 <span>展开</span></button>
+                    <p id="media-detail-plot" class="detail-plot collapsed"></p>
+                  </section>
+                  <p id="detail-plot-empty" class="detail-plot-empty" hidden>暂无简介。为影片添加 NFO 文件和海报后，重新扫描来源即可补全信息。</p>
+                </div>
+              </div>
+              <section id="detail-episodes-section" class="detail-section" hidden aria-labelledby="detail-episodes-title">
+                <div class="section-heading"><h3 id="detail-episodes-title">选集</h3><div id="detail-season-tabs" class="season-tabs" role="group" aria-label="选择季度"></div></div>
+                <div id="detail-episodes" class="episode-list"></div>
+              </section>
+              <section id="detail-file-section" class="detail-section" hidden aria-labelledby="detail-file-title">
+                <h3 id="detail-file-title">文件信息</h3>
+                <dl id="detail-file-info" class="detail-file-info"></dl>
+              </section>
+            </div>
           </section>
         </section>
       </main>

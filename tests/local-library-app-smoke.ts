@@ -11,11 +11,21 @@ const INDEX_FILE_COUNT = 8_000;
 const APP_TIMEOUT_MS = 180_000;
 let appDeadline = 0;
 let delayNextLibraryList = false;
+let delayNextDetail = false;
+let failNextDetail = false;
 const originalIpcHandle = ipcMain.handle.bind(ipcMain);
 ipcMain.handle = (channel, listener) => originalIpcHandle(channel, async (event, ...args) => {
   if ((channel === IPC_CHANNELS.localLibraryList || channel === IPC_CHANNELS.localLibraryListCollections) && delayNextLibraryList) {
     delayNextLibraryList = false;
     await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+  if (channel === IPC_CHANNELS.localLibraryGet && delayNextDetail) {
+    delayNextDetail = false;
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  }
+  if (channel === IPC_CHANNELS.localLibraryGet && failNextDetail) {
+    failNextDetail = false;
+    throw new Error("详情读取失败（测试夹具）");
   }
   return listener(event, ...args);
 });
@@ -273,17 +283,128 @@ async function run(): Promise<void> {
     assert.match(showCards.scope, /部作品/, "work view counts works, not files");
     await capture("show-cards");
 
+    const readShowDetail = () => evaluate(window, `(() => {
+      const rows = [...document.querySelectorAll('#detail-episodes .episode-row')];
+      const currentIndex = rows.findIndex((row) => row.classList.contains('current'));
+      return {
+        hidden: document.querySelector('#media-detail')?.hidden,
+        title: document.querySelector('#media-detail-title')?.textContent || '',
+        count: rows.length,
+        currentIndex,
+        currentNumber: currentIndex >= 0 ? rows[currentIndex]?.querySelector('.episode-number')?.textContent || '' : '',
+        navCurrent: document.querySelector('[data-nav][aria-current="page"]')?.dataset.nav || '',
+        backLabel: document.querySelector('#media-detail-back')?.textContent || '',
+        playText: document.querySelector('#media-detail-open')?.textContent || '',
+        playDisabled: document.querySelector('#media-detail-open')?.disabled,
+        rows: rows.map((row) => ({
+          meta: row.querySelector('.episode-duration')?.textContent || '',
+          progress: Boolean(row.querySelector('.episode-progress')),
+          watched: row.classList.contains('watched'),
+          current: row.classList.contains('current'),
+        })),
+      };
+    })()`);
     await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
     const showDetail = await waitFor(
-      "show work detail",
-      () => evaluate(window, "(() => { const rows = [...document.querySelectorAll('#detail-episodes .episode-row')]; const currentIndex = rows.findIndex((row) => row.classList.contains('current')); return { hidden: document.querySelector('#media-detail')?.hidden, title: document.querySelector('#media-detail-title')?.textContent || '', count: rows.length, currentIndex, currentNumber: currentIndex >= 0 ? rows[currentIndex]?.querySelector('.episode-number')?.textContent || '' : '' }; })()"),
+      "show work detail with per-episode state",
+      readShowDetail,
       (value) => value.hidden === false && value.title === "Owned Next Show" && value.count === 3,
     );
     assert.equal(showDetail.currentIndex, 0, "opening the work card selects the first unwatched episode");
     assert.equal(showDetail.currentNumber, "01");
+    assert.equal(showDetail.navCurrent, "all", "detail keeps the navigation item of the page it came from");
+    assert.match(showDetail.backLabel, /返回片库/, "detail back label names the work-list origin");
+    assert.equal(showDetail.playText, "播放", "an unwatched episode uses the plain play label");
+    assert.deepEqual(showDetail.rows.map((row: { meta: string }) => row.meta), ["未看", "未看", "未看"], "every episode starts with its own unwatched state");
+    assert.equal(showDetail.rows.some((row: { progress: boolean }) => row.progress), false, "an unwatched episode never draws a progress bar");
     await capture("show-detail");
+
+    await evaluate(window, "document.querySelector('#media-detail-open')?.click()");
+    await waitFor("show episode playback ready", () => evaluate(window, "document.querySelector('#player-toggle-button')?.disabled === false"), Boolean, 15_000);
+    await evaluate(window, "window.zVideo.localPlayback.command({ type: 'seek', positionSec: 5 })");
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await evaluate(window, "document.querySelector('#player-close-button')?.click()");
+    await waitFor("player closed after saving episode progress", () => evaluate(window, "document.querySelector('[data-view=player]')?.hidden === true"), Boolean);
+    const returnedDetail = await evaluate(window, "document.querySelector('#media-detail')?.hidden === false");
+    if (!returnedDetail) {
+      await waitFor("show list after playback close", () => evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.dataset.mediaId || ''"), Boolean);
+      await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
+    }
+    const episodeStates = await waitFor("per-episode watched/progress state", readShowDetail, (value) => value.hidden === false && value.title === "Owned Next Show" && value.count === 3);
+    assert.ok(episodeStates.rows[0]?.meta !== "未看", `the played episode keeps its own progress: ${JSON.stringify(episodeStates.rows)}`);
+    assert.equal(episodeStates.rows[1]?.meta, "未看", "a later episode stays unwatched when only the first episode was played");
+    assert.equal(episodeStates.rows[2]?.meta, "未看", "the last episode stays unwatched");
+    assert.equal(episodeStates.rows[0]?.progress || episodeStates.rows[0]?.watched, true, "the played episode shows its own progress or watched mark");
+    if (episodeStates.currentIndex === 0 && /^看到 /.test(episodeStates.rows[0]?.meta ?? "")) {
+      assert.equal(episodeStates.playText, "继续播放 · 第 1 季 第 1 集", "the main action names the exact episode it continues");
+    } else if (episodeStates.currentIndex === 0 && episodeStates.rows[0]?.watched) {
+      assert.equal(episodeStates.playText, "重新播放", "a finished selected episode uses the replay label");
+    }
+    await capture("show-detail-episode-states");
     await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
     await waitFor("back to show work list", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === true);
+
+    delayNextDetail = true;
+    await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
+    const loadingState = await evaluate(window, `(() => ({
+      detailVisible: document.querySelector('#media-detail')?.hidden === false,
+      skeletonVisible: document.querySelector('#detail-skeleton')?.hidden === false,
+      contentHidden: document.querySelector('#detail-content')?.hidden,
+      errorHidden: document.querySelector('#detail-error')?.hidden,
+      title: document.querySelector('#media-detail-title')?.textContent || '',
+      posterImages: document.querySelectorAll('#detail-poster img').length,
+      episodes: document.querySelectorAll('#detail-episodes .episode-row').length,
+      playText: document.querySelector('#media-detail-open')?.textContent || '',
+      busy: document.querySelector('#media-detail')?.getAttribute('aria-busy'),
+      skeletonBlocks: document.querySelectorAll('#detail-skeleton .detail-skeleton-block').length,
+    }))()`);
+    assert.equal(loadingState.detailVisible, true);
+    assert.equal(loadingState.skeletonVisible, true, "detail loading uses a local skeleton");
+    assert.equal(loadingState.contentHidden, true, "loading hides the previous work's title, cover and actions");
+    assert.equal(loadingState.errorHidden, true);
+    assert.equal(loadingState.title, "", "the previous title is cleared while the next detail loads");
+    assert.equal(loadingState.posterImages, 0, "the previous cover is not kept during loading");
+    assert.equal(loadingState.episodes, 0, "the previous episode list is not kept during loading");
+    assert.equal(loadingState.playText, "播放");
+    assert.equal(loadingState.busy, "true", "the detail region reports busy while loading");
+    assert.ok(loadingState.skeletonBlocks >= 3, "the detail skeleton has poster and text blocks");
+    await capture("detail-loading");
+    await waitFor("detail loaded after skeleton", readShowDetail, (value) => value.hidden === false && value.title === "Owned Next Show" && value.count === 3);
+    assert.equal(await evaluate(window, "document.querySelector('#media-detail')?.getAttribute('aria-busy')"), null);
+
+    await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
+    await waitFor("back after skeleton", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === true);
+
+    failNextDetail = true;
+    await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
+    const detailError = await waitFor(
+      "detail error state",
+      () => evaluate(window, `(() => ({
+        errorVisible: document.querySelector('#detail-error')?.hidden === false,
+        skeletonHidden: document.querySelector('#detail-skeleton')?.hidden,
+        contentHidden: document.querySelector('#detail-content')?.hidden,
+        title: document.querySelector('#media-detail-title')?.textContent || '',
+        posterImages: document.querySelectorAll('#detail-poster img').length,
+        message: document.querySelector('#detail-error-message')?.textContent || '',
+        buttons: [...document.querySelectorAll('#detail-error button')].map((button) => button.textContent || ''),
+        errorTitle: document.querySelector('#detail-error-title')?.textContent || '',
+        focusedId: document.activeElement instanceof HTMLElement ? document.activeElement.id : '',
+      }))()`),
+      (value) => value.errorVisible === true,
+    );
+    assert.equal(detailError.skeletonHidden, true, "a failed load stops the skeleton");
+    assert.equal(detailError.contentHidden, true, "a failed load never keeps the previous cover, title or play button");
+    assert.equal(detailError.title, "", "a failed load clears the stale title");
+    assert.equal(detailError.posterImages, 0, "a failed load clears the stale cover");
+    assert.match(detailError.message, /详情读取失败/);
+    assert.equal(detailError.errorTitle, "详情加载失败");
+    assert.deepEqual(detailError.buttons, ["重试", "返回片库"]);
+    assert.ok(detailError.focusedId === "detail-error-title" || detailError.focusedId === "detail-error-retry", `error state moves focus into the failure panel: ${detailError.focusedId}`);
+    await capture("detail-error");
+    await evaluate(window, "document.querySelector('#detail-error-retry')?.click()");
+    await waitFor("detail retry recovers", readShowDetail, (value) => value.hidden === false && value.title === "Owned Next Show" && value.count === 3);
+    await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
+    await waitFor("back after retry", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === true);
 
     await evaluate(window, "document.querySelector('#library-filter-buttons [data-filter=episode]')?.click()");
     const episodeCards = await waitFor(
@@ -296,6 +417,16 @@ async function run(): Promise<void> {
     assert.match(episodeCards.scope, /集/);
     assert.doesNotMatch(episodeCards.scope, /部作品/);
     await capture("episodes");
+    await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
+    const episodeOrigin = await waitFor(
+      "single-episode detail origin",
+      () => evaluate(window, "({ hidden: document.querySelector('#media-detail')?.hidden, backLabel: document.querySelector('#media-detail-back')?.textContent || '', navCurrent: document.querySelector('[data-nav][aria-current=\"page\"]')?.dataset.nav || '' })"),
+      (value) => value.hidden === false && /返回单集列表/.test(value.backLabel),
+    );
+    assert.match(episodeOrigin.backLabel, /返回单集列表/, "detail opened from the file-level episode list names that origin");
+    await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
+    await waitFor("back to episode list", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === true);
+    assert.equal(await evaluate(window, "document.querySelector('#library-filter')?.value"), "episode", "returning from a single-episode detail keeps the file-level filter");
     await evaluate(window, "document.querySelector('#library-filter-buttons [data-filter=all]')?.click()");
     await waitFor("all works after single-episode check", () => evaluate(window, "document.querySelector('#library-grid')?.getAttribute('aria-busy') || ''"), (value) => value === "");
 
@@ -334,8 +465,20 @@ async function run(): Promise<void> {
       () => evaluate(window, "({ scope: document.querySelector('#page-scope')?.textContent || '', mediaId: document.querySelector('#library-grid [data-media-id]')?.dataset.mediaId || '', title: document.querySelector('#library-grid .media-card-title')?.textContent || '' })"),
       (value) => value.scope.includes("第 2 页") && Boolean(value.mediaId && value.title),
     );
+    const originScroll = await evaluate(window, `(() => {
+      window.scrollTo(0, 240);
+      const scroller = document.scrollingElement;
+      return { top: scroller ? scroller.scrollTop : window.scrollY, y: window.scrollY, max: scroller ? scroller.scrollHeight - window.innerHeight : 0 };
+    })()`);
+    assert.ok(originScroll.top > 100, `the work list is tall enough to restore a scroll position: ${JSON.stringify(originScroll)}`);
     await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
-    await waitFor("second-page detail", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === false);
+    const secondPageDetail = await waitFor(
+      "second-page detail",
+      () => evaluate(window, "({ hidden: document.querySelector('#media-detail')?.hidden, backLabel: document.querySelector('#media-detail-back')?.textContent || '', top: document.scrollingElement ? document.scrollingElement.scrollTop : window.scrollY })"),
+      (value) => value.hidden === false,
+    );
+    assert.match(secondPageDetail.backLabel, /返回片库/);
+    assert.equal(secondPageDetail.top, 0, "opening detail starts at the detail title rather than the old list offset");
     await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
     const restoredPage = await waitFor(
       "restored second page and focus",
@@ -343,6 +486,11 @@ async function run(): Promise<void> {
       (value) => value.scope.includes("第 2 页") && value.activeMediaId === pageTwo.mediaId,
     );
     assert.equal(restoredPage.activeMediaId, pageTwo.mediaId);
+    await waitFor(
+      "restored list scroll position",
+      () => evaluate(window, "document.scrollingElement ? document.scrollingElement.scrollTop : window.scrollY"),
+      (top) => Math.abs(Number(top) - originScroll.top) <= 4,
+    );
     await evaluate(window, "(() => { const search = document.querySelector('#library-search-input'); if (!(search instanceof HTMLInputElement)) throw new Error('search missing'); search.value = 'Next Episode 1'; search.dispatchEvent(new Event('input', { bubbles: true })); })()");
     await waitFor("episode search returns its show work card", () => evaluate(window, "document.querySelector('#library-grid .media-card-title')?.textContent || ''"), (title) => title === "Owned Next Show");
     assert.equal(await evaluate(window, "document.querySelectorAll('#library-grid .media-card').length"), 1, "an episode-name search returns the show card once");
@@ -384,11 +532,19 @@ async function run(): Promise<void> {
 
     const detail = await waitFor(
       "long detail view",
-      () => evaluate(window, "(() => { const button = document.querySelector('#media-detail-open')?.getBoundingClientRect(); const plot = document.querySelector('#media-detail-plot'); const toggle = document.querySelector('#media-detail-plot-toggle'); const rating = document.querySelector('.detail-rating-badge'); const style = plot ? getComputedStyle(plot) : undefined; return { hidden: document.querySelector('#media-detail')?.hidden, title: document.querySelector('#media-detail-title')?.textContent || '', meta: document.querySelector('#media-detail-meta')?.textContent || '', ratingLabel: rating?.getAttribute('aria-label') || '', ratingShape: rating?.querySelector('path')?.getAttribute('d') || '', plot: plot?.textContent || '', plotCollapsed: plot?.classList.contains('collapsed'), plotMeasure: plot && style ? { width: plot.clientWidth, scrollHeight: plot.scrollHeight, lineHeight: style.lineHeight, display: style.display } : undefined, toggleHidden: toggle?.hidden, plotExpanded: toggle?.getAttribute('aria-expanded'), movieInfo: document.querySelector('#detail-file-info')?.textContent || '', episodesHidden: document.querySelector('#detail-episodes-section')?.hidden, button: button ? { left: button.left, right: button.right, top: button.top, bottom: button.bottom } : undefined, viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight } }; })()"),
+      () => evaluate(window, "(() => { const button = document.querySelector('#media-detail-open')?.getBoundingClientRect(); const plot = document.querySelector('#media-detail-plot'); const toggle = document.querySelector('#media-detail-plot-toggle'); const rating = document.querySelector('.detail-rating-badge'); const style = plot ? getComputedStyle(plot) : undefined; const titleElement = document.querySelector('#media-detail-title'); const titleStyle = titleElement ? getComputedStyle(titleElement) : undefined; return { hidden: document.querySelector('#media-detail')?.hidden, title: titleElement?.textContent || '', titleLayout: titleElement && titleStyle ? { whiteSpace: titleStyle.whiteSpace, textOverflow: titleStyle.textOverflow, lineHeight: Number.parseFloat(titleStyle.lineHeight), clientHeight: titleElement.clientHeight, scrollHeight: titleElement.scrollHeight, clientWidth: titleElement.clientWidth, scrollWidth: titleElement.scrollWidth } : undefined, focusedTitle: document.activeElement?.id === 'media-detail-title', backLabel: document.querySelector('#media-detail-back')?.textContent || '', navCurrent: document.querySelector('[data-nav][aria-current=\"page\"]')?.dataset.nav || '', meta: document.querySelector('#media-detail-meta')?.textContent || '', ratingLabel: rating?.getAttribute('aria-label') || '', ratingShape: rating?.querySelector('path')?.getAttribute('d') || '', plot: plot?.textContent || '', plotCollapsed: plot?.classList.contains('collapsed'), plotMeasure: plot && style ? { width: plot.clientWidth, scrollHeight: plot.scrollHeight, lineHeight: style.lineHeight, display: style.display } : undefined, toggleHidden: toggle?.hidden, plotExpanded: toggle?.getAttribute('aria-expanded'), movieInfo: document.querySelector('#detail-file-info')?.textContent || '', episodesHidden: document.querySelector('#detail-episodes-section')?.hidden, button: button ? { left: button.left, right: button.right, top: button.top, bottom: button.bottom } : undefined, viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight } }; })()"),
       (value) => value.hidden === false && value.title === LONG_TITLE && value.plot.length >= LONG_PLOT.length && Boolean(value.button),
     );
     await capture("movie-detail");
     assert.equal(detail.title, LONG_TITLE);
+    assert.ok(detail.titleLayout, "the detail title exposes its layout");
+    assert.notEqual(detail.titleLayout.whiteSpace, "nowrap", "long detail titles wrap instead of staying on one clipped line");
+    assert.notEqual(detail.titleLayout.textOverflow, "ellipsis", "long detail titles are never ellipsized");
+    assert.ok(detail.titleLayout.scrollHeight >= detail.titleLayout.lineHeight * 1.5, `a long title occupies multiple visual lines: ${JSON.stringify(detail.titleLayout)}`);
+    assert.ok(detail.titleLayout.scrollWidth <= detail.titleLayout.clientWidth + 1, "the wrapped title never overflows horizontally");
+    assert.match(detail.backLabel, /返回搜索结果/, "detail opened from search names the search origin");
+    assert.equal(detail.navCurrent, "all", "search results keep the navigation item they were entered from");
+    assert.equal(detail.focusedTitle, true, "opening a detail moves focus to its title");
     assert.equal(detail.plot, LONG_PLOT);
     assert.equal(detail.plotCollapsed, true, `synopsis starts collapsed to three visual lines: ${JSON.stringify(detail.plotMeasure)}`);
     assert.equal(detail.toggleHidden, false, "a short synopsis spanning four visual lines can be expanded");
@@ -408,7 +564,13 @@ async function run(): Promise<void> {
     await waitFor("movie card focus restoration", () => evaluate(window, "document.activeElement?.dataset.mediaId || ''"), (mediaId) => mediaId === openedMediaId);
     assert.equal(await evaluate(window, "document.activeElement?.dataset.mediaId"), openedMediaId, "return restores focus to the opened movie card");
     await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
-    await waitFor("movie detail after focus check", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === false);
+    const repeatedMovie = await waitFor(
+      "movie detail ready after focus check",
+      () => evaluate(window, "({ hidden: document.querySelector('#media-detail')?.hidden, contentHidden: document.querySelector('#detail-content')?.hidden, openDisabled: document.querySelector('#media-detail-open')?.disabled, title: document.querySelector('#media-detail-title')?.textContent || '', playText: document.querySelector('#media-detail-open')?.textContent || '', restartHidden: document.querySelector('#media-detail-restart')?.hidden, restartDisabled: document.querySelector('#media-detail-restart')?.disabled })"),
+      (value) => value.hidden === false && value.contentHidden === false && value.openDisabled === false && value.title === LONG_TITLE,
+    );
+    assert.equal(repeatedMovie.playText, "播放", "a movie with no saved progress uses the plain play label");
+    assert.equal(repeatedMovie.restartHidden, true, "the secondary restart action only appears once progress exists");
 
     window.setSize(900, 640);
     const minOuter = window.getSize();
@@ -435,6 +597,27 @@ async function run(): Promise<void> {
     await waitFor("player close complete", () => evaluate(window, "document.querySelector('[data-view=player]')?.hidden === true"), Boolean);
     const savedPlayback = await evaluate(window, `window.zVideo.localLibrary.get(${JSON.stringify(openedMediaId)}).then((result) => result.detail?.playback?.positionSec ?? 0)`);
     assert.ok(savedPlayback > 0, "playback progress exists before the preservation check");
+    await evaluate(window, "(() => { const input = document.querySelector('#library-search-input'); if (!(input instanceof HTMLInputElement)) throw new Error('search missing'); input.value = 'Owned UX Audit Feature Film 2026'; input.dispatchEvent(new Event('input', { bubbles: true })); })()");
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    await waitFor("movie card after playback", () => evaluate(window, "document.querySelector('#library-grid .media-card-title')?.textContent || ''"), (title) => title === LONG_TITLE);
+    await evaluate(window, `document.querySelector('#library-grid [data-media-id="${openedMediaId}"]')?.click()`);
+    const resumedMovie = await waitFor(
+      "resumed movie main action",
+      () => evaluate(window, "({ hidden: document.querySelector('#media-detail')?.hidden, contentHidden: document.querySelector('#detail-content')?.hidden, title: document.querySelector('#media-detail-title')?.textContent || '', playText: document.querySelector('#media-detail-open')?.textContent || '', restartHidden: document.querySelector('#media-detail-restart')?.hidden, restartDisabled: document.querySelector('#media-detail-restart')?.disabled, focusedTitle: document.activeElement?.id === 'media-detail-title' })"),
+      (value) => value.hidden === false && value.contentHidden === false && value.title === LONG_TITLE,
+    );
+    const savedMoviePlayback = await evaluate(window, `window.zVideo.localLibrary.get(${JSON.stringify(openedMediaId)}).then((result) => ({ watched: result.detail?.playback?.watched === true }))`);
+    if (savedMoviePlayback.watched) {
+      assert.equal(resumedMovie.playText, "重新播放", "a finished movie uses the replay label");
+      assert.equal(resumedMovie.restartHidden, true, "a finished movie has no separate restart action");
+    } else {
+      assert.match(resumedMovie.playText, /^继续播放 · 00:0[5-9]$/, "a movie with progress uses the continue label");
+      assert.equal(resumedMovie.restartHidden, false, "progress keeps the secondary restart action visible");
+      assert.equal(resumedMovie.restartDisabled, false, "restart is enabled while the source is online");
+    }
+    assert.equal(resumedMovie.focusedTitle, true);
+    await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
+    await waitFor("back from resumed movie detail", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === true);
     await evaluate(window, "document.querySelector('#choose-folder-button')?.click()");
     await waitFor("cancel-preservation scan running", readScanUi, (value) => value.pillVisible && value.pillCancelVisible && value.pillCancelDisabled === false, 20_000);
     await evaluate(window, "document.querySelector('#scan-pill-cancel')?.click()");
@@ -444,6 +627,7 @@ async function run(): Promise<void> {
     const playbackAfterCancel = await evaluate(window, `window.zVideo.localLibrary.get(${JSON.stringify(openedMediaId)}).then((result) => result.detail?.playback?.positionSec ?? 0)`);
     assert.equal(playbackAfterCancel, savedPlayback, "cancelling a scan preserves saved playback progress");
     await evaluate(window, "document.querySelector('[data-nav=home]')?.click()");
+    await waitFor("home navigation active before continue shelf", () => evaluate(window, "document.querySelector('[data-nav=home]')?.getAttribute('aria-current')"), (value) => value === "page");
     const continueMin = await waitFor(
       "continue row at minimum size",
       () => evaluate(window, "(() => { const card = document.querySelector('.continue-card .continue-copy > strong'); const firstTitle = document.querySelector('.media-card-title'); const firstRect = firstTitle?.getBoundingClientRect(); return { hidden: document.querySelector('#continue-section')?.hidden, title: card?.textContent || '', top: card?.getBoundingClientRect().top || -1, bottom: card?.getBoundingClientRect().bottom || -1, firstTitle: firstTitle?.textContent || '', firstTop: firstRect?.top || -1, firstBottom: firstRect?.bottom || -1, height: document.documentElement.clientHeight }; })()"),
@@ -453,6 +637,18 @@ async function run(): Promise<void> {
     await capture("home");
     assert.equal(continueMin.title, LONG_TITLE);
     assert.ok(continueMin.firstTitle.length > 0);
+
+    await evaluate(window, "document.querySelector('#hero-detail')?.click()");
+    const homeDetail = await waitFor(
+      "home hero detail origin",
+      () => evaluate(window, "({ hidden: document.querySelector('#media-detail')?.hidden, title: document.querySelector('#media-detail-title')?.textContent || '', backLabel: document.querySelector('#media-detail-back')?.textContent || '', navCurrent: document.querySelector('[data-nav][aria-current=\"page\"]')?.dataset.nav || '' })"),
+      (value) => value.hidden === false && value.title === LONG_TITLE,
+    );
+    assert.match(homeDetail.backLabel, /返回首页/, "detail opened from home names the home origin");
+    assert.equal(homeDetail.navCurrent, "home", "home stays the highlighted navigation item while its detail is open");
+    await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
+    await waitFor("back to home from hero detail", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === true);
+    await waitFor("home restored after detail", () => evaluate(window, "({ nav: document.querySelector('[data-nav][aria-current=\"page\"]')?.dataset.nav || '', hero: document.querySelector('#home-hero')?.hidden })"), (value) => value.nav === "home" && value.hero === false);
 
     window.setSize(1040, 720);
     const defaultAfterContinueOuter = window.getSize();
@@ -475,9 +671,34 @@ async function run(): Promise<void> {
     await evaluate(window, "(() => { const search = document.querySelector('#library-search-input'); search.value = 'Owned UX Audit Feature Film 2026'; search.dispatchEvent(new Event('input', { bubbles: true })); })()");
     await waitFor("offline movie card", () => evaluate(window, "document.querySelector('#library-grid .media-card-title')?.textContent || ''"), (value) => value === LONG_TITLE);
     await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
-    await waitFor("offline movie detail", () => evaluate(window, "document.querySelector('#detail-offline-banner')?.hidden === false && document.querySelector('#media-detail-open')?.disabled === true"), Boolean);
-    assert.equal(await evaluate(window, "document.querySelector('#media-detail-restart')?.disabled"), true, "offline movie cannot restart playback");
+    const offlineDetail = await waitFor(
+      "offline movie detail",
+      () => evaluate(window, `(() => ({
+        bannerVisible: document.querySelector('#detail-offline-banner')?.hidden === false,
+        bannerText: document.querySelector('#detail-offline-banner')?.textContent || '',
+        openDisabled: document.querySelector('#media-detail-open')?.disabled === true,
+        playText: document.querySelector('#media-detail-open')?.textContent || '',
+        restartDisabled: document.querySelector('#media-detail-restart')?.disabled === true,
+        restartHidden: document.querySelector('#media-detail-restart')?.hidden,
+        noteHidden: document.querySelector('#detail-playback-note')?.hidden,
+        noteText: document.querySelector('#detail-playback-note')?.textContent || '',
+        resumeText: document.querySelector('#media-detail-resume')?.textContent || '',
+        backLabel: document.querySelector('#media-detail-back')?.textContent || '',
+        navCurrent: document.querySelector('[data-nav][aria-current="page"]')?.dataset.nav || '',
+      }))()`),
+      (value) => value.bannerVisible && value.openDisabled,
+    );
+    assert.equal(offlineDetail.restartDisabled, true, "offline movie cannot restart playback");
+    assert.equal(offlineDetail.restartHidden, false, "saved progress keeps the restart action visible but disabled");
+    assert.match(offlineDetail.bannerText, /重新连接|重新扫描/, "offline banner explains how to recover");
+    assert.equal(offlineDetail.noteHidden, false, "the disabled play actions state their reason nearby");
+    assert.match(offlineDetail.noteText, /离线|重新连接/, "the reason is written next to the buttons");
+    assert.doesNotMatch(offlineDetail.resumeText, /可继续/, "an offline detail never claims playback can be resumed");
+    assert.match(offlineDetail.backLabel, /返回搜索结果/, "offline detail keeps the search origin");
+    assert.equal(offlineDetail.navCurrent, "all");
     await capture("movie-offline");
+    await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
+    await waitFor("offline detail back to search", () => evaluate(window, "({ hidden: document.querySelector('#media-detail')?.hidden, query: document.querySelector('#library-search-input')?.value || '', title: document.querySelector('#library-grid .media-card-title')?.textContent || '' })"), (value) => value.hidden === true && value.query === "Owned UX Audit Feature Film 2026" && value.title === LONG_TITLE);
 
     const diagnostics = await readFile(join(logDir, "diagnostics.jsonl"), "utf8").catch(() => "");
     assert.match(diagnostics, /"operation":"window\.renderer-ready"/);
@@ -498,6 +719,14 @@ async function run(): Promise<void> {
       defaultWindow: { outer: defaultOuter },
       detail: { default: { title: detail.title, plotLength: detail.plot.length, play: detail.button, viewport: detail.viewport }, minimum: { outer: minOuter, content: minContent, playVisible: minDetail.visible, viewport: minDetail.viewport } },
       player: { currentTitle: player.currentTitle, controlsHeight: player.controlsHeight, titleInControls: player.titleInControls, titleOutsideSurface: player.titleOutsideSurface },
+      detailStates: {
+        perEpisode: episodeStates.rows,
+        loading: { skeleton: loadingState.skeletonVisible, contentHidden: loadingState.contentHidden, title: loadingState.title, posterImages: loadingState.posterImages, blocks: loadingState.skeletonBlocks },
+        error: { message: detailError.message, buttons: detailError.buttons, contentHidden: detailError.contentHidden, focusedId: detailError.focusedId },
+        longTitle: { text: detail.title, layout: detail.titleLayout, backLabel: detail.backLabel, nav: detail.navCurrent },
+        origin: { secondPageBack: secondPageDetail.backLabel, episodeBack: episodeOrigin.backLabel, homeBack: homeDetail.backLabel, offlineBack: offlineDetail.backLabel, restoredScroll: originScroll.top },
+        offline: { banner: offlineDetail.bannerText, note: offlineDetail.noteText, resume: offlineDetail.resumeText, disabled: { play: offlineDetail.openDisabled, restart: offlineDetail.restartDisabled } },
+      },
       continueWatching: { minimum: continueMin, default: continueDefault, defaultContent: continueDefault.windowContent, defaultOuter: defaultAfterContinueOuter },
     }, null, 2) + "\n", "utf8");
     process.stdout.write("PASS: production local-library UX smoke (running scan, detail/player layout, continue row)\n");
