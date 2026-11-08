@@ -60,7 +60,17 @@ const searchClear = document.querySelector<HTMLButtonElement>("#library-search-c
 const filterSelect = document.querySelector<HTMLSelectElement>("#library-filter");
 const sortSelect = document.querySelector<HTMLSelectElement>("#library-sort");
 const scanStatus = document.querySelector<HTMLElement>("#scan-status");
-const cancelScanButton = document.querySelector<HTMLButtonElement>("#cancel-scan-button");
+const scanStatusText = document.querySelector<HTMLElement>("#scan-status-text");
+const homeScanCard = document.querySelector<HTMLElement>("#home-scan-card");
+const homeScanStatus = document.querySelector<HTMLElement>("#home-scan-status");
+const homeScanFolder = document.querySelector<HTMLElement>("#home-scan-folder");
+const homeScanScanned = document.querySelector<HTMLElement>("#home-scan-scanned");
+const homeScanAdded = document.querySelector<HTMLElement>("#home-scan-added");
+const homeScanElapsed = document.querySelector<HTMLElement>("#home-scan-elapsed");
+const appNotice = document.querySelector<HTMLElement>("#app-notice");
+const appNoticeTitle = document.querySelector<HTMLElement>("#app-notice-title");
+const appNoticeBody = document.querySelector<HTMLElement>("#app-notice-body");
+const appNoticeClose = document.querySelector<HTMLButtonElement>("#app-notice-close");
 const continueSection = document.querySelector<HTMLElement>("#continue-section");
 const continueRow = document.querySelector<HTMLElement>("#continue-row");
 const continueScope = document.querySelector<HTMLElement>("#continue-scope");
@@ -114,6 +124,7 @@ const removeDialog = document.querySelector<HTMLDialogElement>("#remove-source-d
 let removingSourceId: string | undefined;
 let state: LocalLibraryState | undefined;
 let activePage: { items: LocalMediaItem[]; totalCount: number; page: number; pageSize: number } | undefined;
+let libraryLoadedOnce = false;
 let activeDetail: LocalMediaDetail | undefined;
 let selectedMediaId: string | undefined;
 let returnFocusMediaId: string | undefined;
@@ -124,6 +135,9 @@ let continueEpoch = 0;
 let searchTimer: number | undefined;
 let scanId: string | undefined;
 let scanProgress: LocalScanProgress | undefined;
+let scanStartedAtMs: number | undefined;
+let scanStartedScanId: string | undefined;
+let scanElapsedTimer: number | undefined;
 let scanRefreshTimer: number | undefined;
 let scanRefreshInFlight = false;
 let scanRefreshQueued = false;
@@ -248,6 +262,7 @@ function showPlayer(visible: boolean): void {
   if (playerCurrentTitle && playerCurrentTitle.textContent !== nextTitle) playerCurrentTitle.textContent = nextTitle;
   if (visible && !wasVisible) playerSurface?.focus();
   if (wasVisible !== visible) window.zVideo.overlay.visible(visible);
+  updateScanUi();
 }
 
 const overlayIds = ["player-current-title", "player-close-button", "player-elapsed", "player-time", "player-seek", "player-toggle-button", "player-next-button", "player-back-10", "player-forward-10", "player-volume", "player-mute-button", "player-settings-button", "player-fullscreen-button", "player-settings", "player-settings-close", "player-speed", "player-audio-track", "player-subtitle-track", "player-subtitle-file-button", "player-status", "player-ended", "player-countdown", "player-play-next", "player-cancel-next", "player-return-list"];
@@ -573,11 +588,24 @@ function renderState(next: LocalLibraryState): void {
 
 function renderPage(page: { items: LocalMediaItem[]; totalCount: number; page: number; pageSize: number }): void {
   activePage = page;
-  if (onboarding) onboarding.hidden = !(state?.status !== "error" && homeVisible && state?.sources.length === 0 && page.totalCount === 0 && !currentQuery.query);
+  if (onboarding) onboarding.hidden = !(state?.status !== "error" && homeVisible && page.totalCount === 0 && !currentQuery.query);
   const focusedMediaId = preserveGridFocus();
   if (!libraryGrid || !libraryEmpty) return;
   artworkObserver?.disconnect();
-  libraryGrid.replaceChildren(...page.items.map(card));
+  const existingCards = new Map<string, HTMLElement>();
+  libraryGrid.querySelectorAll<HTMLElement>("[data-media-id]").forEach((button) => {
+    const article = button.closest<HTMLElement>(".media-card");
+    if (article && button.dataset.mediaId) existingCards.set(button.dataset.mediaId, article);
+  });
+  const keptCards = new Set<HTMLElement>();
+  for (const item of page.items) {
+    const node = existingCards.get(item.mediaId) ?? card(item);
+    libraryGrid.append(node);
+    keptCards.add(node);
+  }
+  libraryGrid.querySelectorAll<HTMLElement>(":scope > *").forEach((child) => {
+    if (!keptCards.has(child)) child.remove();
+  });
   libraryEmpty.hidden = page.items.length > 0;
   updateEmptyCopy(page.totalCount);
   if (searchAllTypesButton) searchAllTypesButton.hidden = !(page.items.length === 0 && Boolean(currentQuery.query) && currentQuery.filter !== "all");
@@ -598,6 +626,7 @@ function renderPage(page: { items: LocalMediaItem[]; totalCount: number; page: n
   }, { rootMargin: "320px" });
   libraryGrid.querySelectorAll<HTMLElement>("[data-artwork-media-id]").forEach((element) => artworkObserver?.observe(element));
   restoreGridFocus(focusedMediaId);
+  updateScanUi();
 }
 
 function renderSourceFilters(): void {
@@ -800,19 +829,22 @@ async function loadLibrary(): Promise<boolean> {
   const epoch = ++requestEpoch;
   const query = { ...currentQuery };
   if (libraryGrid && libraryEmpty) {
-    libraryEmpty.hidden = true;
+    if (!libraryLoadedOnce) {
+      libraryEmpty.hidden = true;
+      libraryGrid.replaceChildren(...Array.from({ length: 8 }, () => {
+        const skeleton = document.createElement("div");
+        skeleton.className = "media-skeleton";
+        skeleton.setAttribute("aria-hidden", "true");
+        return skeleton;
+      }));
+    }
     libraryGrid.setAttribute("aria-busy", "true");
-    libraryGrid.replaceChildren(...Array.from({ length: 8 }, () => {
-      const skeleton = document.createElement("div");
-      skeleton.className = "media-skeleton";
-      skeleton.setAttribute("aria-hidden", "true");
-      return skeleton;
-    }));
     setMessage("正在加载片库…");
   }
   try {
     const result = await window.zVideo.localLibrary.list(query);
     if (epoch !== requestEpoch || !result.page) return false;
+    libraryLoadedOnce = true;
     renderState(result.state);
     renderPage(result.page);
     libraryGrid?.removeAttribute("aria-busy");
@@ -884,6 +916,7 @@ async function openDetail(mediaId: string, returnFocusTarget?: HTMLElement): Pro
   if (recentSection) recentSection.hidden = true;
   if (showsSection) showsSection.hidden = true;
   if (continueSection) continueSection.hidden = true;
+  updateScanUi();
   setMessage("正在打开详情…");
   try {
     const result = await window.zVideo.localLibrary.get(mediaId);
@@ -1018,6 +1051,7 @@ function closeDetail(): void {
   activeDetailPlayback = undefined;
   selectedMediaId = undefined;
   if (detail) detail.hidden = true;
+  updateScanUi();
   if (collectionSection) collectionSection.hidden = homeVisible;
   void Promise.all([loadLibrary(), homeVisible ? loadHomeShelves() : Promise.resolve()]).then(([applied]) => {
     if (applied) {
@@ -1084,12 +1118,15 @@ async function runScan(operation: () => Promise<LocalScanResult>): Promise<void>
   chooseFolderButton?.setAttribute("disabled", "true");
   openVideoButton?.setAttribute("disabled", "true");
   scanId = undefined;
+  scanStartedAtMs = undefined;
+  scanStartedScanId = undefined;
+  stopScanElapsedTimer();
   document.querySelector("#scan-warnings")?.replaceChildren();
   scanProgress = { scanId: "pending", sourceId: "", status: "running", scannedFiles: 0, importedFiles: 0, updatedFiles: 0, warningCount: 0 };
   scanCommit = 0;
   scanRenderedCommit = -1;
   scanRefreshQueued = false;
-  cancelScanButton?.setAttribute("hidden", "true");
+  updateScanUi();
   setMessage("正在扫描本地来源…");
   try {
     const result = await operation();
@@ -1102,8 +1139,11 @@ async function runScan(operation: () => Promise<LocalScanResult>): Promise<void>
     if (!isDetailOrPlayerVisible()) requestEpoch += 1;
     scanCommit = scanRenderedCommit;
     scanRefreshQueued = false;
-    if (scanStatus) scanStatus.textContent = "扫描失败";
-    setMessage(error instanceof Error ? error.message : "扫描失败。", true);
+    stopScanElapsedTimer();
+    updateScanUi();
+    const message = error instanceof Error ? error.message : "扫描失败。";
+    showAppNotice("扫描失败", message, "error");
+    setMessage(message, true);
   } finally {
     sourceBusy = false;
     scanId = undefined;
@@ -1112,15 +1152,96 @@ async function runScan(operation: () => Promise<LocalScanResult>): Promise<void>
       scanCommit = scanRenderedCommit;
       scanRefreshQueued = false;
     }
+    stopScanElapsedTimer();
     if (scanRefreshTimer !== undefined) {
       window.clearTimeout(scanRefreshTimer);
       scanRefreshTimer = undefined;
     }
-    cancelScanButton?.setAttribute("hidden", "true");
+    updateScanUi();
     scanFolderButton?.removeAttribute("disabled");
     chooseFolderButton?.removeAttribute("disabled");
     openVideoButton?.removeAttribute("disabled");
   }
+}
+
+function formatScanElapsed(elapsedMs: number): string {
+  const seconds = Math.max(0, Math.floor(elapsedMs / 1000));
+  if (seconds < 60) return `${seconds} 秒`;
+  return `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
+}
+
+function scanSourceLabel(progress: LocalScanProgress): string {
+  if (progress.sourceLabel) return progress.sourceLabel;
+  return state?.sources.find((source) => source.sourceId === progress.sourceId)?.label || "所选文件夹";
+}
+
+function showAppNotice(title: string, body: string, tone: "info" | "warning" | "error" = "info"): void {
+  if (!appNotice) return;
+  if (appNoticeTitle) appNoticeTitle.textContent = title;
+  if (appNoticeBody) appNoticeBody.textContent = body;
+  appNotice.dataset.state = tone;
+  appNotice.hidden = false;
+}
+
+function hideAppNotice(): void {
+  if (appNotice) appNotice.hidden = true;
+}
+
+function stopScanElapsedTimer(): void {
+  if (scanElapsedTimer === undefined) return;
+  window.clearInterval(scanElapsedTimer);
+  scanElapsedTimer = undefined;
+}
+
+function noteScanStarted(progress: LocalScanProgress): void {
+  if (scanStartedScanId !== progress.scanId) {
+    scanStartedScanId = progress.scanId;
+    scanStartedAtMs = Date.now();
+  }
+  if (scanElapsedTimer !== undefined) return;
+  scanElapsedTimer = window.setInterval(() => {
+    if (scanProgress?.status !== "running") {
+      stopScanElapsedTimer();
+      return;
+    }
+    updateScanUi();
+  }, 1_000);
+}
+
+function updateScanUi(): void {
+  const running = scanProgress?.status === "running";
+  if (scanStatus) {
+    scanStatus.hidden = !running;
+    if (running && scanStatusText) {
+      const text = `扫描中 · ${scanProgress?.scannedFiles ?? 0}`;
+      if (scanStatusText.textContent !== text) scanStatusText.textContent = text;
+    }
+  }
+  const showCard = Boolean(running && homeVisible && !isDetailOrPlayerVisible());
+  if (homeScanCard) homeScanCard.hidden = !showCard;
+  onboarding?.classList.toggle("is-compact", showCard);
+  if (showCard && scanProgress) {
+    const label = scanSourceLabel(scanProgress);
+    const pending = scanProgress.scanId === "pending";
+    if (homeScanStatus) homeScanStatus.textContent = pending ? "正在准备扫描…" : `正在扫描「${label}」`;
+    if (homeScanFolder) homeScanFolder.textContent = pending ? "选择文件夹后开始只读扫描；不会移动、改名或上传文件。" : `当前文件夹：${label} · 只读取，不移动、不改名、不上传文件。`;
+    if (homeScanScanned) homeScanScanned.textContent = String(scanProgress.scannedFiles);
+    if (homeScanAdded) homeScanAdded.textContent = String(scanProgress.importedFiles);
+    if (homeScanElapsed) homeScanElapsed.textContent = scanStartedAtMs === undefined ? "计算中" : formatScanElapsed(Date.now() - scanStartedAtMs);
+  }
+  const canCancel = Boolean(running && scanId);
+  document.querySelectorAll<HTMLButtonElement>("[data-cancel-scan]").forEach((button) => {
+    button.hidden = !running;
+    button.disabled = !canCancel;
+  });
+}
+
+function requestScanCancel(): void {
+  if (!scanId || scanProgress?.status !== "running") return;
+  document.querySelectorAll<HTMLButtonElement>("[data-cancel-scan]").forEach((button) => { button.disabled = true; });
+  void window.zVideo.localLibrary.cancelScan(scanId).catch(() => {
+    document.querySelectorAll<HTMLButtonElement>("[data-cancel-scan]").forEach((button) => { button.disabled = false; });
+  });
 }
 
 function renderScanProgress(progress: LocalScanProgress): void {
@@ -1129,12 +1250,12 @@ function renderScanProgress(progress: LocalScanProgress): void {
   if (scanPanel) scanPanel.hidden = false;
   const panelTitle = document.querySelector<HTMLElement>("#scan-panel-title");
   const counts = document.querySelector<HTMLElement>("#scan-counts");
-  const cancel = document.querySelector<HTMLButtonElement>("[data-cancel-scan]");
   if (panelTitle) panelTitle.textContent = ({ running: "正在扫描", completed: "扫描完成", cancelled: "扫描已取消", partial: "扫描部分完成", unavailable: "来源不可用" })[progress.status];
   if (counts) counts.textContent = "已扫描 " + progress.scannedFiles + " · 新增 " + progress.importedFiles + " · 更新 " + progress.updatedFiles + " · 警告 " + progress.warningCount;
-  if (cancel) cancel.hidden = progress.status !== "running";
   const commit = progress.importedFiles + progress.updatedFiles;
   if (progress.status === "running") {
+    if (progress.scanId !== "pending") scanId = progress.scanId;
+    noteScanStarted(progress);
     scanCommit = Math.max(scanCommit, commit);
     scheduleScanRefresh();
   } else {
@@ -1143,21 +1264,35 @@ function renderScanProgress(progress: LocalScanProgress): void {
       scanRefreshTimer = undefined;
     }
     scanRefreshQueued = false;
+    stopScanElapsedTimer();
     if (!isDetailOrPlayerVisible()) requestEpoch += 1;
+    const notice = scanNotice(progress);
+    if (notice) showAppNotice(notice.title, notice.body, notice.tone);
   }
-  if (progress.status === "running") {
-    scanId = progress.scanId;
-    if (scanStatus) scanStatus.textContent = `扫描中：${progress.scannedFiles} 个视频，新增 ${progress.importedFiles}，更新 ${progress.updatedFiles}`;
-    cancelScanButton?.removeAttribute("hidden");
-  } else if (scanStatus) {
-    scanStatus.textContent = `${progress.status === "completed" ? "扫描完成" : progress.status === "cancelled" ? "扫描已取消" : progress.status === "partial" ? "扫描部分完成" : "来源离线"}：${progress.scannedFiles} 个视频`;
+  updateScanUi();
+}
+
+function scanNotice(result: LocalScanProgress & { error?: string }): { title: string; body: string; tone: "info" | "warning" | "error" } | undefined {
+  if (!result.sourceId) return undefined;
+  if (result.status === "completed") {
+    const warnings = result.warningCount ? `${result.warningCount} 条警告` : "无警告";
+    return { title: "扫描完成", body: `新增 ${result.importedFiles} 项 · 更新 ${result.updatedFiles} 项 · ${warnings}。摘要会保留到你主动关闭，列表刷新不会覆盖它。`, tone: result.warningCount ? "warning" : "info" };
   }
+  if (result.status === "cancelled") {
+    return { title: "扫描已取消", body: `已扫描 ${result.scannedFiles} 个视频，已保留此前索引和播放进度。`, tone: "warning" };
+  }
+  if (result.status === "unavailable") {
+    return { title: "来源离线", body: "已保留此前索引和播放进度；重新连接后在文件夹页重新扫描。", tone: "error" };
+  }
+  return { title: "扫描部分完成", body: `已扫描 ${result.scannedFiles} 个视频 · 新增 ${result.importedFiles} · 更新 ${result.updatedFiles} · ${result.warningCount} 条警告。${result.error ?? "部分目录无法读取，已保留此前索引。"}`, tone: "warning" };
 }
 
 function renderScanResult(result: LocalScanResult): void {
   renderScanProgress(result);
   const warnings = document.querySelector<HTMLElement>("#scan-warnings");
   if (warnings) warnings.replaceChildren(...result.warnings.map((warning) => { const item = document.createElement("li"); item.textContent = warning; return item; }));
+  const notice = scanNotice(result);
+  if (notice) showAppNotice(notice.title, notice.body, notice.tone);
   if (result.status === "completed") setMessage(`扫描完成：新增 ${result.importedFiles}，更新 ${result.updatedFiles}。`);
   else if (result.status === "cancelled") setMessage("扫描已取消，已保留此前索引和播放历史。", false);
   else if (result.status === "unavailable") setMessage("来源离线，已保留此前索引和播放历史。", true);
@@ -1177,6 +1312,7 @@ function navigateHomeOrLibrary(target: string): void {
   });
   if (homeVisible) { setQuery({ query: undefined, sourceId: undefined, filter: "all" }); void loadContinueWatching(); void loadHomeShelves(); }
   else { if (hero) hero.hidden = true; if (continueSection) continueSection.hidden = true; if (recentSection) recentSection.hidden = true; if (showsSection) showsSection.hidden = true; setQuery({ sourceId: undefined, filter: target === "movie" || target === "show" ? target : "all", sort: target === "recent" ? "added_desc" : currentQuery.sort }); void loadLibrary(); }
+  updateScanUi();
 }
 document.querySelectorAll<HTMLButtonElement>("[data-nav]").forEach((button) => button.addEventListener("click", () => navigateHomeOrLibrary(button.dataset.nav ?? "home")));
 document.querySelectorAll<HTMLButtonElement>("[data-shelf]").forEach((button) => button.addEventListener("click", () => navigateHomeOrLibrary(button.dataset.shelf ?? "all")));
@@ -1185,7 +1321,10 @@ document.querySelector<HTMLButtonElement>("#manage-sources-button")?.addEventLis
 document.querySelector<HTMLAnchorElement>('#detail-offline-banner a')?.addEventListener("click", (event) => { event.preventDefault(); showSources(); });
 document.querySelectorAll<HTMLButtonElement>('[data-import="folder"]').forEach((button) => button.addEventListener("click", () => chooseFolderButton?.click()));
 document.querySelectorAll<HTMLButtonElement>('[data-import="video"]').forEach((button) => button.addEventListener("click", () => openVideoButton?.click()));
-document.querySelector<HTMLButtonElement>("[data-cancel-scan]")?.addEventListener("click", () => cancelScanButton?.click());
+document.addEventListener("click", (event) => {
+  if ((event.target as HTMLElement).closest("[data-cancel-scan]")) requestScanCancel();
+});
+appNoticeClose?.addEventListener("click", hideAppNotice);
 document.querySelector<HTMLButtonElement>("#library-filter-buttons")?.addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-filter]");
   const filter = button?.dataset.filter as LocalLibraryQuery["filter"] | undefined;
@@ -1217,11 +1356,6 @@ for (const [id, restart] of [["#hero-play", false], ["#hero-restart", true]] as 
 chooseFolderButton?.addEventListener("click", () => void runScan(() => window.zVideo.localLibrary.chooseFolder()));
 openVideoButton?.addEventListener("click", () => void handleImport(() => window.zVideo.localLibrary.openVideo()));
 scanFolderButton?.addEventListener("click", () => void runScan(() => window.zVideo.localLibrary.scanFolder()));
-cancelScanButton?.addEventListener("click", () => {
-  if (!scanId) return;
-  cancelScanButton.setAttribute("disabled", "true");
-  void window.zVideo.localLibrary.cancelScan(scanId).finally(() => cancelScanButton.removeAttribute("disabled"));
-});
 allSourcesButton?.addEventListener("click", () => {
   setQuery({ sourceId: undefined, page: 1 });
   allSourcesButton.setAttribute("aria-pressed", "true");
@@ -1230,7 +1364,7 @@ allSourcesButton?.addEventListener("click", () => {
 sourceList?.addEventListener("click", (event) => {
   const target = (event.target as HTMLElement).closest<HTMLElement>("[data-source-id], [data-refresh-source-id], [data-remove-source-id], [data-cancel-source-scan]");
   if (!target) return;
-  if (target.dataset.cancelSourceScan) { cancelScanButton?.click(); return; }
+  if (target.dataset.cancelSourceScan) { requestScanCancel(); return; }
   const refreshId = target.dataset.refreshSourceId;
   const removeId = target.dataset.removeSourceId;
   const sourceId = target.dataset.sourceId;

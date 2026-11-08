@@ -94,6 +94,8 @@ export interface LocalPlaybackTarget {
 export interface LocalScanProgress {
   scanId: string;
   sourceId: string;
+  /** Renderer-safe folder label for the source being scanned; never a path. */
+  sourceLabel?: string;
   status: "running" | "completed" | "cancelled" | "partial" | "unavailable";
   scannedFiles: number;
   importedFiles: number;

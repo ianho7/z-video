@@ -34,6 +34,19 @@ async function run(): Promise<void> {
   const queries: Array<Record<string, unknown>> = [];
   const artworkRequests: string[] = [];
   const delayedResponses: Array<(value: { dataUrl: string }) => void> = [];
+  const cancelledScans: string[] = [];
+  let delayNextList = false;
+  const scanProgress = (overrides: Record<string, unknown> = {}) => ({
+    scanId: "scan_123e4567-e89b-42d3-a456-426614174000",
+    sourceId: item.sourceId,
+    status: "running",
+    scannedFiles: 1_204,
+    importedFiles: 986,
+    updatedFiles: 18,
+    warningCount: 2,
+    sourceLabel: "窗口测试文件夹",
+    ...overrides,
+  });
   const preferences = { volume: 100, muted: false, speed: 1, sort: "recent" };
   ipcMain.handle("local-library:state", async () => state);
   ipcMain.handle("local-library:choose-folder", async () => ({
@@ -50,7 +63,15 @@ async function run(): Promise<void> {
   ipcMain.handle("local-library:open-video", async () => ({ status: "imported", item, state }));
   ipcMain.handle("local-library:list", async (_event, query) => {
     queries.push((query ?? {}) as Record<string, unknown>);
+    if (delayNextList) {
+      delayNextList = false;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
     return { state, page: { query: query ?? { page: 1, pageSize: 50 }, page: 1, pageSize: 50, totalCount: items.length, items } };
+  });
+  ipcMain.handle("local-library:scan-cancel", async (_event, scanId: string) => {
+    cancelledScans.push(scanId);
+    return true;
   });
   ipcMain.handle("local-library:get", async (_event, mediaId: string) => ({ state, item: items.find((candidate) => candidate.mediaId === mediaId) }));
   ipcMain.handle("local-library:artwork", async (_event, request: { mediaId: string }) => {
@@ -165,9 +186,100 @@ async function run(): Promise<void> {
   await waitFor("movie filter", async () => queries.at(-1)?.filter, (value) => value === "movie");
   await window.webContents.executeJavaScript("document.querySelector('[data-nav=home]').click()", true);
 
-  await window.webContents.executeJavaScript("document.querySelector('#choose-folder-button').click()", true);
-  const folderScan = await waitFor("folder scan status", () => window.webContents.executeJavaScript("document.querySelector('#scan-status')?.textContent || ''", true) as Promise<string>, (value) => /扫描完成/.test(value));
-  assert.match(folderScan, /扫描完成/);
+  await window.webContents.send("local-library:scan-progress", scanProgress());
+  const readScanState = () => window.webContents.executeJavaScript(`(() => {
+    const viewport = { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight };
+    const rect = (selector) => { const element = document.querySelector(selector); const box = element?.getBoundingClientRect(); return box ? { left: box.left, right: box.right, top: box.top, bottom: box.bottom } : null; };
+    const pill = document.querySelector('#scan-status');
+    const card = document.querySelector('#home-scan-card');
+    const pillCancel = document.querySelector('#scan-pill-cancel');
+    const homeCancel = document.querySelector('#home-scan-cancel');
+    return {
+      viewport,
+      pillVisible: Boolean(pill && !pill.hidden && rect('#scan-status')?.right > 0),
+      pillText: pill?.textContent || '',
+      pillRect: rect('#scan-status'),
+      pillCancelVisible: Boolean(pillCancel && !pillCancel.hidden),
+      cardVisible: Boolean(card && !card.hidden && rect('#home-scan-card')?.right > 0),
+      cardText: card?.textContent || '',
+      cardRect: rect('#home-scan-card'),
+      cardCancelRect: rect('#home-scan-cancel'),
+      homeCancelVisible: Boolean(homeCancel && !homeCancel.hidden),
+      noticeVisible: Boolean(document.querySelector('#app-notice') && !document.querySelector('#app-notice').hidden),
+      noticeTitle: document.querySelector('#app-notice-title')?.textContent || '',
+      noticeText: document.querySelector('#app-notice')?.textContent || '',
+      skeletons: document.querySelectorAll('#library-grid .media-skeleton').length,
+      cards: document.querySelectorAll('#library-grid .media-card').length,
+      busy: document.querySelector('#library-grid')?.getAttribute('aria-busy'),
+      cardHidden: document.querySelector('#home-scan-card')?.hidden,
+      pillHidden: document.querySelector('#scan-status')?.hidden,
+    };
+  })()`, true) as Promise<any>;
+  const assertInside = (label: string, rect: { left: number; right: number; top: number; bottom: number } | null, viewport: { width: number; height: number }) => {
+    assert.ok(rect, `${label} has a layout box`);
+    assert.ok(rect!.left >= 0 && rect!.right <= viewport.width + 1 && rect!.top >= 0 && rect!.bottom <= viewport.height + 1, `${label} stays inside ${viewport.width}x${viewport.height}: ${JSON.stringify(rect)}`);
+  };
+  const runningScan = await waitFor("running scan pill and home scan card", readScanState, (value) => value.pillVisible && value.cardVisible);
+  assert.match(runningScan.pillText, /扫描中/);
+  assert.match(runningScan.pillText, /1204/);
+  assert.match(runningScan.cardText, /窗口测试文件夹/);
+  assert.match(runningScan.cardText, /已扫描/);
+  assert.match(runningScan.cardText, /已加入/);
+  assert.match(runningScan.cardText, /已用时间/);
+  assert.doesNotMatch(runningScan.cardText, /%/);
+  assert.equal(runningScan.homeCancelVisible, true);
+  assert.equal(runningScan.pillCancelVisible, true);
+  assertInside("default-width scan pill", runningScan.pillRect, runningScan.viewport);
+  assertInside("default-width home scan card", runningScan.cardRect, runningScan.viewport);
+  assertInside("default-width home scan cancel", runningScan.cardCancelRect, runningScan.viewport);
+
+  window.setSize(900, 640);
+  const compactScan = await waitFor("compact scan layout", readScanState, (value) => value.viewport.width <= 905 && value.pillVisible && value.cardVisible);
+  assertInside("900px scan pill", compactScan.pillRect, compactScan.viewport);
+  assertInside("900px home scan card", compactScan.cardRect, compactScan.viewport);
+  assertInside("900px home scan cancel", compactScan.cardCancelRect, compactScan.viewport);
+  window.setSize(1040, 720);
+  await waitFor("default size restored", readScanState, (value) => value.viewport.width > 1000);
+
+  await window.webContents.executeJavaScript("document.querySelector('#home-scan-cancel').click()", true);
+  await waitFor("home cancel invokes scan cancel", async () => cancelledScans.length, (count) => count === 1);
+  assert.equal(cancelledScans[0], scanProgress().scanId);
+  window.webContents.send("local-library:scan-progress", scanProgress({ status: "cancelled", error: "扫描已取消，已保留此前索引和播放历史" }));
+  const cancelledNotice = await waitFor("cancelled scan notice", readScanState, (value) => value.noticeVisible && /扫描已取消/.test(value.noticeTitle));
+  assert.match(cancelledNotice.noticeText, /保留/);
+  assert.equal(cancelledNotice.cardHidden, true);
+  assert.equal(cancelledNotice.pillHidden, true);
+  await window.webContents.executeJavaScript("document.querySelector('#app-notice-close').click()", true);
+  await waitFor("cancelled notice dismissed", readScanState, (value) => value.noticeVisible === false);
+
+  window.webContents.send("local-library:scan-progress", scanProgress({ scanId: "scan_123e4567-e89b-42d3-a456-426614174001" }));
+  await waitFor("second running scan", readScanState, (value) => value.pillVisible && value.cardVisible);
+  await window.webContents.executeJavaScript("document.querySelector('#scan-pill-cancel').click()", true);
+  await waitFor("topbar cancel invokes scan cancel", async () => cancelledScans.length, (count) => count === 2);
+  assert.equal(cancelledScans[1], "scan_123e4567-e89b-42d3-a456-426614174001");
+  window.webContents.send("local-library:scan-progress", scanProgress({ scanId: "scan_123e4567-e89b-42d3-a456-426614174001", status: "cancelled", error: "扫描已取消，已保留此前索引和播放历史" }));
+  await waitFor("second cancelled notice", readScanState, (value) => value.noticeVisible && /扫描已取消/.test(value.noticeTitle));
+  await window.webContents.executeJavaScript("document.querySelector('#app-notice-close').click()", true);
+
+  window.webContents.send("local-library:scan-progress", scanProgress({ scanId: "scan_123e4567-e89b-42d3-a456-426614174002" }));
+  await waitFor("completing scan running", readScanState, (value) => value.pillVisible && value.cardVisible);
+  window.webContents.send("local-library:scan-progress", scanProgress({ scanId: "scan_123e4567-e89b-42d3-a456-426614174002", status: "completed" }));
+  const completedNotice = await waitFor("completed scan summary", readScanState, (value) => value.noticeVisible && /扫描完成/.test(value.noticeTitle));
+  assert.match(completedNotice.noticeText, /新增 986/);
+  assert.match(completedNotice.noticeText, /更新 18/);
+  assert.match(completedNotice.noticeText, /2 条警告/);
+  assert.equal(completedNotice.cardHidden, true);
+  assert.equal(completedNotice.pillHidden, true);
+
+  delayNextList = true;
+  await window.webContents.executeJavaScript("document.querySelector('#library-filter-buttons [data-filter=movie]').click()", true);
+  const refreshing = await waitFor("later library refresh without skeleton", readScanState, (value) => value.busy === "true");
+  assert.equal(refreshing.skeletons, 0, "only the first list load may replace the grid with skeletons");
+  assert.ok(refreshing.cards > 0, "later list refreshes keep existing cards on screen");
+  assert.equal(refreshing.noticeText, completedNotice.noticeText, "list refresh does not overwrite the scan summary");
+  await waitFor("refreshed list settled", readScanState, (value) => !value.busy);
+  await window.webContents.executeJavaScript("document.querySelector('#app-notice-close').click()", true);
+  await waitFor("completed notice dismissed", readScanState, (value) => value.noticeVisible === false);
 
   await window.webContents.executeJavaScript("document.querySelector('[data-media-id]').click()", true);
   const detail = await waitFor("detail view", () => window.webContents.executeJavaScript(`({ hidden: document.querySelector('#media-detail')?.hidden, title: document.querySelector('#media-detail-title')?.textContent || '' })`, true) as Promise<{ hidden: boolean; title: string }>, (value) => value.hidden === false && Boolean(value.title));
@@ -190,7 +302,7 @@ async function run(): Promise<void> {
   await waitFor("removed source", () => window.webContents.executeJavaScript("document.querySelector('#source-list').textContent", true) as Promise<string>, (text) => /尚未添加来源/.test(text));
 
   window.close();
-  for (const channel of ["local-library:state", "local-library:source-remove", "local-library:choose-folder", "local-library:open-video", "local-library:list", "local-library:get", "local-library:artwork", "local-library:continue-watching", "app-preferences:get", "app-preferences:set-sort"]) ipcMain.removeHandler(channel);
+  for (const channel of ["local-library:state", "local-library:source-remove", "local-library:choose-folder", "local-library:open-video", "local-library:list", "local-library:scan-cancel", "local-library:get", "local-library:artwork", "local-library:continue-watching", "app-preferences:get", "app-preferences:set-sort"]) ipcMain.removeHandler(channel);
 }
 
 run().then(() => app.quit()).catch((error: unknown) => {
