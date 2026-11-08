@@ -2,11 +2,15 @@ import type { LocalMediaItem, LocalPlaybackState } from "../../shared/local-libr
 import { biscuitPath, wavePath } from "../shapes.js";
 import { formatBytes, formatTime } from "./shared.js";
 
-export function episodeRows(episodes: LocalMediaItem[], selectedMediaId: string, playback?: LocalPlaybackState): HTMLButtonElement[] {
+export function episodeRows(episodes: LocalMediaItem[], selectedMediaId: string, playback?: LocalPlaybackState, episodePlayback: LocalPlaybackState[] = []): HTMLButtonElement[] {
+  const stateByMediaId = new Map(episodePlayback.map((state) => [state.mediaId, state]));
   return episodes.map((episode) => {
     const button = document.createElement("button");
     const selected = episode.mediaId === selectedMediaId;
-    const watched = selected && Boolean(playback?.watched);
+    const state = stateByMediaId.get(episode.mediaId) ?? (selected ? playback : undefined);
+    const watched = Boolean(state?.watched);
+    const positionSec = state?.positionSec ?? 0;
+    const hasProgress = !watched && positionSec > 0;
     button.type = "button";
     button.className = `episode-row${selected ? " current" : ""}${watched ? " watched" : ""}`;
     button.dataset.mediaId = episode.mediaId;
@@ -31,7 +35,9 @@ export function episodeRows(episodes: LocalMediaItem[], selectedMediaId: string,
     title.textContent = episode.title;
     const meta = document.createElement("span");
     meta.className = "episode-duration";
-    meta.textContent = watched ? "已看完" : selected && playback ? `已看 ${formatTime(playback.positionSec)}` : episode.available ? "可播放" : "来源离线";
+    const metaParts = [watched ? "已看完" : hasProgress ? `看到 ${formatTime(positionSec)}` : "未看"];
+    if (!episode.available) metaParts.push("来源离线");
+    meta.textContent = metaParts.join(" · ");
     copy.append(title, meta);
     const mark = document.createElement("span");
     mark.className = "episode-watched-mark";
@@ -47,11 +53,11 @@ export function episodeRows(episodes: LocalMediaItem[], selectedMediaId: string,
     markShape.append(biscuit, check);
     mark.append(markShape);
     button.append(poster, number, copy, mark);
-    if (selected && playback && playback.durationSec && playback.durationSec > 0) {
-      const percentage = Math.min(100, playback.positionSec / playback.durationSec * 100);
+    if (hasProgress && state?.durationSec && state.durationSec > 0) {
+      const percentage = Math.min(100, positionSec / state.durationSec * 100);
       const progress = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       progress.classList.add("episode-progress");
-      progress.setAttribute("aria-label", `播放进度 ${Math.min(100, playback.positionSec / playback.durationSec * 100).toFixed(0)}%`);
+      progress.setAttribute("aria-label", `播放进度 ${percentage.toFixed(0)}%`);
       progress.setAttribute("role", "img");
       progress.setAttribute("viewBox", "0 0 100 10");
       const path = wavePath(100, 5, 1.6, 6);

@@ -80,6 +80,7 @@ export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, 
     if (!rootPath) throw new Error("本地片库来源不存在");
     return database.scanFolder(rootPath);
   }));
+  ipcMain.handle(IPC_CHANNELS.localLibraryRescanAll, () => withUiOperation("local-library.rescan-all", () => database.rescanAll()));
   ipcMain.handle(IPC_CHANNELS.localLibraryScan, () => withUiOperation("local-library.scan", async () => {
     const selection = await dialog.showOpenDialog(window, { properties: ["openDirectory"] });
     if (selection.canceled || !selection.filePaths[0]) return { status: "cancelled", scanId: "scan_00000000-0000-4000-8000-000000000000", sourceId: "", scannedFiles: 0, importedFiles: 0, updatedFiles: 0, warningCount: 0, warnings: [], error: "已取消选择片库目录" } as const;
@@ -103,6 +104,7 @@ export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, 
       IPC_CHANNELS.localLibraryContinueWatching,
       IPC_CHANNELS.localLibraryRemoveSource,
       IPC_CHANNELS.localLibraryRefreshSource,
+      IPC_CHANNELS.localLibraryRescanAll,
       IPC_CHANNELS.localLibraryScan,
       IPC_CHANNELS.localLibraryCancelScan,
     ]) ipcMain.removeHandler(channel);

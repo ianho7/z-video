@@ -27,8 +27,13 @@ export type LocalLibraryStatus = "ready" | "error";
 export interface LocalSourceSummary {
   sourceId: string;
   label: string;
+  /** Drive or parent-folder clue only; never a full/relative root path. */
+  locationHint: string;
   available: boolean;
+  /** Indexed files for this source, including files kept while the source is offline. */
   itemCount: number;
+  /** Works (collections) aggregated from this source's indexed files. */
+  collectionCount: number;
 }
 
 export type LocalMediaKind = "movie" | "show" | "episode" | "unclassified";
@@ -69,6 +74,12 @@ export interface LocalMediaDetail {
   episodes: LocalMediaItem[];
   /** Saved local progress for the selected media, when one exists. */
   playback?: LocalPlaybackState;
+  /**
+   * Saved local progress for every file in the same collection, keyed by the
+   * opaque media ID. Omitted entries have never been played. No path or URI is
+   * ever part of this list.
+   */
+  episodePlayback?: LocalPlaybackState[];
 }
 
 export interface LocalContinueWatchingItem {
@@ -243,6 +254,8 @@ export interface LocalLibraryApi {
   listContinueWatching(): Promise<{ state: LocalLibraryState; items: LocalContinueWatchingItem[] }>;
   removeSource(sourceId: string): Promise<LocalLibraryState>;
   refreshSource(sourceId: string): Promise<LocalScanResult>;
+  /** Rescan every registered folder sequentially; results follow the source order. */
+  rescanAll(): Promise<LocalScanResult[]>;
   scanFolder(): Promise<LocalScanResult>;
   cancelScan(scanId: string): Promise<boolean>;
   onScanProgress(listener: (progress: LocalScanProgress) => void): () => void;

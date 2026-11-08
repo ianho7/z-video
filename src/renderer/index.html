@@ -16,14 +16,12 @@
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
           <span><strong>z-video</strong><small>本地片库</small></span>
         </div>
-        <nav class="top-nav" aria-label="浏览"><button type="button" data-nav="home" aria-current="page">首页</button><button type="button" data-nav="all">全部</button><button type="button" data-nav="movie">电影</button><button type="button" data-nav="show">剧集</button></nav>
+        <nav class="top-nav" aria-label="浏览"><button type="button" data-nav="home" aria-current="page">首页</button><button type="button" data-nav="all">全部</button><button type="button" data-nav="movie">电影</button><button type="button" data-nav="show">剧集</button><button type="button" data-nav="folder">文件夹</button></nav>
         <span id="scan-status" class="scan-pill" role="status" aria-live="polite" hidden><span class="scan-pill-dot" aria-hidden="true"></span><span id="scan-status-text" class="scan-pill-text"></span><button id="scan-pill-cancel" class="scan-pill-cancel" type="button" data-cancel-scan aria-label="取消扫描" hidden>×</button></span>
         <form id="library-search-form" class="search-box" role="search"><span aria-hidden="true">⌕</span><input id="library-search-input" type="search" autocomplete="off" placeholder="搜索片名、剧集" aria-label="搜索片名、剧集" /><button id="library-search-clear" class="icon-button" type="button" hidden aria-label="清除搜索">×</button></form>
-        <details class="add-menu"><summary aria-label="添加">+</summary><div class="header-actions">
+        <details class="add-menu"><summary aria-label="添加">添加</summary><div class="header-actions">
           <button id="choose-folder-button" class="secondary-button" type="button">添加文件夹</button>
-          <button id="scan-folder-button" class="secondary-button" type="button">扫描目录</button>
-          <button id="open-video-button" class="primary-button" type="button">打开视频</button>
-          <button id="manage-sources-button" class="secondary-button" type="button">管理来源</button>
+          <button id="open-video-button" class="primary-button" type="button">添加单个视频</button>
         </div></details>
       </header>
       <section id="app-notice" class="app-notice" role="status" aria-live="polite" aria-labelledby="app-notice-title" hidden>
@@ -33,12 +31,37 @@
 
       <main class="library-layout">
         <section id="sources-page" class="sources-page" hidden aria-labelledby="sources-title">
-          <button type="button" class="text-button" data-nav="home">← 返回首页</button>
-          <div class="sources-heading"><div><p class="eyebrow">SOURCES</p><h1 id="sources-title">我的来源</h1><p class="muted">管理你的本地媒体文件夹</p></div><div><button type="button" class="secondary-button" data-import="video">打开单个视频</button> <button type="button" class="primary-button" data-import="folder">添加文件夹</button></div></div>
-          <p id="sources-message" class="status" role="status" aria-live="polite"></p><div id="scan-panel" class="scan-panel" hidden aria-live="polite"><h2 id="scan-panel-title"></h2><p id="scan-counts"></p><ul id="scan-warnings"></ul><button type="button" class="secondary-button" data-cancel-scan hidden>取消扫描</button></div>
-          <span id="all-source-count" hidden>0</span><div id="source-list" class="source-list" role="list"></div><p class="muted source-note">媒体只读；移除来源只清理应用索引，不删除源文件。</p>
+          <div class="sources-heading">
+            <div><p class="eyebrow">FOLDERS</p><h1 id="sources-title">文件夹</h1><p class="muted">管理你的本地媒体文件夹；只读取，不移动、不改名、不上传文件。</p></div>
+            <div class="sources-heading-actions">
+              <button id="rescan-all-button" type="button" class="secondary-button">重新扫描全部</button>
+              <button type="button" class="secondary-button" data-import="video">添加单个视频</button>
+              <button type="button" class="primary-button" data-import="folder">添加文件夹</button>
+            </div>
+          </div>
+          <p id="sources-message" class="status" role="status" aria-live="polite"></p>
+          <div id="scan-panel" class="scan-panel" hidden aria-live="polite"><h2 id="scan-panel-title"></h2><p id="scan-counts"></p><ul id="scan-warnings"></ul><button type="button" class="secondary-button" data-cancel-scan hidden>取消扫描</button></div>
+          <div id="source-list" class="source-list" role="list"></div>
+          <p class="muted source-note">添加单个视频只加入选中的文件，并登记它所在的文件夹；以后重新扫描会把整个文件夹里的内容也加入片库。移除文件夹会删除观看进度，但不会删除源文件。</p>
         </section>
-        <dialog id="remove-source-dialog" aria-labelledby="remove-source-title" aria-describedby="remove-source-copy"><h2 id="remove-source-title">移除来源？</h2><p id="remove-source-copy"></p><div class="dialog-actions"><button type="button" class="secondary-button" id="remove-source-cancel">取消</button><button type="button" class="primary-button" id="remove-source-confirm">移除来源</button></div></dialog>
+        <dialog id="remove-source-dialog" aria-labelledby="remove-source-title" aria-describedby="remove-source-copy">
+          <h2 id="remove-source-title">移除文件夹？</h2>
+          <p id="remove-source-copy" class="dialog-lead"></p>
+          <ul class="dialog-consequences">
+            <li class="danger">这些视频的观看进度和已看状态会一并删除；重新扫描不能恢复进度。</li>
+            <li class="safe">文件夹里的视频和其他文件不会被删除、移动或改名。</li>
+          </ul>
+          <p id="remove-source-error" class="dialog-error" role="alert" hidden></p>
+          <div class="dialog-actions"><button type="button" class="secondary-button" id="remove-source-cancel" autofocus>取消</button><button type="button" class="destructive-button" id="remove-source-confirm">移除并删除进度</button></div>
+          <p class="dialog-foot"><span class="key">Esc</span> 取消并关闭；默认焦点在“取消”。</p>
+        </dialog>
+        <dialog id="offline-source-dialog" aria-labelledby="offline-source-title" aria-describedby="offline-source-copy">
+          <h2 id="offline-source-title">文件夹不可用</h2>
+          <p id="offline-source-copy" class="dialog-lead"></p>
+          <p id="offline-source-error" class="dialog-error" role="alert" hidden></p>
+          <div class="dialog-actions"><button type="button" class="secondary-button" id="offline-source-keep" autofocus>暂时断开（保留记录）</button><button type="button" class="destructive-button" id="offline-source-delete">已删除（清理记录）</button></div>
+          <p class="dialog-foot"><span class="key">Esc</span> 暂时保留记录并关闭。</p>
+        </dialog>
         <section class="library-content" aria-labelledby="library-title">
           <div class="content-heading">
             <div>
@@ -112,35 +135,63 @@
               <button id="media-detail-back" class="text-button" type="button">← 返回片库</button>
               <span class="detail-kicker">你的本地片库</span>
             </div>
-            <div id="detail-offline-banner" class="detail-offline" hidden role="status">
-              <span>来源离线，当前无法播放。已缓存的索引仍可查看。</span>
-              <a href="#source-list">查看来源</a>
-            </div>
-            <div class="detail-hero">
-              <div id="detail-poster" class="detail-poster"><span class="poster-fallback">封面不可用</span></div>
-              <div class="detail-copy">
-                <p id="media-detail-meta" class="detail-meta"></p>
-                <h2 id="media-detail-title"></h2>
-                <div class="detail-actions">
-                  <button id="media-detail-open" class="primary-button" type="button">播放</button>
-                  <button id="media-detail-restart" class="secondary-button" type="button" hidden>从头播放</button>
-                </div>
-                <p id="media-detail-resume" class="detail-resume" hidden></p>
-                <section id="media-detail-plot-section" class="detail-plot-section">
-                  <button id="media-detail-plot-toggle" class="detail-plot-toggle" type="button" aria-expanded="false">剧情简介 <span>展开</span></button>
-                  <p id="media-detail-plot" class="detail-plot collapsed"></p>
-                </section>
-                <p id="detail-plot-empty" class="detail-plot-empty" hidden>暂无简介。为影片添加 NFO 文件和海报后，重新扫描来源即可补全信息。</p>
+            <div id="detail-skeleton" class="detail-skeleton" hidden role="status" aria-label="正在加载详情">
+              <div class="detail-skeleton-hero" aria-hidden="true">
+                <span class="detail-skeleton-block detail-skeleton-poster"></span>
+                <span class="detail-skeleton-copy">
+                  <span class="detail-skeleton-block detail-skeleton-meta"></span>
+                  <span class="detail-skeleton-block detail-skeleton-title"></span>
+                  <span class="detail-skeleton-block detail-skeleton-title detail-skeleton-title-short"></span>
+                  <span class="detail-skeleton-block detail-skeleton-action"></span>
+                  <span class="detail-skeleton-block detail-skeleton-line"></span>
+                </span>
+              </div>
+              <div class="detail-skeleton-rows" aria-hidden="true">
+                <span class="detail-skeleton-block"></span>
+                <span class="detail-skeleton-block"></span>
+                <span class="detail-skeleton-block"></span>
               </div>
             </div>
-            <section id="detail-episodes-section" class="detail-section" hidden aria-labelledby="detail-episodes-title">
-              <div class="section-heading"><h3 id="detail-episodes-title">选集</h3><div id="detail-season-tabs" class="season-tabs" role="group" aria-label="选择季度"></div></div>
-              <div id="detail-episodes" class="episode-list"></div>
-            </section>
-            <section id="detail-file-section" class="detail-section" hidden aria-labelledby="detail-file-title">
-              <h3 id="detail-file-title">文件信息</h3>
-              <dl id="detail-file-info" class="detail-file-info"></dl>
-            </section>
+            <div id="detail-error" class="detail-error" hidden role="alert" aria-labelledby="detail-error-title">
+              <h2 id="detail-error-title" tabindex="-1">详情加载失败</h2>
+              <p id="detail-error-message"></p>
+              <div class="detail-error-actions">
+                <button id="detail-error-retry" class="primary-button" type="button">重试</button>
+                <button id="detail-error-back" class="secondary-button" type="button">返回片库</button>
+              </div>
+            </div>
+            <div id="detail-content">
+              <div id="detail-offline-banner" class="detail-offline" hidden role="status">
+                <span>来源离线：播放和从头播放已禁用。重新连接驱动器或网络位置后，在文件夹页重新扫描。</span>
+                <a href="#source-list">查看文件夹</a>
+              </div>
+              <div class="detail-hero">
+                <div id="detail-poster" class="detail-poster"><span class="poster-fallback">封面不可用</span></div>
+                <div class="detail-copy">
+                  <p id="media-detail-meta" class="detail-meta"></p>
+                  <h2 id="media-detail-title" tabindex="-1"></h2>
+                  <div class="detail-actions">
+                    <button id="media-detail-open" class="primary-button" type="button">播放</button>
+                    <button id="media-detail-restart" class="secondary-button" type="button" hidden>从头播放</button>
+                  </div>
+                  <p id="detail-playback-note" class="detail-playback-note" hidden></p>
+                  <p id="media-detail-resume" class="detail-resume" hidden></p>
+                  <section id="media-detail-plot-section" class="detail-plot-section">
+                    <button id="media-detail-plot-toggle" class="detail-plot-toggle" type="button" aria-expanded="false">剧情简介 <span>展开</span></button>
+                    <p id="media-detail-plot" class="detail-plot collapsed"></p>
+                  </section>
+                  <p id="detail-plot-empty" class="detail-plot-empty" hidden>暂无简介。为影片添加 NFO 文件和海报后，重新扫描来源即可补全信息。</p>
+                </div>
+              </div>
+              <section id="detail-episodes-section" class="detail-section" hidden aria-labelledby="detail-episodes-title">
+                <div class="section-heading"><h3 id="detail-episodes-title">选集</h3><div id="detail-season-tabs" class="season-tabs" role="group" aria-label="选择季度"></div></div>
+                <div id="detail-episodes" class="episode-list"></div>
+              </section>
+              <section id="detail-file-section" class="detail-section" hidden aria-labelledby="detail-file-title">
+                <h3 id="detail-file-title">文件信息</h3>
+                <dl id="detail-file-info" class="detail-file-info"></dl>
+              </section>
+            </div>
           </section>
         </section>
       </main>

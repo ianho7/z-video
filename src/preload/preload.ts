@@ -34,6 +34,7 @@ const IPC_CHANNELS = {
   localLibraryContinueWatching: "local-library:continue-watching",
   localLibraryRemoveSource: "local-library:source-remove",
   localLibraryRefreshSource: "local-library:source-refresh",
+  localLibraryRescanAll: "local-library:rescan-all",
   localLibraryScan: "local-library:scan",
   localLibraryCancelScan: "local-library:scan-cancel",
   localLibraryScanProgress: "local-library:scan-progress",
@@ -92,6 +93,7 @@ const api: ElectronApi = {
     listContinueWatching: () => ipcRenderer.invoke(IPC_CHANNELS.localLibraryContinueWatching),
     removeSource: (sourceId: string) => ipcRenderer.invoke(IPC_CHANNELS.localLibraryRemoveSource, sourceId),
     refreshSource: (sourceId: string) => ipcRenderer.invoke(IPC_CHANNELS.localLibraryRefreshSource, sourceId),
+    rescanAll: () => ipcRenderer.invoke(IPC_CHANNELS.localLibraryRescanAll),
     scanFolder: () => ipcRenderer.invoke(IPC_CHANNELS.localLibraryScan),
     cancelScan: (scanId: string) => ipcRenderer.invoke(IPC_CHANNELS.localLibraryCancelScan, scanId),
     onScanProgress: (listener) => {
