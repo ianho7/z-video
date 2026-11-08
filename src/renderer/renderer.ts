@@ -1775,6 +1775,10 @@ sourceList?.addEventListener("click", (event) => {
 removeCancelButton?.addEventListener("click", () => removeDialog?.close());
 removeConfirmButton?.addEventListener("click", () => void confirmRemoveSource());
 removeDialog?.addEventListener("close", () => {
+  // Native dialog close events are queued asynchronously. If the dialog was
+  // reopened before this event arrives, it belongs to the previous dialog
+  // instance and must not reset the state of the one that is open now.
+  if (removeDialog?.open) return;
   removingSourceId = undefined;
   setDialogError(removeDialogError, undefined);
   if (removeConfirmButton) removeConfirmButton.textContent = "移除并删除进度";
@@ -1783,6 +1787,9 @@ removeDialog?.addEventListener("close", () => {
 offlineKeepButton?.addEventListener("click", keepOfflineSource);
 offlineDeleteButton?.addEventListener("click", () => void deleteOfflineSource());
 offlineDialog?.addEventListener("close", () => {
+  // Same async close race as the remove dialog: a queued close from a previous
+  // offline prompt must not clear a dialog that has already been reopened.
+  if (offlineDialog?.open) return;
   offlineSourceId = undefined;
   setDialogError(offlineDialogError, undefined);
   if (offlineDeleteButton) offlineDeleteButton.textContent = "已删除（清理记录）";
