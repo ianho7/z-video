@@ -52,7 +52,7 @@ B1 adds one renderer-safe work list without changing schema v2. `local-library:l
 - Search matches the collection title or any episode title. A matching show still appears once and may carry one `matchedEpisode`; it never exposes the source-relative episode path.
 - No absolute path, UNC path, source-relative path, SQL row, or scan root enters the DTO or a rejected IPC promise.
 
-Ticket 02 adds main-owned `scanFolder`, `cancelScan`, and bounded `onScanProgress` operations. A scan result reports counts, warnings, and `completed`/`cancelled`/`partial`/`unavailable` status without exposing a root path. A successful traversal is the only operation allowed to mark unseen files unavailable; cancellation, permission errors, and disconnected roots preserve existing rows and playback state. If a source becomes unreadable during traversal, the scan remains partial and the source is reported unavailable until a later successful refresh.
+Ticket 02 adds main-owned `scanFolder`, `cancelScan`, and bounded `onScanProgress` operations. A scan progress/result reports counts, warnings, and `completed`/`cancelled`/`partial`/`unavailable` status without exposing a root path; `sourceLabel` is the same renderer-safe source label used by state and never a path. A successful traversal is the only operation allowed to mark unseen files unavailable; cancellation, permission errors, and disconnected roots preserve existing rows and playback state. If a source becomes unreadable during traversal, the scan remains partial and the source is reported unavailable until a later successful refresh.
 
 ## Local playback IPC
 

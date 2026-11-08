@@ -1354,12 +1354,14 @@ interface ScanCounters {
   updatedFiles: number;
   warnings: string[];
   seenRelativePaths: Set<string>;
+  sourceLabel?: string;
 }
 
-function progressFor(scanId: string, sourceId: string, status: LocalScanProgress["status"], counters: ScanCounters): LocalScanProgress {
+function progressFor(scanId: string, sourceId: string, status: LocalScanProgress["status"], counters: ScanCounters, sourceLabel = counters.sourceLabel): LocalScanProgress {
   return {
     scanId,
     sourceId,
+    ...(sourceLabel ? { sourceLabel } : {}),
     status,
     scannedFiles: counters.scannedFiles,
     importedFiles: counters.importedFiles,
@@ -1480,6 +1482,7 @@ async function scanRoot(rootPath: string): Promise<LocalScanResult> {
     await assertNoOverlappingSource(sourceRoot);
     const scanSource = ensureSource(sourceRoot);
     source = scanSource;
+    counters.sourceLabel = scanSource.label;
     scanId = makeId("scan");
     cancellation = { requested: false };
     scanCancellation.set(scanId, cancellation);

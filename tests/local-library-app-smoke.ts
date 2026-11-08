@@ -143,32 +143,124 @@ async function run(): Promise<void> {
     await evaluate(window, "document.querySelector('#library-error-retry').click()");
     await waitFor("library retry", () => evaluate(window, "document.querySelector('#library-error').hidden"), (hidden) => hidden === true);
 
+    const readScanUi = () => evaluate(window, `(() => {
+      const viewport = { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight };
+      const rect = (selector) => { const element = document.querySelector(selector); const box = element?.getBoundingClientRect(); return box ? { left: box.left, right: box.right, top: box.top, bottom: box.bottom } : null; };
+      const pill = document.querySelector('#scan-status');
+      const card = document.querySelector('#home-scan-card');
+      const pillCancel = document.querySelector('#scan-pill-cancel');
+      const homeCancel = document.querySelector('#home-scan-cancel');
+      const scope = document.querySelector('#page-scope')?.textContent || '';
+      return {
+        viewport,
+        pillVisible: Boolean(pill && !pill.hidden && rect('#scan-status')?.right > 0),
+        pillText: pill?.textContent || '',
+        pillRect: rect('#scan-status'),
+        pillCancelVisible: Boolean(pillCancel && !pillCancel.hidden && rect('#scan-pill-cancel')?.right > 0),
+        pillCancelDisabled: Boolean(pillCancel && pillCancel.disabled),
+        cardVisible: Boolean(card && !card.hidden && rect('#home-scan-card')?.right > 0),
+        cardText: card?.textContent || '',
+        cardRect: rect('#home-scan-card'),
+        cardCancelRect: rect('#home-scan-cancel'),
+        homeCancelVisible: Boolean(homeCancel && !homeCancel.hidden && rect('#home-scan-cancel')?.right > 0),
+        onboardingVisible: document.querySelector('#onboarding')?.hidden === false,
+        noticeVisible: document.querySelector('#app-notice')?.hidden === false,
+        noticeTitle: document.querySelector('#app-notice-title')?.textContent || '',
+        noticeText: document.querySelector('#app-notice')?.textContent || '',
+        noticeRect: rect('#app-notice'),
+        cardHidden: card?.hidden,
+        pillHidden: pill?.hidden,
+        cards: document.querySelectorAll('#library-grid .media-card').length,
+        skeletons: document.querySelectorAll('#library-grid .media-skeleton').length,
+        busy: document.querySelector('#library-grid')?.getAttribute('aria-busy'),
+        pageTotal: Number(scope.match(/\\d+/)?.[0] || 0),
+        scanPanelTitle: document.querySelector('#scan-panel-title')?.textContent || '',
+      };
+    })()`);
+    const assertInside = (label: string, rect: { left: number; right: number; top: number; bottom: number } | null, viewport: { width: number; height: number }) => {
+      assert.ok(rect, `${label} has a layout box`);
+      assert.ok(rect!.left >= 0 && rect!.right <= viewport.width + 1 && rect!.top >= 0 && rect!.bottom <= viewport.height + 1, `${label} stays inside ${viewport.width}x${viewport.height}: ${JSON.stringify(rect)}`);
+    };
+
     window.setSize(1040, 720);
     const defaultOuter = window.getSize();
     assert.ok(defaultOuter[0] >= 1040 && defaultOuter[1] >= 720);
 
     await evaluate(window, "document.querySelector('#choose-folder-button')?.click()");
-    const running = await waitFor(
-      "running scan card and source count",
-      () => evaluate(window, "({ scanStatus: document.querySelector('#scan-status')?.textContent || '', cardTitle: document.querySelector('.media-card-title')?.textContent || '', sourceCount: Number(document.querySelector('#all-source-count')?.textContent || 0) })"),
-      (value) => value.scanStatus.includes("扫描中") && value.cardTitle.length > 0 && value.sourceCount > 0,
-      20_000,
-    );
-    await evaluate(window, "document.querySelector('#manage-sources-button')?.click()");
-    await waitFor("scan panel running", () => evaluate(window, "document.querySelector('#scan-panel-title')?.textContent || ''"), (value) => value.includes("正在扫描"));
-    await capture("scan");
-    assert.ok(running.cardTitle.length > 0);
-    assert.ok(running.sourceCount > 0);
+    const firstRunning = await waitFor("first scan visible with welcome card", readScanUi, (value) => value.pillVisible && value.cardVisible && value.onboardingVisible && value.cards === 0 && /owned-fixture/.test(value.cardText), 20_000);
+    assert.match(firstRunning.pillText, /扫描中/);
+    assert.match(firstRunning.cardText, /owned-fixture/);
+    assert.equal(firstRunning.cardText.includes(fixtureRoot), false, "scan status never exposes the source root path");
+    assert.match(firstRunning.cardText, /已扫描/);
+    assert.match(firstRunning.cardText, /已加入/);
+    assert.match(firstRunning.cardText, /已用时间/);
+    assert.doesNotMatch(firstRunning.cardText, /%/);
+    assert.equal(firstRunning.pillCancelVisible, true);
+    assert.equal(firstRunning.homeCancelVisible, true);
+    assertInside("1040 scan pill", firstRunning.pillRect, firstRunning.viewport);
+    assertInside("1040 home scan card", firstRunning.cardRect, firstRunning.viewport);
+    assertInside("1040 home scan cancel", firstRunning.cardCancelRect, firstRunning.viewport);
+    await capture("first-scan");
 
-    const complete = await waitFor(
-      "scan completion",
-      () => evaluate(window, "({ status: document.querySelector('#scan-status')?.textContent || '', count: Number((document.querySelector('#page-scope')?.textContent || '').match(/\\d+/)?.[0] || 0) })"),
-      (value) => value.status.includes("扫描完成") && value.count >= INDEX_FILE_COUNT + 1,
-      90_000,
-    );
+    await evaluate(window, "document.querySelector('#manage-sources-button')?.click()");
+    await waitFor("scan panel running", readScanUi, (value) => value.scanPanelTitle.includes("正在扫描"));
+    await capture("scan");
+    await evaluate(window, "document.querySelector('[data-nav=home]')?.click()");
+    await waitFor("home scan card after sources page", readScanUi, (value) => value.cardVisible);
+
+    const firstContent = await waitFor("first content appears during scan", readScanUi, (value) => value.cards > 0, 20_000);
+    assert.ok(firstContent.pageTotal > 0);
+    assert.equal(await evaluate(window, "(() => { const card = document.querySelector('#library-grid .media-card'); if (!card) return false; card.dataset.scanProbe = 'kept'; return true; })()"), true);
+    await waitFor("welcome card retires after first content", readScanUi, (value) => value.onboardingVisible === false);
+
+    await evaluate(window, "document.querySelector('#scan-pill-cancel')?.click()");
+    const cancelled = await waitFor("cancelled scan summary", readScanUi, (value) => value.noticeVisible && /扫描已取消/.test(value.noticeTitle), 20_000);
+    assert.match(cancelled.noticeText, /保留/);
+    assert.equal(cancelled.cardHidden, true);
+    assert.equal(cancelled.pillHidden, true);
+    const preserved = await waitFor("cancelled scan keeps the partial index", readScanUi, (value) => value.pageTotal > 0 && value.cards > 0);
+    assert.ok(preserved.pageTotal > 0);
+    assert.equal(await evaluate(window, "Boolean(document.querySelector('#library-grid [data-scan-probe=kept]'))"), true, "scan refresh reuses existing cards instead of replacing the grid");
+    await evaluate(window, "document.querySelector('#app-notice-close')?.click()");
+    await waitFor("cancelled notice dismissed", readScanUi, (value) => value.noticeVisible === false);
+
+    await evaluate(window, "document.querySelector('#choose-folder-button')?.click()");
+    const secondRunning = await waitFor("second scan running", readScanUi, (value) => value.pillVisible && value.cardVisible && /owned-fixture/.test(value.cardText), 20_000);
+    assert.match(secondRunning.cardText, /owned-fixture/);
+    window.setSize(900, 640);
+    const compactScan = await waitFor("second scan at 900x640", readScanUi, (value) => value.viewport.width <= 900 && value.pillVisible && value.cardVisible);
+    assertInside("900 scan pill", compactScan.pillRect, compactScan.viewport);
+    assertInside("900 home scan card", compactScan.cardRect, compactScan.viewport);
+    assertInside("900 home scan cancel", compactScan.cardCancelRect, compactScan.viewport);
+
+    const complete = await waitFor("completed scan summary", readScanUi, (value) => value.noticeVisible && /扫描完成/.test(value.noticeTitle), 90_000);
+    assert.match(complete.noticeText, /新增/);
+    assert.match(complete.noticeText, /更新/);
+    assert.match(complete.noticeText, /警告/);
+    assertInside("900 scan summary notice", complete.noticeRect, complete.viewport);
+    const completedTotal = await waitFor("completed scan index count", readScanUi, (value) => value.pageTotal >= INDEX_FILE_COUNT + 1, 20_000);
+    assert.ok(completedTotal.pageTotal >= INDEX_FILE_COUNT + 1, `completed scan indexes the fixture: ${completedTotal.pageTotal}`);
+    const summaryText = complete.noticeText;
+
+    delayNextLibraryList = true;
+    await evaluate(window, "document.querySelector('#library-filter-buttons [data-filter=movie]')?.click()");
+    const loading = await waitFor("later library refresh without skeleton", readScanUi, (value) => value.busy === "true");
+    assert.equal(loading.skeletons, 0, "only the first list load replaces the grid with skeletons");
+    assert.ok(loading.cards > 0, "later list refreshes keep the existing cards on screen");
+    assert.equal(loading.noticeText, summaryText, "list refresh does not overwrite the scan summary");
+    await waitFor("movie list after refresh", readScanUi, (value) => !value.busy);
+    await evaluate(window, "document.querySelector('#library-filter-buttons [data-filter=all]')?.click()");
+    await waitFor("all media after refresh", readScanUi, (value) => !value.busy);
+    window.setSize(1040, 720);
+    const wideNotice = await waitFor("scan summary at 1040", readScanUi, (value) => value.viewport.width > 1000 && value.noticeVisible && value.noticeText === summaryText);
+    assertInside("1040 scan summary notice", wideNotice.noticeRect, wideNotice.viewport);
+    await evaluate(window, "document.querySelector('#app-notice-close')?.click()");
+    await waitFor("completed notice dismissed", readScanUi, (value) => value.noticeVisible === false);
 
     await evaluate(window, "document.querySelector('[data-nav=all]')?.click()");
-    await waitFor("all works page after scan", () => evaluate(window, "document.querySelector('#collection-section')?.hidden"), (hidden) => hidden === false);
+    await waitFor("visible all-media page", () => evaluate(window, "document.querySelector('#collection-section')?.hidden"), (hidden) => hidden === false);
+    await waitFor("all navigation active", () => evaluate(window, "document.querySelector('[data-nav=all]')?.getAttribute('aria-current')"), (value) => value === "page");
+    await capture("all");
     await evaluate(window, "document.querySelector('#library-filter-buttons [data-filter=show]')?.click()");
     const showCards = await waitFor(
       "one card per show",
@@ -207,22 +299,6 @@ async function run(): Promise<void> {
     await evaluate(window, "document.querySelector('#library-filter-buttons [data-filter=all]')?.click()");
     await waitFor("all works after single-episode check", () => evaluate(window, "document.querySelector('#library-grid')?.getAttribute('aria-busy') || ''"), (value) => value === "");
 
-    delayNextLibraryList = true;
-    await evaluate(window, "document.querySelector('#library-filter-buttons [data-filter=movie]')?.click()");
-    const loading = await waitFor(
-      "skeleton during a later library request",
-      () => evaluate(window, "({ busy: document.querySelector('#library-grid')?.getAttribute('aria-busy'), skeletons: document.querySelectorAll('#library-grid .media-skeleton').length, emptyHidden: document.querySelector('#library-empty')?.hidden })"),
-      (value) => value.busy === "true" && value.skeletons === 8 && value.emptyHidden === true,
-    );
-    assert.equal(loading.skeletons, 8, "subsequent list requests show loading skeleton cards");
-    await waitFor("movie list after skeleton", () => evaluate(window, "document.querySelector('#library-grid')?.getAttribute('aria-busy') || ''"), (value) => value === "");
-    await evaluate(window, "document.querySelector('#library-filter-buttons [data-filter=all]')?.click()");
-    await waitFor("all media after skeleton", () => evaluate(window, "document.querySelector('#library-grid')?.getAttribute('aria-busy') || ''"), (value) => value === "");
-
-    await evaluate(window, "document.querySelector('[data-nav=all]')?.click()");
-    await waitFor("visible all-media page", () => evaluate(window, "document.querySelector('#collection-section')?.hidden"), (hidden) => hidden === false);
-    await waitFor("all navigation active", () => evaluate(window, "document.querySelector('[data-nav=all]')?.getAttribute('aria-current')"), (value) => value === "page");
-    await capture("all");
     const sortMenu = await evaluate(window, "(() => { const select = document.querySelector('#library-sort'); return { options: [...select.options].map((option) => ({ value: option.value, label: option.textContent })), value: select.value }; })()");
     assert.ok(sortMenu.options.some((option: { value: string; label: string }) => option.value === "released_desc" && option.label === "最近发布"), "sort menu exposes 最近发布");
     await evaluate(window, "(() => { const select = document.querySelector('#library-sort'); select.value = 'released_desc'; select.dispatchEvent(new Event('change', { bubbles: true })); })()");
@@ -357,6 +433,16 @@ async function run(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 400));
     await evaluate(window, "document.querySelector('#player-close-button')?.click()");
     await waitFor("player close complete", () => evaluate(window, "document.querySelector('[data-view=player]')?.hidden === true"), Boolean);
+    const savedPlayback = await evaluate(window, `window.zVideo.localLibrary.get(${JSON.stringify(openedMediaId)}).then((result) => result.detail?.playback?.positionSec ?? 0)`);
+    assert.ok(savedPlayback > 0, "playback progress exists before the preservation check");
+    await evaluate(window, "document.querySelector('#choose-folder-button')?.click()");
+    await waitFor("cancel-preservation scan running", readScanUi, (value) => value.pillVisible && value.pillCancelVisible && value.pillCancelDisabled === false, 20_000);
+    await evaluate(window, "document.querySelector('#scan-pill-cancel')?.click()");
+    const preservationCancelled = await waitFor("cancel-preservation summary", readScanUi, (value) => value.noticeVisible && /扫描已取消/.test(value.noticeTitle), 20_000);
+    assert.match(preservationCancelled.noticeText, /播放进度/);
+    await evaluate(window, "document.querySelector('#app-notice-close')?.click()");
+    const playbackAfterCancel = await evaluate(window, `window.zVideo.localLibrary.get(${JSON.stringify(openedMediaId)}).then((result) => result.detail?.playback?.positionSec ?? 0)`);
+    assert.equal(playbackAfterCancel, savedPlayback, "cancelling a scan preserves saved playback progress");
     await evaluate(window, "document.querySelector('[data-nav=home]')?.click()");
     const continueMin = await waitFor(
       "continue row at minimum size",
@@ -402,7 +488,7 @@ async function run(): Promise<void> {
     await writeFile(resultPath, JSON.stringify({
       schemaVersion: 1,
       proof: "local-library-ux",
-      scan: { runningCardTitle: running.cardTitle, runningSourceCount: running.sourceCount, completedCount: complete.count },
+      scan: { runningPill: firstRunning.pillText, runningCard: firstRunning.cardText.slice(0, 160), welcomeCoexists: firstRunning.onboardingVisible, cancelledPageTotal: preserved.pageTotal, cancelledNotice: cancelled.noticeTitle, completedPageTotal: completedTotal.pageTotal, completedNotice: complete.noticeTitle, summary: summaryText.slice(0, 200), compact: { pill: compactScan.pillRect, card: compactScan.cardRect, viewport: compactScan.viewport } },
       collections: {
         showCards,
         showDetail: { title: showDetail.title, episodeRows: showDetail.count, currentIndex: showDetail.currentIndex, currentNumber: showDetail.currentNumber },
