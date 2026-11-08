@@ -6,7 +6,7 @@ import {
   LOCAL_LIBRARY_SCHEMA_TABLES,
   LOCAL_LIBRARY_SCHEMA_VERSION,
 } from "../src/shared/local-library-contracts";
-import { safeSourceLabel } from "../src/main/local-library-label";
+import { safeSourceLabel, safeSourceLocationHint } from "../src/main/local-library-label";
 import { localLibraryErrorMessage } from "../src/main/local-library-errors";
 
 test("local library foundation exposes the stable schema tables for metadata and playback owners", () => {
@@ -29,9 +29,22 @@ test("public media identity is opaque and cannot carry a private path", () => {
 });
 
 test("source labels never fall back to an absolute drive root", () => {
-  assert.equal(safeSourceLabel("C:\\"), "C drive");
+  assert.equal(safeSourceLabel("C:\\"), "C 盘");
   assert.equal(safeSourceLabel("\\\\server\\share\\"), "share");
   assert.equal(safeSourceLabel("C:\\Users\\owned\\Videos"), "Videos");
+});
+
+test("source location hints distinguish same-name folders without exposing the full path", () => {
+  assert.equal(safeSourceLocationHint("D:\\影片\\Movies"), "D 盘 · 上级：影片");
+  assert.equal(safeSourceLocationHint("E:\\备份\\Movies\\"), "E 盘 · 上级：备份");
+  assert.equal(safeSourceLocationHint("D:\\"), "D 盘");
+  assert.equal(safeSourceLocationHint("\\\\server\\share\\Movies"), "网络位置 · 上级：share");
+  assert.equal(safeSourceLocationHint("\\\\server\\share"), "网络位置");
+  for (const root of ["D:\\影片\\Movies", "C:\\Users\\owner\\Videos", "\\\\server\\share\\Movies"]) {
+    const hint = safeSourceLocationHint(root);
+    assert.equal(hint.includes(root), false);
+    assert.equal(/[\\/]/u.test(hint), false);
+  }
 });
 
 test("storage errors use stable renderer-safe messages", () => {

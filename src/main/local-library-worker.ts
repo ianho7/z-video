@@ -23,7 +23,7 @@ import {
 } from "../shared/local-library-contracts";
 import { parseEpisodeNumbers, parseNfo, parsePremieredDate, type ParsedNfo } from "./local-library-metadata";
 import { localLibraryErrorCode, localLibraryErrorMessage } from "./local-library-errors";
-import { safeSourceLabel } from "./local-library-label";
+import { safeSourceLabel, safeSourceLocationHint } from "./local-library-label";
 
 type WorkerRequest =
   | { id: number; command: "initialize"; dbPath: string }
@@ -896,18 +896,24 @@ function sourceSummaries(): LocalSourceSummary[] {
   const db = requireDatabase();
   const rows = db.prepare(`
     SELECT sources.source_id AS sourceId, sources.root_path AS rootPath, sources.label, sources.available,
-      COUNT(CASE WHEN media_files.available = 1 THEN 1 END) AS itemCount
+      COUNT(media_files.media_id) AS itemCount,
+      COUNT(DISTINCT media_files.collection_id) AS collectionCount
     FROM sources
     LEFT JOIN media_files ON media_files.source_id = sources.source_id
     GROUP BY sources.source_id
     ORDER BY sources.label COLLATE NOCASE
   `).all() as Array<Record<string, unknown>>;
-  return rows.map((row) => ({
-    sourceId: String(row.sourceId),
-    label: typeof row.rootPath === "string" ? safeSourceLabel(row.rootPath) : safeSourceLabel(String(row.label ?? "")),
-    available: Number(row.available) === 1,
-    itemCount: Number(row.itemCount),
-  }));
+  return rows.map((row) => {
+    const rootPath = typeof row.rootPath === "string" ? row.rootPath : "";
+    return {
+      sourceId: String(row.sourceId),
+      label: rootPath ? safeSourceLabel(rootPath) : safeSourceLabel(String(row.label ?? "")),
+      locationHint: rootPath ? safeSourceLocationHint(rootPath) : "所选文件夹",
+      available: Number(row.available) === 1,
+      itemCount: Number(row.itemCount),
+      collectionCount: Number(row.collectionCount),
+    };
+  });
 }
 
 function state(): { schemaVersion: typeof LOCAL_LIBRARY_SCHEMA_VERSION; sqliteAvailable: true; sources: LocalSourceSummary[] } {

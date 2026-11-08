@@ -16,14 +16,12 @@
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
           <span><strong>z-video</strong><small>本地片库</small></span>
         </div>
-        <nav class="top-nav" aria-label="浏览"><button type="button" data-nav="home" aria-current="page">首页</button><button type="button" data-nav="all">全部</button><button type="button" data-nav="movie">电影</button><button type="button" data-nav="show">剧集</button></nav>
+        <nav class="top-nav" aria-label="浏览"><button type="button" data-nav="home" aria-current="page">首页</button><button type="button" data-nav="all">全部</button><button type="button" data-nav="movie">电影</button><button type="button" data-nav="show">剧集</button><button type="button" data-nav="folder">文件夹</button></nav>
         <span id="scan-status" class="scan-pill" role="status" aria-live="polite" hidden><span class="scan-pill-dot" aria-hidden="true"></span><span id="scan-status-text" class="scan-pill-text"></span><button id="scan-pill-cancel" class="scan-pill-cancel" type="button" data-cancel-scan aria-label="取消扫描" hidden>×</button></span>
         <form id="library-search-form" class="search-box" role="search"><span aria-hidden="true">⌕</span><input id="library-search-input" type="search" autocomplete="off" placeholder="搜索片名、剧集" aria-label="搜索片名、剧集" /><button id="library-search-clear" class="icon-button" type="button" hidden aria-label="清除搜索">×</button></form>
-        <details class="add-menu"><summary aria-label="添加">+</summary><div class="header-actions">
+        <details class="add-menu"><summary aria-label="添加">添加</summary><div class="header-actions">
           <button id="choose-folder-button" class="secondary-button" type="button">添加文件夹</button>
-          <button id="scan-folder-button" class="secondary-button" type="button">扫描目录</button>
-          <button id="open-video-button" class="primary-button" type="button">打开视频</button>
-          <button id="manage-sources-button" class="secondary-button" type="button">管理来源</button>
+          <button id="open-video-button" class="primary-button" type="button">添加单个视频</button>
         </div></details>
       </header>
       <section id="app-notice" class="app-notice" role="status" aria-live="polite" aria-labelledby="app-notice-title" hidden>
@@ -33,12 +31,37 @@
 
       <main class="library-layout">
         <section id="sources-page" class="sources-page" hidden aria-labelledby="sources-title">
-          <button type="button" class="text-button" data-nav="home">← 返回首页</button>
-          <div class="sources-heading"><div><p class="eyebrow">SOURCES</p><h1 id="sources-title">我的来源</h1><p class="muted">管理你的本地媒体文件夹</p></div><div><button type="button" class="secondary-button" data-import="video">打开单个视频</button> <button type="button" class="primary-button" data-import="folder">添加文件夹</button></div></div>
-          <p id="sources-message" class="status" role="status" aria-live="polite"></p><div id="scan-panel" class="scan-panel" hidden aria-live="polite"><h2 id="scan-panel-title"></h2><p id="scan-counts"></p><ul id="scan-warnings"></ul><button type="button" class="secondary-button" data-cancel-scan hidden>取消扫描</button></div>
-          <span id="all-source-count" hidden>0</span><div id="source-list" class="source-list" role="list"></div><p class="muted source-note">媒体只读；移除来源只清理应用索引，不删除源文件。</p>
+          <div class="sources-heading">
+            <div><p class="eyebrow">FOLDERS</p><h1 id="sources-title">文件夹</h1><p class="muted">管理你的本地媒体文件夹；只读取，不移动、不改名、不上传文件。</p></div>
+            <div class="sources-heading-actions">
+              <button id="rescan-all-button" type="button" class="secondary-button">重新扫描全部</button>
+              <button type="button" class="secondary-button" data-import="video">添加单个视频</button>
+              <button type="button" class="primary-button" data-import="folder">添加文件夹</button>
+            </div>
+          </div>
+          <p id="sources-message" class="status" role="status" aria-live="polite"></p>
+          <div id="scan-panel" class="scan-panel" hidden aria-live="polite"><h2 id="scan-panel-title"></h2><p id="scan-counts"></p><ul id="scan-warnings"></ul><button type="button" class="secondary-button" data-cancel-scan hidden>取消扫描</button></div>
+          <div id="source-list" class="source-list" role="list"></div>
+          <p class="muted source-note">添加单个视频只加入选中的文件，并登记它所在的文件夹；以后重新扫描会把整个文件夹里的内容也加入片库。移除文件夹会删除观看进度，但不会删除源文件。</p>
         </section>
-        <dialog id="remove-source-dialog" aria-labelledby="remove-source-title" aria-describedby="remove-source-copy"><h2 id="remove-source-title">移除来源？</h2><p id="remove-source-copy"></p><div class="dialog-actions"><button type="button" class="secondary-button" id="remove-source-cancel">取消</button><button type="button" class="primary-button" id="remove-source-confirm">移除来源</button></div></dialog>
+        <dialog id="remove-source-dialog" aria-labelledby="remove-source-title" aria-describedby="remove-source-copy">
+          <h2 id="remove-source-title">移除文件夹？</h2>
+          <p id="remove-source-copy" class="dialog-lead"></p>
+          <ul class="dialog-consequences">
+            <li class="danger">这些视频的观看进度和已看状态会一并删除；重新扫描不能恢复进度。</li>
+            <li class="safe">文件夹里的视频和其他文件不会被删除、移动或改名。</li>
+          </ul>
+          <p id="remove-source-error" class="dialog-error" role="alert" hidden></p>
+          <div class="dialog-actions"><button type="button" class="secondary-button" id="remove-source-cancel" autofocus>取消</button><button type="button" class="destructive-button" id="remove-source-confirm">移除并删除进度</button></div>
+          <p class="dialog-foot"><span class="key">Esc</span> 取消并关闭；默认焦点在“取消”。</p>
+        </dialog>
+        <dialog id="offline-source-dialog" aria-labelledby="offline-source-title" aria-describedby="offline-source-copy">
+          <h2 id="offline-source-title">文件夹不可用</h2>
+          <p id="offline-source-copy" class="dialog-lead"></p>
+          <p id="offline-source-error" class="dialog-error" role="alert" hidden></p>
+          <div class="dialog-actions"><button type="button" class="secondary-button" id="offline-source-keep" autofocus>暂时断开（保留记录）</button><button type="button" class="destructive-button" id="offline-source-delete">已删除（清理记录）</button></div>
+          <p class="dialog-foot"><span class="key">Esc</span> 暂时保留记录并关闭。</p>
+        </dialog>
         <section class="library-content" aria-labelledby="library-title">
           <div class="content-heading">
             <div>

@@ -36,6 +36,10 @@ Channels are defined in `src/shared/ipc-channels.ts` and exposed through `window
 
 Renderer-visible `LocalMediaItem` fields are `mediaId`, `sourceId`, `collectionId`, title, kind, optional year, optional `premieredDate` (`YYYY-MM-DD` or `null`), optional plot/genres/rating/season/episode, artwork cache keys, size, modified time, and availability. Source summaries use a basename or a fixed drive/folder label; they never fall back to an absolute root. Absolute paths, UNC paths, source-relative paths, database rows, credentials, NAS signs, and raw playback URIs are never part of the public DTO. Worker, SQLite, filesystem and IPC errors are reduced to stable renderer-safe messages before entering state, scan results, or rejected IPC promises.
 
+`LocalSourceSummary` adds `locationHint` and `collectionCount` for the folder page. `locationHint` only exposes a drive (`D 盘`) or a network-location marker plus the immediate parent folder name (`E 盘 · 上级：备份`); it never contains the full root. `collectionCount` counts works aggregated from that source's files. `itemCount` counts indexed files, including files whose rows are kept while a source is offline, so the folder counts and the removal confirmation agree. Both counts are computed by the worker from SQLite.
+
+`local-library:source-refresh` rescans one registered folder. `local-library:rescan-all` rescans every registered folder in order and returns one `LocalScanResult` per folder; an unreadable folder returns `unavailable` without aborting the remaining folders.
+
 `local-library:get` may include `detail.playback` for the requested opaque `mediaId` when local progress exists. The worker joins that state to the validated media row; the field contains only `LocalPlaybackState` and never a path or playback URI.
 
 ## Work-level (Collection) read contract
