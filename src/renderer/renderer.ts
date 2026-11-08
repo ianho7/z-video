@@ -592,6 +592,7 @@ function renderPage(page: { items: LocalMediaItem[]; totalCount: number; page: n
   const focusedMediaId = preserveGridFocus();
   if (!libraryGrid || !libraryEmpty) return;
   artworkObserver?.disconnect();
+  const includeReleaseDate = currentQuery.sort === "released_desc";
   const existingCards = new Map<string, HTMLElement>();
   libraryGrid.querySelectorAll<HTMLElement>("[data-media-id]").forEach((button) => {
     const article = button.closest<HTMLElement>(".media-card");
@@ -599,7 +600,9 @@ function renderPage(page: { items: LocalMediaItem[]; totalCount: number; page: n
   });
   const keptCards = new Set<HTMLElement>();
   for (const item of page.items) {
-    const node = existingCards.get(item.mediaId) ?? card(item);
+    const cached = existingCards.get(item.mediaId);
+    const node = cached && cached.dataset.releaseDate === String(includeReleaseDate) ? cached : card(item, includeReleaseDate);
+    node.dataset.releaseDate = String(includeReleaseDate);
     libraryGrid.append(node);
     keptCards.add(node);
   }
@@ -714,7 +717,7 @@ async function loadHomeShelves(): Promise<void> {
     for (const [section, selector, items] of [[recentSection, "#recent-row", recentItems], [showsSection, "#shows-row", shows.page?.items ?? []]] as const) {
       const row = document.querySelector<HTMLElement>(selector);
       if (!row || !section) continue;
-      row.replaceChildren(...items.map(card));
+      row.replaceChildren(...items.map((item) => card(item)));
       row.querySelectorAll<HTMLElement>("[data-artwork-media-id]").forEach((element) => enqueueArtwork(element, 1));
       section.hidden = !homeVisible || items.length === 0 || detail?.hidden === false;
     }
@@ -940,7 +943,7 @@ function renderDetail(detailValue: LocalMediaDetail): void {
   if (detailTitle) detailTitle.textContent = detailValue.collectionTitle && detailValue.collectionKind === "show" ? detailValue.collectionTitle : item.title;
   if (detailMeta) {
     const parts: HTMLElement[] = [];
-    for (const value of [kindLabel(item.kind), ...(item.year === undefined ? [] : [String(item.year)]), ...(item.seasonNumber !== undefined && item.episodeNumber !== undefined ? [`S${String(item.seasonNumber).padStart(2, "0")}E${String(item.episodeNumber).padStart(2, "0")}`] : [])]) {
+    for (const value of [kindLabel(item.kind), ...(item.year === undefined ? [] : [String(item.year)]), item.premieredDate ? `发布日期 ${item.premieredDate}` : "发布日期未知", ...(item.seasonNumber !== undefined && item.episodeNumber !== undefined ? [`S${String(item.seasonNumber).padStart(2, "0")}E${String(item.episodeNumber).padStart(2, "0")}`] : [])]) {
       const part = document.createElement("span");
       part.textContent = value;
       parts.push(part);

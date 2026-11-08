@@ -19,6 +19,7 @@ test("app preferences default safely for missing or invalid JSON and reject inva
     assert.deepEqual(await invalid.load(), DEFAULT_APP_PREFERENCES);
     await assert.rejects(() => invalid.setSort("not-a-sort" as never), /排序条件无效/);
     assert.equal(isLocalLibrarySort({ sort: "score_desc" }), false);
+    assert.equal(isLocalLibrarySort("released_desc"), true);
     assert.throws(() => parseAppPreferences({ volume: 30, path: "C:\\private\\media" }), /字段无效/);
   } finally {
     await rm(directory, { recursive: true, force: true });

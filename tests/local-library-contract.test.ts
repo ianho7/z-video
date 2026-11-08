@@ -10,7 +10,7 @@ import { safeSourceLabel } from "../src/main/local-library-label";
 import { localLibraryErrorMessage } from "../src/main/local-library-errors";
 
 test("local library foundation exposes the stable schema tables for metadata and playback owners", () => {
-  assert.equal(LOCAL_LIBRARY_SCHEMA_VERSION, 1);
+  assert.equal(LOCAL_LIBRARY_SCHEMA_VERSION, 2);
   assert.deepEqual(LOCAL_LIBRARY_SCHEMA_TABLES, [
     "sources",
     "collections",

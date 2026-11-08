@@ -1,21 +1,28 @@
 # Local library contracts
 
-Status: Schema v1 foundation plus local playback IPC, accepted 2026-10-31 and extended 2026-11-01/2026-11-06. Schema owners: `src/main/local-library-worker.ts`, `src/main/local-library-database.ts`, and `src/shared/local-library-contracts.ts`; playback owners: `src/main/player.ts`, `src/main/mpv-player.ts`, `src/main/player-host.ts`, and `src/shared/local-playback-contracts.ts`; app-preferences owners: `src/main/app-preferences.ts`, `src/main/app-preferences-ipc.ts`, and `src/shared/app-preferences-contracts.ts`.
+Status: Schema v2 (B0 premiere dates) plus local playback IPC, accepted 2026-10-31 and extended 2026-11-01/2026-11-06/2026-11-08. Schema owners: `src/main/local-library-worker.ts`, `src/main/local-library-database.ts`, and `src/shared/local-library-contracts.ts`; playback owners: `src/main/player.ts`, `src/main/mpv-player.ts`, `src/main/player-host.ts`, and `src/shared/local-playback-contracts.ts`; app-preferences owners: `src/main/app-preferences.ts`, `src/main/app-preferences-ipc.ts`, and `src/shared/app-preferences-contracts.ts`.
 
-## Schema v1
+## Schema v2
 
 The utility process creates these tables in the database under application `userData/local-library/library.sqlite`:
 
 | Table | Foundation fields | Next owner |
 |---|---|---|
 | `sources` | `source_id`, `root_path` (main/worker only), `label`, `available`, timestamps | 02 scan |
-| `collections` | `collection_id`, `title`, `kind`, optional year/plot/genre/rating, owner identity/source-relative grouping, timestamps | 02 metadata |
+| `collections` | `collection_id`, `title`, `kind`, optional year/`premiered_at`/plot/genre/rating, owner identity/source-relative grouping, timestamps | 02 metadata |
 | `media_files` | `media_id`, `collection_id`, `source_id`, `relative_path` (main/worker only), display title/kind, optional season/episode, `size_bytes`, `modified_at_ms`, `available`, timestamps | 02 scan / 03 playback |
 | `artwork` | `artwork_id`, collection/media owner, source-relative path (main/worker only), `kind`, source fingerprint/cache key | 02 metadata |
 | `playback_state` | `media_id`, position/duration, audio/subtitle track IDs, watched, updated time | 03 playback |
 | `scan_runs` | source, generation, completion, error, start/completion times | 02 scan |
 
-`PRAGMA user_version` is `1`. The worker uses prepared statements and enables foreign keys. The first import creates one movie collection and one media file; NFO/artwork mapping is deliberately deferred to ticket 02.
+`PRAGMA user_version` is `2`. The worker uses prepared statements and enables foreign keys. The first import creates one movie collection and one media file.
+
+### v2 premiere dates
+
+- NFO `<premiered>` is parsed first and `<releasedate>` is a compatibility fallback. Only a real calendar date written as `YYYY-MM-DD` is accepted; a bare year, an impossible month/day, or a timestamp is rejected and stored as `NULL`. A year is never used as a date.
+- `collections.premiered_at TEXT` persists that value and `collections_premiered_at` indexes it. The v1 → v2 migration is incremental and idempotent: it adds the column and index, then sets `user_version` to `2`. Existing rows keep `NULL`; migration never guesses a date.
+- `local-library:list` accepts sort `released_desc`: rows with a premiere date come first, newest first, then `year` descending and most recently added; rows without a date stay last.
+- `LocalMediaItem.premieredDate` is the renderer-safe `YYYY-MM-DD` value or `null` when unknown. It is not a path and carries no source location.
 
 ## Public IPC
 
@@ -24,10 +31,10 @@ Channels are defined in `src/shared/ipc-channels.ts` and exposed through `window
 - `local-library:state` → `LocalLibraryState`; reports schema version, SQLite availability, safe source labels/counts, and an actionable storage error.
 - `local-library:choose-folder` → opens a main-owned directory picker and starts a visible, cancellable full-root scan; progress is emitted through `onScanProgress` and the final result reports `completed`/`cancelled`/`partial`/`unavailable` without a root path.
 - `local-library:open-video` → opens a main-owned video picker and imports the selected file under its parent root.
-- `local-library:list` → validates bounded page/query input and returns `LocalLibraryPage` with renderer-safe items.
+- `local-library:list` → validates bounded page/query input, including `sort`, and returns `LocalLibraryPage` with renderer-safe items. `released_desc` is valid only under schema v2.
 - `local-library:get` → validates opaque `mediaId` and returns one renderer-safe item; missing media is not a path error.
 
-Renderer-visible `LocalMediaItem` fields are `mediaId`, `sourceId`, `collectionId`, title, kind, optional year/plot/genres/rating/season/episode, artwork cache keys, size, modified time, and availability. Source summaries use a basename or a fixed drive/folder label; they never fall back to an absolute root. Absolute paths, UNC paths, source-relative paths, database rows, credentials, NAS signs, and raw playback URIs are never part of the public DTO. Worker, SQLite, filesystem and IPC errors are reduced to stable renderer-safe messages before entering state, scan results, or rejected IPC promises.
+Renderer-visible `LocalMediaItem` fields are `mediaId`, `sourceId`, `collectionId`, title, kind, optional year, optional `premieredDate` (`YYYY-MM-DD` or `null`), optional plot/genres/rating/season/episode, artwork cache keys, size, modified time, and availability. Source summaries use a basename or a fixed drive/folder label; they never fall back to an absolute root. Absolute paths, UNC paths, source-relative paths, database rows, credentials, NAS signs, and raw playback URIs are never part of the public DTO. Worker, SQLite, filesystem and IPC errors are reduced to stable renderer-safe messages before entering state, scan results, or rejected IPC promises.
 
 `local-library:get` may include `detail.playback` for the requested opaque `mediaId` when local progress exists. The worker joins that state to the validated media row; the field contains only `LocalPlaybackState` and never a path or playback URI.
 

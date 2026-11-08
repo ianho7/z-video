@@ -24,7 +24,7 @@ const good = { ...item, mediaId: "media_123e4567-e89b-12d3-a456-426614174005", t
 const items = [item, broken, delayed, replacement, fanartOnly, good];
 const state = {
   status: "ready",
-  schemaVersion: 1,
+  schemaVersion: 2,
   sqliteAvailable: true,
   sources: [{ sourceId: item.sourceId, label: "owned-fixture", available: true, itemCount: 1 }],
 };

@@ -19,7 +19,7 @@ import {
   type LocalScanResult,
   type LocalSourceSummary,
 } from "../shared/local-library-contracts";
-import { parseEpisodeNumbers, parseNfo, type ParsedNfo } from "./local-library-metadata";
+import { parseEpisodeNumbers, parseNfo, parsePremieredDate, type ParsedNfo } from "./local-library-metadata";
 import { localLibraryErrorCode, localLibraryErrorMessage } from "./local-library-errors";
 import { safeSourceLabel } from "./local-library-label";
 
@@ -334,6 +334,7 @@ function openDatabase(dbPath: string): void {
     ensureColumn("collections", "identity_key", "TEXT");
     ensureColumn("collections", "source_id", "TEXT");
     ensureColumn("collections", "relative_path", "TEXT");
+    ensureColumn("collections", "premiered_at", "TEXT");
     ensureColumn("media_files", "display_title", "TEXT");
     ensureColumn("media_files", "media_kind", "TEXT NOT NULL DEFAULT 'movie'");
     ensureColumn("media_files", "season_number", "INTEGER");
@@ -343,9 +344,12 @@ function openDatabase(dbPath: string): void {
     ensureColumn("artwork", "relative_path", "TEXT");
     ensureColumn("artwork", "updated_at", "INTEGER");
     db.exec("CREATE UNIQUE INDEX IF NOT EXISTS collections_identity_key ON collections(identity_key) WHERE identity_key IS NOT NULL;");
+    db.exec("CREATE INDEX IF NOT EXISTS collections_premiered_at ON collections(premiered_at);");
     db.exec("CREATE INDEX IF NOT EXISTS media_files_source_path ON media_files(source_id, relative_path);");
     db.exec("CREATE INDEX IF NOT EXISTS artwork_collection_kind ON artwork(collection_id, media_id, kind);");
-    if (existingVersion === 0) db.exec(`PRAGMA user_version = ${LOCAL_LIBRARY_SCHEMA_VERSION};`);
+    // Incremental migration: v2 only adds collections.premiered_at and its index.
+    // Existing rows keep NULL so no date is invented from a year.
+    if (existingVersion < LOCAL_LIBRARY_SCHEMA_VERSION) db.exec(`PRAGMA user_version = ${LOCAL_LIBRARY_SCHEMA_VERSION};`);
   } catch (error) {
     throw new LocalWorkerError("storage", localLibraryErrorMessage("storage"));
   }
@@ -522,6 +526,7 @@ function toPublicItem(row: Record<string, unknown>): LocalMediaItem {
     ...(row.rating === null || row.rating === undefined ? {} : { rating: Number(row.rating) }),
     ...(row.seasonNumber === null || row.seasonNumber === undefined ? {} : { seasonNumber: Number(row.seasonNumber) }),
     ...(row.episodeNumber === null || row.episodeNumber === undefined ? {} : { episodeNumber: Number(row.episodeNumber) }),
+    premieredDate: parsePremieredDate(row.premieredAt),
     ...(artwork ? { artwork } : {}),
   };
 }
@@ -533,6 +538,8 @@ interface CollectionMetadata {
   title: string;
   kind: "movie" | "show" | "unclassified";
   year?: number;
+  /** Validated YYYY-MM-DD from NFO; absent when the source has no real date. */
+  premieredDate?: string;
   plot?: string;
   genres: string[];
   rating?: number;
@@ -571,6 +578,7 @@ function mergeNfo(primary: ParsedNfo | undefined, fallback: ParsedNfo | undefine
     title: primary.title ?? fallback.title,
     showTitle: primary.showTitle ?? fallback.showTitle,
     year: primary.year ?? fallback.year,
+    premieredDate: primary.premieredDate ?? fallback.premieredDate,
     plot: primary.plot ?? fallback.plot,
     rating: primary.rating ?? fallback.rating,
     seasonNumber: primary.seasonNumber ?? fallback.seasonNumber,
@@ -726,6 +734,7 @@ async function discoverMedia(
       title: collectionTitle,
       kind,
       ...(collectionNfo?.year !== undefined ? { year: collectionNfo.year } : {}),
+      ...(collectionNfo?.premieredDate ? { premieredDate: collectionNfo.premieredDate } : {}),
       ...(collectionNfo?.plot ? { plot: collectionNfo.plot } : {}),
       genres: collectionNfo?.genres ?? [],
       ...(collectionNfo?.rating !== undefined ? { rating: collectionNfo.rating } : {}),
@@ -747,14 +756,14 @@ function upsertCollection(metadata: CollectionMetadata, timestamp: number, prefe
   const collectionId = existing?.collectionId ?? makeId("collection");
   if (existing?.collectionId) {
     profileSync("database", () => db.prepare(`
-      UPDATE collections SET title = ?, kind = ?, year = ?, plot = ?, genre_json = ?, rating = ?, identity_key = ?, source_id = ?, relative_path = ?, updated_at = ?
+      UPDATE collections SET title = ?, kind = ?, year = ?, premiered_at = ?, plot = ?, genre_json = ?, rating = ?, identity_key = ?, source_id = ?, relative_path = ?, updated_at = ?
       WHERE collection_id = ?
-    `).run(metadata.title, metadata.kind, metadata.year ?? null, metadata.plot ?? null, JSON.stringify(metadata.genres), metadata.rating ?? null, metadata.identityKey, metadata.sourceId, metadata.relativePath, timestamp, collectionId));
+    `).run(metadata.title, metadata.kind, metadata.year ?? null, metadata.premieredDate ?? null, metadata.plot ?? null, JSON.stringify(metadata.genres), metadata.rating ?? null, metadata.identityKey, metadata.sourceId, metadata.relativePath, timestamp, collectionId));
   } else {
     profileSync("database", () => db.prepare(`
-      INSERT INTO collections (collection_id, title, kind, year, plot, genre_json, rating, identity_key, source_id, relative_path, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(collectionId, metadata.title, metadata.kind, metadata.year ?? null, metadata.plot ?? null, JSON.stringify(metadata.genres), metadata.rating ?? null, metadata.identityKey, metadata.sourceId, metadata.relativePath, timestamp, timestamp));
+      INSERT INTO collections (collection_id, title, kind, year, premiered_at, plot, genre_json, rating, identity_key, source_id, relative_path, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(collectionId, metadata.title, metadata.kind, metadata.year ?? null, metadata.premieredDate ?? null, metadata.plot ?? null, JSON.stringify(metadata.genres), metadata.rating ?? null, metadata.identityKey, metadata.sourceId, metadata.relativePath, timestamp, timestamp));
   }
   return collectionId;
 }
@@ -852,7 +861,7 @@ async function upsertMedia(rootPath: string, discovered: DiscoveredMedia, includ
           media_files.season_number AS seasonNumber, media_files.episode_number AS episodeNumber,
           media_files.available, sources.available AS sourceAvailable,
           collections.title, collections.kind, collections.year, collections.plot,
-          collections.genre_json AS genreJson, collections.rating
+          collections.genre_json AS genreJson, collections.rating, collections.premiered_at AS premieredAt
         FROM media_files JOIN collections USING (collection_id) JOIN sources USING (source_id)
         WHERE media_files.media_id = ?
       `).get(mediaId) as Record<string, unknown>)
@@ -920,7 +929,9 @@ function list(query: LocalLibraryQuery): { totalCount: number; items: LocalMedia
         ? "collections.rating IS NULL ASC, collections.rating DESC, collections.title COLLATE NOCASE ASC"
         : sort === "added_desc"
           ? "media_files.added_at DESC, collections.title COLLATE NOCASE ASC"
-          : "media_files.updated_at DESC, collections.title COLLATE NOCASE ASC";
+          : sort === "released_desc"
+            ? "collections.premiered_at IS NULL ASC, collections.premiered_at DESC, collections.year IS NULL ASC, collections.year DESC, media_files.added_at DESC, collections.title COLLATE NOCASE ASC"
+            : "media_files.updated_at DESC, collections.title COLLATE NOCASE ASC";
   const rows = db.prepare(`
     SELECT media_files.media_id AS mediaId, media_files.collection_id AS collectionId, media_files.source_id AS sourceId,
       media_files.display_title AS displayTitle, media_files.media_kind AS mediaKind,
@@ -928,7 +939,7 @@ function list(query: LocalLibraryQuery): { totalCount: number; items: LocalMedia
       media_files.season_number AS seasonNumber, media_files.episode_number AS episodeNumber,
       media_files.available, sources.available AS sourceAvailable,
       collections.title, collections.kind, collections.year, collections.plot,
-      collections.genre_json AS genreJson, collections.rating
+      collections.genre_json AS genreJson, collections.rating, collections.premiered_at AS premieredAt
     FROM media_files JOIN collections USING (collection_id) JOIN sources USING (source_id)
     WHERE ${clauses.join(" AND ")}
     ORDER BY ${orderBy}
@@ -946,7 +957,7 @@ function get(mediaId: string): LocalMediaItem | undefined {
       media_files.season_number AS seasonNumber, media_files.episode_number AS episodeNumber,
       media_files.available, sources.available AS sourceAvailable,
       collections.title, collections.kind, collections.year, collections.plot,
-      collections.genre_json AS genreJson, collections.rating
+      collections.genre_json AS genreJson, collections.rating, collections.premiered_at AS premieredAt
     FROM media_files JOIN collections USING (collection_id) JOIN sources USING (source_id)
     WHERE media_files.media_id = ?
   `).get(mediaId) as Record<string, unknown> | undefined;
@@ -966,7 +977,7 @@ function getDetail(mediaId: string): LocalMediaDetail | undefined {
       media_files.season_number AS seasonNumber, media_files.episode_number AS episodeNumber,
       media_files.available, sources.available AS sourceAvailable,
       collections.title, collections.kind, collections.year, collections.plot,
-      collections.genre_json AS genreJson, collections.rating
+      collections.genre_json AS genreJson, collections.rating, collections.premiered_at AS premieredAt
     FROM media_files JOIN collections USING (collection_id) JOIN sources USING (source_id)
     WHERE media_files.collection_id = ?
     ORDER BY media_files.season_number IS NULL, media_files.season_number, media_files.episode_number IS NULL,
@@ -990,7 +1001,7 @@ function listContinueWatching(): LocalContinueWatchingItem[] {
       media_files.season_number AS seasonNumber, media_files.episode_number AS episodeNumber,
       media_files.available, sources.available AS sourceAvailable,
       collections.title, collections.kind, collections.year, collections.plot,
-      collections.genre_json AS genreJson, collections.rating,
+      collections.genre_json AS genreJson, collections.rating, collections.premiered_at AS premieredAt,
       playback_state.position_sec AS positionSec, playback_state.duration_sec AS durationSec,
       playback_state.audio_track_id AS audioTrackId, playback_state.subtitle_track_id AS subtitleTrackId,
       playback_state.watched, playback_state.updated_at AS updatedAtMs
