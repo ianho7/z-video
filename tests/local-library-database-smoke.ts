@@ -216,6 +216,20 @@ async function run(): Promise<void> {
     const afterWatched = (await database.listCollections({ page: 1, pageSize: 50, sourceId: collectionScan.sourceId, filter: "show" })).items[0];
     assert.equal(afterWatched?.watchedEpisodeCount, 1, "watched episodes are counted per work");
     assert.equal(afterWatched?.representativeMediaId, aggregateEpisodeTwo.mediaId);
+    const perEpisodeDetail = await database.getDetail(aggregateEpisodeOne.mediaId);
+    assert.equal(perEpisodeDetail?.collectionTitle, "Aggregate Show");
+    assert.equal(perEpisodeDetail?.episodes.length, 3);
+    assert.ok(perEpisodeDetail?.episodePlayback, "detail exposes playback state for every episode");
+    const episodeStates = new Map((perEpisodeDetail?.episodePlayback ?? []).map((state) => [state.mediaId, state]));
+    assert.equal(episodeStates.size, 2, "only episodes with saved playback appear in the state list");
+    assert.equal(episodeStates.get(aggregateEpisodeOne.mediaId)?.watched, true, "the watched episode carries its own watched flag");
+    assert.equal(episodeStates.get(aggregateEpisodeTwo.mediaId)?.watched, false);
+    assert.equal(episodeStates.get(aggregateEpisodeTwo.mediaId)?.positionSec, 120, "the in-progress episode carries its own position");
+    assert.equal(episodeStates.has(aggregateEpisodeThree.mediaId), false, "an unwatched episode is absent rather than borrowing another episode's state");
+    assert.equal(JSON.stringify(perEpisodeDetail).includes(collectionRoot), false, "per-episode playback detail never exposes the source root");
+    for (const state of perEpisodeDetail?.episodePlayback ?? []) {
+      for (const key of Object.keys(state)) assert.doesNotMatch(key, /path|root|relative/i, `episode playback must not expose ${key}`);
+    }
     await database.savePlayback(aggregateEpisodeTwo.mediaId, { positionSec: 1800, durationSec: 1800, watched: true, updatedAtMs: Date.now() + 20 });
     const firstUnwatched = (await database.listCollections({ page: 1, pageSize: 50, sourceId: collectionScan.sourceId, filter: "show" })).items[0];
     assert.equal(firstUnwatched?.representativeMediaId, aggregateEpisodeThree.mediaId, "after resume is gone, the first unwatched episode is selected");
@@ -223,6 +237,9 @@ async function run(): Promise<void> {
     const fullyWatched = (await database.listCollections({ page: 1, pageSize: 50, sourceId: collectionScan.sourceId, filter: "show" })).items[0];
     assert.equal(fullyWatched?.watchedEpisodeCount, 3);
     assert.equal(fullyWatched?.representativeMediaId, aggregateEpisodeOne.mediaId, "when every episode is watched the first episode is the fallback");
+    const fullyWatchedDetail = await database.getDetail(aggregateEpisodeThree.mediaId);
+    assert.equal(fullyWatchedDetail?.episodePlayback?.length, 3, "every episode keeps its own watched state");
+    assert.equal(fullyWatchedDetail?.episodePlayback?.every((state) => state.watched === true), true);
 
     const collectionFirstPage = await database.listCollections({ page: 1, pageSize: 1, sourceId: collectionScan.sourceId, sort: "title" });
     const collectionSecondPage = await database.listCollections({ page: 2, pageSize: 1, sourceId: collectionScan.sourceId, sort: "title" });

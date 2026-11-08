@@ -42,6 +42,8 @@ Renderer-visible `LocalMediaItem` fields are `mediaId`, `sourceId`, `collectionI
 
 `local-library:get` may include `detail.playback` for the requested opaque `mediaId` when local progress exists. The worker joins that state to the validated media row; the field contains only `LocalPlaybackState` and never a path or playback URI.
 
+B4a adds optional `detail.episodePlayback`: the saved `LocalPlaybackState` for every file in the same collection, ordered by season/episode. Episodes with no saved row are omitted, so the detail page can render each episode's own watched/progress/unwatched state instead of borrowing the selected episode's state. Every entry is keyed by an opaque `mediaId` and carries only the existing playback fields; no path, relative path, URI, or raw SQL row enters the DTO.
+
 ## Work-level (Collection) read contract
 
 B1 adds one renderer-safe work list without changing schema v2. `local-library:list-collections` validates a bounded `LocalCollectionQuery` and returns `LocalCollectionListResult` (`state` plus `LocalCollectionPage`):

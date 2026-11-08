@@ -1184,6 +1184,7 @@ function getDetail(mediaId: string): LocalMediaDetail | undefined {
   if (!item) return undefined;
   const db = requireDatabase();
   const playback = getPlayback(item.mediaId);
+  const episodePlayback = getCollectionPlayback(item.collectionId);
   const collection = db.prepare("SELECT title, kind FROM collections WHERE collection_id = ?").get(item.collectionId) as { title?: string; kind?: string } | undefined;
   const rows = db.prepare(`
     SELECT media_files.media_id AS mediaId, media_files.collection_id AS collectionId, media_files.source_id AS sourceId,
@@ -1204,6 +1205,7 @@ function getDetail(mediaId: string): LocalMediaDetail | undefined {
     ...(collection?.kind === "movie" || collection?.kind === "show" || collection?.kind === "unclassified" ? { collectionKind: collection.kind } : {}),
     episodes: rows.map(toPublicItem),
     ...(playback ? { playback } : {}),
+    ...(episodePlayback.length > 0 ? { episodePlayback } : {}),
   };
 }
 
@@ -1304,15 +1306,7 @@ async function resolvePath(mediaId: string): Promise<string | undefined> {
   return path;
 }
 
-function getPlayback(mediaId: string): LocalPlaybackState | undefined {
-  const db = requireDatabase();
-  const row = db.prepare(`
-    SELECT media_id AS mediaId, position_sec AS positionSec, duration_sec AS durationSec,
-      audio_track_id AS audioTrackId, subtitle_track_id AS subtitleTrackId,
-      watched, updated_at AS updatedAtMs
-    FROM playback_state WHERE media_id = ?
-  `).get(mediaId) as Record<string, unknown> | undefined;
-  if (!row) return undefined;
+function playbackFromRow(row: Record<string, unknown>): LocalPlaybackState {
   return {
     mediaId: String(row.mediaId) as LocalPlaybackState["mediaId"],
     positionSec: Number(row.positionSec),
@@ -1322,6 +1316,34 @@ function getPlayback(mediaId: string): LocalPlaybackState | undefined {
     watched: Number(row.watched) === 1,
     updatedAtMs: Number(row.updatedAtMs),
   };
+}
+
+function getPlayback(mediaId: string): LocalPlaybackState | undefined {
+  const db = requireDatabase();
+  const row = db.prepare(`
+    SELECT media_id AS mediaId, position_sec AS positionSec, duration_sec AS durationSec,
+      audio_track_id AS audioTrackId, subtitle_track_id AS subtitleTrackId,
+      watched, updated_at AS updatedAtMs
+    FROM playback_state WHERE media_id = ?
+  `).get(mediaId) as Record<string, unknown> | undefined;
+  return row ? playbackFromRow(row) : undefined;
+}
+
+/** Every saved episode state in one collection, ordered by season/episode. */
+function getCollectionPlayback(collectionId: string): LocalPlaybackState[] {
+  const db = requireDatabase();
+  const rows = db.prepare(`
+    SELECT playback_state.media_id AS mediaId, playback_state.position_sec AS positionSec,
+      playback_state.duration_sec AS durationSec, playback_state.audio_track_id AS audioTrackId,
+      playback_state.subtitle_track_id AS subtitleTrackId, playback_state.watched,
+      playback_state.updated_at AS updatedAtMs
+    FROM playback_state JOIN media_files USING (media_id)
+    WHERE media_files.collection_id = ?
+    ORDER BY media_files.season_number IS NULL, media_files.season_number,
+      media_files.episode_number IS NULL, media_files.episode_number,
+      media_files.display_title COLLATE NOCASE
+  `).all(collectionId) as Array<Record<string, unknown>>;
+  return rows.map(playbackFromRow);
 }
 
 function savePlayback(stateValue: LocalPlaybackState): LocalPlaybackState {

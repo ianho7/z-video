@@ -74,6 +74,12 @@ export interface LocalMediaDetail {
   episodes: LocalMediaItem[];
   /** Saved local progress for the selected media, when one exists. */
   playback?: LocalPlaybackState;
+  /**
+   * Saved local progress for every file in the same collection, keyed by the
+   * opaque media ID. Omitted entries have never been played. No path or URI is
+   * ever part of this list.
+   */
+  episodePlayback?: LocalPlaybackState[];
 }
 
 export interface LocalContinueWatchingItem {

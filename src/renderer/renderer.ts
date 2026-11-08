@@ -92,6 +92,14 @@ const detailEpisodesSection = document.querySelector<HTMLElement>("#detail-episo
 const detailEpisodes = document.querySelector<HTMLElement>("#detail-episodes");
 const detailSeasonTabs = document.querySelector<HTMLElement>("#detail-season-tabs");
 const detailFileSection = document.querySelector<HTMLElement>("#detail-file-section");
+const detailContent = document.querySelector<HTMLElement>("#detail-content");
+const detailSkeleton = document.querySelector<HTMLElement>("#detail-skeleton");
+const detailError = document.querySelector<HTMLElement>("#detail-error");
+const detailErrorTitle = document.querySelector<HTMLElement>("#detail-error-title");
+const detailErrorMessage = document.querySelector<HTMLElement>("#detail-error-message");
+const detailErrorRetry = document.querySelector<HTMLButtonElement>("#detail-error-retry");
+const detailErrorBack = document.querySelector<HTMLButtonElement>("#detail-error-back");
+const detailPlaybackNote = document.querySelector<HTMLElement>("#detail-playback-note");
 const playerView = document.querySelector<HTMLElement>('[data-view="player"]');
 const playerSurface = document.querySelector<HTMLElement>(".player-surface");
 const playerSurfaceMessage = document.querySelector<HTMLElement>("#player-surface-message");
@@ -144,9 +152,18 @@ let activePage: LibraryPageView | undefined;
 let libraryLoadedOnce = false;
 let activeDetail: LocalMediaDetail | undefined;
 let selectedMediaId: string | undefined;
-let returnFocusMediaId: string | undefined;
-let returnFocusContainerId: "#library-grid" | "#recent-row" | "#shows-row" | undefined;
-let returnFocusControlId: string | undefined;
+type DetailOriginKind = "home" | "library" | "episodes" | "search";
+interface DetailOrigin {
+  kind: DetailOriginKind;
+  nav: string | undefined;
+  scrollTop: number;
+  windowScrollY: number;
+  focusMediaId: string | undefined;
+  focusContainerId: "#library-grid" | "#recent-row" | "#shows-row" | undefined;
+  focusControlId: string | undefined;
+}
+let detailOrigin: DetailOrigin | undefined;
+let detailRequestMediaId: string | undefined;
 let requestEpoch = 0;
 let continueEpoch = 0;
 let searchTimer: number | undefined;
@@ -215,7 +232,9 @@ function isDetailOrPlayerVisible(): boolean {
 
 function detailPlayback(detailValue: LocalMediaDetail): LocalPlaybackState | undefined {
   const candidate = detailValue.playback;
-  return candidate?.mediaId === detailValue.item.mediaId ? candidate : continuePlaybackByMediaId.get(detailValue.item.mediaId);
+  if (candidate?.mediaId === detailValue.item.mediaId) return candidate;
+  const perEpisode = detailValue.episodePlayback?.find((state) => state.mediaId === detailValue.item.mediaId);
+  return perEpisode ?? continuePlaybackByMediaId.get(detailValue.item.mediaId);
 }
 
 function hasResume(playback: LocalPlaybackState | undefined): playback is LocalPlaybackState {
@@ -967,20 +986,141 @@ function setQuery(patch: Partial<LocalLibraryQuery>): void {
   renderSourceFilters();
 }
 
-async function openDetail(mediaId: string, returnFocusTarget?: HTMLElement): Promise<void> {
-  if (detail?.hidden !== false) {
-    const focused = returnFocusTarget ?? document.activeElement;
-    returnFocusMediaId = focused instanceof HTMLElement && focused.dataset.mediaId ? focused.dataset.mediaId : mediaId;
-    returnFocusContainerId = focused instanceof HTMLElement
+function currentDetailOriginKind(): DetailOriginKind {
+  if (currentQuery.query) return "search";
+  if ((currentQuery.filter ?? "all") === "episode") return "episodes";
+  return homeVisible ? "home" : "library";
+}
+
+function detailOriginLabel(kind: DetailOriginKind): string {
+  return kind === "home" ? "返回首页" : kind === "search" ? "返回搜索结果" : kind === "episodes" ? "返回单集列表" : "返回片库";
+}
+
+function applyDetailNav(nav: string | undefined): void {
+  document.querySelectorAll<HTMLButtonElement>("[data-nav]").forEach((button) => {
+    if (nav && button.dataset.nav === nav) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+}
+
+function captureDetailOrigin(focusTarget?: HTMLElement): DetailOrigin {
+  const focused = focusTarget ?? document.activeElement;
+  return {
+    kind: currentDetailOriginKind(),
+    nav: document.querySelector<HTMLButtonElement>("[data-nav][aria-current='page']")?.dataset.nav,
+    scrollTop: libraryContent?.scrollTop ?? 0,
+    windowScrollY: document.scrollingElement?.scrollTop ?? window.scrollY,
+    focusMediaId: focused instanceof HTMLElement && focused.dataset.mediaId ? focused.dataset.mediaId : undefined,
+    focusContainerId: focused instanceof HTMLElement
       ? focused.closest("#library-grid") ? "#library-grid"
         : focused.closest("#recent-row") ? "#recent-row" : focused.closest("#shows-row") ? "#shows-row" : undefined
-      : undefined;
-    returnFocusControlId = focused instanceof HTMLElement && focused.id ? `#${CSS.escape(focused.id)}` : undefined;
+      : undefined,
+    focusControlId: focused instanceof HTMLElement && focused.id ? `#${CSS.escape(focused.id)}` : undefined,
+  };
+}
+
+function applyDetailOriginChrome(origin: DetailOrigin): void {
+  if (detailBack) detailBack.textContent = `← ${detailOriginLabel(origin.kind)}`;
+  if (detailErrorBack) detailErrorBack.textContent = detailOriginLabel(origin.kind);
+  applyDetailNav(origin.nav);
+}
+
+function setDetailScroll(top: number): void {
+  if (libraryContent) libraryContent.scrollTop = top;
+  const scroller = document.scrollingElement;
+  if (scroller) scroller.scrollTop = top;
+  else window.scrollTo(0, top);
+}
+
+function restoreDetailScroll(origin: DetailOrigin): void {
+  if (libraryContent) libraryContent.scrollTop = origin.scrollTop;
+  const scroller = document.scrollingElement;
+  if (scroller) scroller.scrollTop = origin.windowScrollY;
+  else window.scrollTo(0, origin.windowScrollY);
+}
+
+function clearDetailContent(): void {
+  if (detailTitle) detailTitle.textContent = "";
+  detailMeta?.replaceChildren();
+  if (detailPlot) {
+    detailPlot.textContent = "";
+    detailPlot.classList.remove("collapsed");
+  }
+  if (detailPlotToggle) {
+    detailPlotToggle.hidden = true;
+    detailPlotToggle.setAttribute("aria-expanded", "false");
+  }
+  if (detailPlotEmpty) detailPlotEmpty.hidden = true;
+  if (detailPlotSection) detailPlotSection.hidden = true;
+  if (detailPoster) {
+    detailPoster.replaceChildren();
+    delete detailPoster.dataset.artworkMediaId;
+    delete detailPoster.dataset.artworkKind;
+    delete detailPoster.dataset.artworkLoaded;
+    delete detailPoster.dataset.artworkLoading;
+  }
+  if (detailOpen) {
+    detailOpen.textContent = "播放";
+    detailOpen.disabled = true;
+    detailOpen.dataset.playbackMode = "play";
+  }
+  if (detailRestart) {
+    detailRestart.hidden = true;
+    detailRestart.disabled = true;
+  }
+  if (detailResume) {
+    detailResume.hidden = true;
+    detailResume.textContent = "";
+  }
+  if (detailPlaybackNote) {
+    detailPlaybackNote.hidden = true;
+    detailPlaybackNote.textContent = "";
+  }
+  if (detailOfflineBanner) detailOfflineBanner.hidden = true;
+  detailEpisodes?.replaceChildren();
+  detailSeasonTabs?.replaceChildren();
+  if (detailEpisodesSection) detailEpisodesSection.hidden = true;
+  if (detailFileSection) detailFileSection.hidden = true;
+  document.querySelector("#detail-file-info")?.replaceChildren();
+}
+
+function setDetailViewState(viewState: "loading" | "ready" | "error"): void {
+  if (detail) {
+    detail.dataset.state = viewState;
+    if (viewState === "loading") detail.setAttribute("aria-busy", "true");
+    else detail.removeAttribute("aria-busy");
+  }
+  if (detailSkeleton) detailSkeleton.hidden = viewState !== "loading";
+  if (detailError) detailError.hidden = viewState !== "error";
+  if (detailContent) detailContent.hidden = viewState !== "ready";
+}
+
+function showDetailError(message: string): void {
+  clearDetailContent();
+  if (detailErrorMessage) detailErrorMessage.textContent = message;
+  setDetailViewState("error");
+  detailErrorTitle?.focus({ preventScroll: true });
+}
+
+async function openDetail(mediaId: string, returnFocusTarget?: HTMLElement): Promise<void> {
+  const entering = detail?.hidden !== false;
+  const retrying = detail?.dataset.state === "error";
+  if (entering) {
+    detailOrigin = captureDetailOrigin(returnFocusTarget);
+    applyDetailOriginChrome(detailOrigin);
+    setDetailScroll(0);
+  } else if (retrying && detailOrigin) {
+    applyDetailOriginChrome(detailOrigin);
+  }
+  if (entering || retrying) {
+    clearDetailContent();
+    setDetailViewState("loading");
   }
   const epoch = ++requestEpoch;
   activeDetail = undefined;
   activeDetailPlayback = undefined;
   selectedMediaId = mediaId;
+  detailRequestMediaId = mediaId;
   if (detail) detail.hidden = false;
   if (collectionSection) collectionSection.hidden = true;
   if (hero) hero.hidden = true;
@@ -995,11 +1135,28 @@ async function openDetail(mediaId: string, returnFocusTarget?: HTMLElement): Pro
     const loaded = result.detail ?? (result.item ? { item: result.item, episodes: [result.item] } : undefined);
     if (!loaded) throw new Error("媒体条目已不存在，可能已被移除来源");
     activeDetail = loaded;
+    // Reveal the content before measuring text so the plot disclosure sees a
+    // real layout box instead of a hidden ancestor with no computed line height.
+    setDetailViewState("ready");
     renderDetail(loaded);
-    setMessage(loaded.item.available ? "" : "来源离线；仍可浏览已缓存的索引和封面。", !loaded.item.available);
+    if (entering || retrying) detailTitle?.focus({ preventScroll: true });
+    setMessage(loaded.item.available ? "" : "来源离线；播放和从头播放已禁用。", !loaded.item.available);
   } catch (error) {
-    if (epoch === requestEpoch) setMessage(error instanceof Error ? error.message : "详情加载失败。", true);
+    if (epoch === requestEpoch) {
+      const message = error instanceof Error ? error.message : "详情加载失败。";
+      activeDetail = undefined;
+      activeDetailPlayback = undefined;
+      showDetailError(message);
+      setMessage(message, true);
+    }
   }
+}
+
+function episodeLabel(item: LocalMediaItem): string {
+  if (item.kind !== "episode") return "";
+  if (item.seasonNumber !== undefined && item.episodeNumber !== undefined) return `第 ${item.seasonNumber} 季 第 ${item.episodeNumber} 集`;
+  if (item.episodeNumber !== undefined) return `第 ${item.episodeNumber} 集`;
+  return "";
 }
 
 function renderDetail(detailValue: LocalMediaDetail): void {
@@ -1048,6 +1205,7 @@ function renderDetail(detailValue: LocalMediaDetail): void {
     detailPlot.classList.toggle("collapsed", plotNeedsDisclosure);
   }
   if (detailPlotSection) {
+    detailPlotSection.hidden = !plot;
     if (detailPlotToggle) {
       detailPlotToggle.hidden = !plotNeedsDisclosure;
       detailPlotToggle.setAttribute("aria-expanded", "false");
@@ -1057,27 +1215,36 @@ function renderDetail(detailValue: LocalMediaDetail): void {
   }
   if (detailPlotEmpty) detailPlotEmpty.hidden = Boolean(plot);
   if (detailOfflineBanner) detailOfflineBanner.hidden = item.available;
+  if (detailPlaybackNote) {
+    detailPlaybackNote.hidden = item.available;
+    detailPlaybackNote.textContent = item.available ? "" : "来源离线：播放和从头播放已禁用。重新连接驱动器或网络位置后，在文件夹页重新扫描。";
+  }
   const playback = activeDetailPlayback;
   const resume = hasResume(playback);
   const restartAfterCompletion = Boolean(playback?.watched);
+  const episode = episodeLabel(item);
   if (detailOpen) {
     detailOpen.textContent = resume
-      ? `继续播放 · ${formatTime(playback.positionSec)}`
+      ? episode ? `继续播放 · ${episode}` : `继续播放 · ${formatTime(playback.positionSec)}`
       : restartAfterCompletion ? "重新播放" : "播放";
     detailOpen.dataset.playbackMode = resume ? "resume" : restartAfterCompletion ? "restart" : "play";
     detailOpen.disabled = !item.available;
+    detailOpen.setAttribute("aria-label", resume && episode ? `继续播放《${detailValue.collectionTitle?.trim() || item.title}》${episode}` : detailOpen.textContent);
   }
   if (detailRestart) {
     detailRestart.hidden = !resume;
     detailRestart.disabled = !item.available;
     detailRestart.dataset.playbackMode = "restart";
+    detailRestart.setAttribute("aria-label", "从头播放（会清除当前观看进度）");
   }
   if (detailResume) {
     detailResume.hidden = !playback;
     detailResume.textContent = playback
-      ? playback.watched
-        ? `已保存进度 ${formatTime(playback.positionSec)} · 已看完`
-        : `已保存进度 ${formatTime(playback.positionSec)} · 可继续或从头开始`
+      ? item.available
+        ? playback.watched
+          ? `已保存进度 ${formatTime(playback.positionSec)} · 已看完`
+          : `已保存进度 ${formatTime(playback.positionSec)} · 可继续或从头开始`
+        : `已保存进度 ${formatTime(playback.positionSec)} · 来源离线，暂时无法继续播放`
       : "";
   }
   if (detailEpisodesSection && detailEpisodes) {
@@ -1086,7 +1253,7 @@ function renderDetail(detailValue: LocalMediaDetail): void {
     const seasons = [...new Set(episodes.map((episode) => episode.seasonNumber).filter((season): season is number => season !== undefined))];
     if (!seasons.includes(selectedSeason ?? -1)) selectedSeason = seasons[0];
     const visibleEpisodes = seasons.length > 1 ? episodes.filter((episode) => episode.seasonNumber === selectedSeason) : episodes;
-    detailEpisodes.replaceChildren(...episodeRows(visibleEpisodes, selectedMediaId, playback));
+    detailEpisodes.replaceChildren(...episodeRows(visibleEpisodes, selectedMediaId, playback, detailValue.episodePlayback ?? []));
     detailEpisodes.querySelectorAll<HTMLElement>("[data-artwork-media-id]").forEach((element) => enqueueArtwork(element, 1));
     detailSeasonTabs?.replaceChildren(...renderSeasonTabs(episodes, selectedSeason));
   }
@@ -1118,27 +1285,31 @@ function renderDetail(detailValue: LocalMediaDetail): void {
 
 function closeDetail(): void {
   requestEpoch += 1;
+  const origin = detailOrigin;
+  detailOrigin = undefined;
+  detailRequestMediaId = undefined;
   activeDetail = undefined;
   activeDetailPlayback = undefined;
   selectedMediaId = undefined;
-  if (detail) detail.hidden = true;
+  if (detail) {
+    detail.hidden = true;
+    delete detail.dataset.state;
+    detail.removeAttribute("aria-busy");
+  }
   updateScanUi();
   if (collectionSection) collectionSection.hidden = homeVisible;
+  if (origin) applyDetailNav(origin.nav);
   void Promise.all([loadLibrary(), homeVisible ? loadHomeShelves() : Promise.resolve()]).then(([applied]) => {
     if (applied) {
       scanRenderedCommit = scanCommit;
       scanRefreshQueued = false;
-      const mediaId = returnFocusMediaId;
-      const containerId = returnFocusContainerId;
-      const controlId = returnFocusControlId;
-      returnFocusMediaId = undefined;
-      returnFocusContainerId = undefined;
-      returnFocusControlId = undefined;
-      const target = controlId ? document.querySelector<HTMLButtonElement>(controlId)
-        : mediaId && containerId ? document.querySelector<HTMLButtonElement>(`${containerId} [data-media-id="${cssEscape(mediaId)}"]`)
-          : mediaId ? document.querySelector<HTMLButtonElement>(`#library-grid [data-media-id="${cssEscape(mediaId)}"]`) : null;
-      target?.focus({ preventScroll: true });
     }
+    if (!origin) return;
+    const target = origin.focusControlId ? document.querySelector<HTMLButtonElement>(origin.focusControlId)
+      : origin.focusMediaId && origin.focusContainerId ? document.querySelector<HTMLButtonElement>(`${origin.focusContainerId} [data-media-id="${cssEscape(origin.focusMediaId)}"]`)
+        : origin.focusMediaId ? document.querySelector<HTMLButtonElement>(`#library-grid [data-media-id="${cssEscape(origin.focusMediaId)}"]`) : null;
+    target?.focus({ preventScroll: true });
+    restoreDetailScroll(origin);
   });
   void loadContinueWatching();
 }
@@ -1643,6 +1814,8 @@ detailSeasonTabs?.addEventListener("click", (event) => {
   renderDetail(activeDetail);
 });
 detailBack?.addEventListener("click", closeDetail);
+detailErrorRetry?.addEventListener("click", () => { if (detailRequestMediaId) void openDetail(detailRequestMediaId); });
+detailErrorBack?.addEventListener("click", closeDetail);
 detailPlotToggle?.addEventListener("click", () => {
   const expanded = detailPlotToggle.getAttribute("aria-expanded") !== "true";
   detailPlotToggle.setAttribute("aria-expanded", String(expanded));
