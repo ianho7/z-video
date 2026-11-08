@@ -38,7 +38,7 @@ Renderer-visible `LocalMediaItem` fields are `mediaId`, `sourceId`, `collectionI
 
 `local-library:get` may include `detail.playback` for the requested opaque `mediaId` when local progress exists. The worker joins that state to the validated media row; the field contains only `LocalPlaybackState` and never a path or playback URI.
 
-Ticket 02 adds main-owned `scanFolder`, `cancelScan`, and bounded `onScanProgress` operations. A scan result reports counts, warnings, and `completed`/`cancelled`/`partial`/`unavailable` status without exposing a root path. A successful traversal is the only operation allowed to mark unseen files unavailable; cancellation, permission errors, and disconnected roots preserve existing rows and playback state. If a source becomes unreadable during traversal, the scan remains partial and the source is reported unavailable until a later successful refresh.
+Ticket 02 adds main-owned `scanFolder`, `cancelScan`, and bounded `onScanProgress` operations. A scan progress/result reports counts, warnings, and `completed`/`cancelled`/`partial`/`unavailable` status without exposing a root path; `sourceLabel` is the same renderer-safe source label used by state and never a path. A successful traversal is the only operation allowed to mark unseen files unavailable; cancellation, permission errors, and disconnected roots preserve existing rows and playback state. If a source becomes unreadable during traversal, the scan remains partial and the source is reported unavailable until a later successful refresh.
 
 ## Local playback IPC
 

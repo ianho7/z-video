@@ -17,7 +17,7 @@
           <span><strong>z-video</strong><small>本地片库</small></span>
         </div>
         <nav class="top-nav" aria-label="浏览"><button type="button" data-nav="home" aria-current="page">首页</button><button type="button" data-nav="all">全部</button><button type="button" data-nav="movie">电影</button><button type="button" data-nav="show">剧集</button></nav>
-        <span id="scan-status" class="scan-status" role="status" aria-live="polite"></span>
+        <span id="scan-status" class="scan-pill" role="status" aria-live="polite" hidden><span class="scan-pill-dot" aria-hidden="true"></span><span id="scan-status-text" class="scan-pill-text"></span><button id="scan-pill-cancel" class="scan-pill-cancel" type="button" data-cancel-scan aria-label="取消扫描" hidden>×</button></span>
         <form id="library-search-form" class="search-box" role="search"><span aria-hidden="true">⌕</span><input id="library-search-input" type="search" autocomplete="off" placeholder="搜索片名、剧集" aria-label="搜索片名、剧集" /><button id="library-search-clear" class="icon-button" type="button" hidden aria-label="清除搜索">×</button></form>
         <details class="add-menu"><summary aria-label="添加">+</summary><div class="header-actions">
           <button id="choose-folder-button" class="secondary-button" type="button">添加文件夹</button>
@@ -26,6 +26,10 @@
           <button id="manage-sources-button" class="secondary-button" type="button">管理来源</button>
         </div></details>
       </header>
+      <section id="app-notice" class="app-notice" role="status" aria-live="polite" aria-labelledby="app-notice-title" hidden>
+        <div class="app-notice-copy"><strong id="app-notice-title"></strong><p id="app-notice-body"></p></div>
+        <button id="app-notice-close" class="secondary-button compact-button" type="button" aria-label="关闭通知">关闭</button>
+      </section>
 
       <main class="library-layout">
         <section id="sources-page" class="sources-page" hidden aria-labelledby="sources-title">
@@ -43,10 +47,6 @@
             </div>
           </div>
 
-          <div class="library-toolbar">
-            <button id="cancel-scan-button" class="secondary-button compact-button" type="button" hidden>取消扫描</button>
-          </div>
-
           <div id="library-message" class="status" role="status" aria-live="polite"></div>
 
           <section id="library-error" class="library-error" role="alert" hidden>
@@ -57,6 +57,13 @@
           </section>
 
             <div id="onboarding" class="onboarding" hidden><p class="eyebrow">WELCOME</p><h1>你的私人影院，从这里开始</h1><p>添加本地文件夹，或直接打开一个视频。</p><button type="button" class="primary-button" data-import="folder">添加文件夹</button> <button type="button" class="secondary-button" data-import="video">打开单个视频</button></div>
+          <section id="home-scan-card" class="scan-card" aria-labelledby="home-scan-title" hidden>
+            <p id="home-scan-title" class="scan-card-title"><span class="scan-pill-dot" aria-hidden="true"></span><span id="home-scan-status">正在扫描</span></p>
+            <p id="home-scan-folder" class="scan-card-folder"></p>
+            <p class="scan-card-note">数量未知时不显示百分比；已加入的内容会原地出现，不反复替换整页骨架。</p>
+            <div class="scan-card-metrics"><div class="scan-metric"><b id="home-scan-scanned">0</b><span>已扫描</span></div><div class="scan-metric"><b id="home-scan-added">0</b><span>已加入</span></div><div class="scan-metric"><b id="home-scan-elapsed">0 秒</b><span>已用时间</span></div></div>
+            <div class="scan-card-actions"><button id="home-scan-cancel" class="secondary-button" type="button" data-cancel-scan>取消扫描</button></div>
+          </section>
           <section id="home-hero" class="home-hero" hidden><div class="hero-copy"><p id="hero-label" class="eyebrow"></p><h1 id="hero-title"></h1><div class="hero-episode"><strong id="hero-episode"></strong><span id="hero-meta"></span></div><svg class="hero-progress" viewBox="0 0 360 18" preserveAspectRatio="none" aria-hidden="true"><path id="hero-progress-track"/><path id="hero-progress-fill" pathLength="100"/></svg><div class="hero-actions"><button id="hero-play" class="primary-button" type="button">继续观看</button><button id="hero-restart" class="secondary-button" type="button">从头播放</button><button id="hero-detail" class="secondary-button" type="button">详情</button></div></div><div id="hero-poster" class="hero-poster"></div></section>
           <section id="continue-section" class="continue-section" hidden aria-labelledby="continue-title">
             <div class="section-heading"><h2 id="continue-title">继续观看</h2><span id="continue-scope" class="muted"></span><button type="button" data-shelf="all">查看全部 →</button></div>
