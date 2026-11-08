@@ -236,6 +236,18 @@ async function run(): Promise<void> {
     assert.equal(releasedCollections.items.length, 3);
     assert.equal(releasedCollections.items.slice(1).every((summary) => summary.premieredDate === null), true, "undated works stay last and never borrow a year");
 
+    const collectionSource = (await database.getState()).sources.find((source) => source.sourceId === collectionScan.sourceId);
+    assert.ok(collectionSource, "the scanned folder is summarized");
+    assert.equal(collectionSource.collectionCount, 3, "the folder card counts works, not files");
+    assert.equal(collectionSource.itemCount, 5, "the folder card counts indexed files");
+    assert.equal(collectionSource.locationHint.includes(collectionRoot), false, "the location hint never exposes the root path");
+    assert.equal(/[\\/]/u.test(collectionSource.locationHint), false, "the location hint only contains safe clues");
+    assert.match(collectionSource.locationHint, /上级：|盘/u);
+
+    const rescanAllResults = await database.rescanAll();
+    assert.equal(rescanAllResults.length, (await database.getState()).sources.length, "rescan all visits every registered folder");
+    assert.equal(rescanAllResults.every((result) => result.status === "completed"), true, "rescan all reports each folder's result");
+
     const releaseRoot = join(profile, "release-sort-fixture");
     await mkdir(releaseRoot, { recursive: true });
     const releaseMovies: Array<{ stem: string; nfo: string }> = [
@@ -437,7 +449,9 @@ async function run(): Promise<void> {
     assert.equal(offlineCollections.items.every((summary) => summary.available === false), true);
     assert.equal(offlineCollections.items.every((summary) => summary.availableEpisodeCount === 0), true);
     assert.equal(offlineCollections.items.find((summary) => summary.title === "Aggregate Show")?.episodeCount, 3, "offline works keep their episode counts");
+    assert.ok(await database.getPlayback(aggregateEpisodeOne.mediaId), "watch progress exists before the folder is removed");
     await database.removeSource(collectionScan.sourceId);
+    assert.equal(await database.getPlayback(aggregateEpisodeOne.mediaId), undefined, "removing a folder deletes its watch progress");
 
     const unsubscribeScan = database.onScanProgress((progress) => {
       if (progress.status === "running" && progress.scannedFiles === 1) void database.cancelScan(progress.scanId);

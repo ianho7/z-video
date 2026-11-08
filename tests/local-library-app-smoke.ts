@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { copyFile, mkdtemp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
@@ -11,11 +11,16 @@ const INDEX_FILE_COUNT = 8_000;
 const APP_TIMEOUT_MS = 180_000;
 let appDeadline = 0;
 let delayNextLibraryList = false;
+let failNextSourceRemove = false;
 const originalIpcHandle = ipcMain.handle.bind(ipcMain);
 ipcMain.handle = (channel, listener) => originalIpcHandle(channel, async (event, ...args) => {
   if ((channel === IPC_CHANNELS.localLibraryList || channel === IPC_CHANNELS.localLibraryListCollections) && delayNextLibraryList) {
     delayNextLibraryList = false;
     await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+  if (channel === IPC_CHANNELS.localLibraryRemoveSource && failNextSourceRemove) {
+    failNextSourceRemove = false;
+    throw new Error("片库文件暂时被占用，请重试。");
   }
   return listener(event, ...args);
 });
@@ -202,7 +207,7 @@ async function run(): Promise<void> {
     assertInside("1040 home scan cancel", firstRunning.cardCancelRect, firstRunning.viewport);
     await capture("first-scan");
 
-    await evaluate(window, "document.querySelector('#manage-sources-button')?.click()");
+    await evaluate(window, "document.querySelector('[data-nav=folder]')?.click()");
     await waitFor("scan panel running", readScanUi, (value) => value.scanPanelTitle.includes("正在扫描"));
     await capture("scan");
     await evaluate(window, "document.querySelector('[data-nav=home]')?.click()");
@@ -324,7 +329,7 @@ async function run(): Promise<void> {
     await evaluate(window, "(() => { const select = document.querySelector('#library-sort'); select.value = 'recent'; select.dispatchEvent(new Event('change', { bubbles: true })); })()");
     await waitFor("sort restored", () => evaluate(window, "document.querySelector('#library-sort')?.value"), (value) => value === "recent");
     await waitFor("library settled after sort restore", () => evaluate(window, "document.querySelector('#library-grid')?.getAttribute('aria-busy')"), (value) => value === null);
-    await evaluate(window, "document.querySelector('#manage-sources-button')?.click()");
+    await evaluate(window, "document.querySelector('[data-nav=folder]')?.click()");
     await waitFor("sources visible", () => evaluate(window, "document.querySelector('#source-list')?.getBoundingClientRect().width > 0"), Boolean);
     await capture("sources");
     await evaluate(window, "document.querySelector('[data-nav=all]')?.click()");
@@ -467,10 +472,60 @@ async function run(): Promise<void> {
     assert.ok(continueDefault.firstTitle.length > 0);
 
     await rename(fixtureRoot, fixtureRoot + "-offline");
-    await evaluate(window, "document.querySelector('#manage-sources-button')?.click()");
-    await waitFor("source refresh available", () => evaluate(window, "Boolean(document.querySelector('[data-refresh-source-id]'))"), Boolean);
+    assert.equal(await stat(fixtureRoot).then(() => true).catch(() => false), false, "the fixture root is gone before the offline rescan");
+    await evaluate(window, "document.querySelector('[data-nav=folder]')?.click()");
+    const readFolders = () => evaluate(window, `(() => {
+      const cards = [...document.querySelectorAll('#source-list [data-source-card-id]')].map((card) => ({ text: card.textContent || '', sourceId: card.dataset.sourceCardId || '', available: card.dataset.available !== 'false' }));
+      return {
+        visible: document.querySelector('#sources-page')?.hidden === false,
+        navCurrent: document.querySelector('[data-nav=folder]')?.getAttribute('aria-current') || '',
+        cards,
+        sourceText: document.querySelector('#source-list')?.textContent || '',
+        rescanAllVisible: Boolean(document.querySelector('#rescan-all-button')),
+        refreshDisabled: document.querySelector('[data-refresh-source-id]')?.disabled === true,
+        message: document.querySelector('#sources-message')?.textContent || '',
+        offlineOpen: document.querySelector('#offline-source-dialog')?.open === true,
+        offlineTitle: document.querySelector('#offline-source-title')?.textContent || '',
+        offlineCopy: document.querySelector('#offline-source-copy')?.textContent || '',
+        activeId: document.activeElement?.id || '',
+        removeOpen: document.querySelector('#remove-source-dialog')?.open === true,
+        removeCopy: document.querySelector('#remove-source-copy')?.textContent || '',
+        removeConfirmClass: document.querySelector('#remove-source-confirm')?.className || '',
+        removeConfirmText: document.querySelector('#remove-source-confirm')?.textContent || '',
+        removeError: document.querySelector('#remove-source-error')?.textContent || '',
+        removeErrorHidden: document.querySelector('#remove-source-error')?.hidden !== false,
+        libraryCards: document.querySelectorAll('#library-grid .media-card').length,
+      };
+    })()`);
+    const folderPage = await waitFor("folder page for the scanned folder", readFolders, (value) => value.visible && value.navCurrent === "page" && value.cards.length === 1);
+    assert.match(folderPage.cards[0].text, /部作品/);
+    assert.match(folderPage.cards[0].text, /集/);
+    assert.match(folderPage.cards[0].text, /上级：|盘/u);
+    assert.equal(folderPage.rescanAllVisible, true, "the folder page offers a rescan-all action");
+    assert.equal(folderPage.sourceText.includes(fixtureRoot), false, "folder cards never expose the root path");
+    await capture("folders");
+
     await evaluate(window, "document.querySelector('[data-refresh-source-id]')?.click()");
-    await waitFor("source offline", () => evaluate(window, "document.querySelector('#source-list')?.textContent || ''"), (value) => value.includes("离线"));
+    const offlinePrompt = await waitFor("offline source question after rescan", readFolders, (value) => value.offlineOpen === true, 20_000);
+    assert.match(offlinePrompt.offlineTitle, /现在不可用/);
+    assert.match(offlinePrompt.offlineCopy, /暂时断开/);
+    assert.match(offlinePrompt.offlineCopy, /已删除/);
+    assert.match(offlinePrompt.offlineCopy, /观看进度/);
+    assert.equal(offlinePrompt.activeId, "offline-source-keep", "the safe choice owns the default focus");
+    assert.equal(await evaluate(window, "document.querySelector('#offline-source-delete')?.textContent"), "已删除（清理记录）");
+    await evaluate(window, "document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
+    await waitFor("offline question dismissed as temporary", readFolders, (value) => value.offlineOpen === false);
+    const keptOffline = await waitFor("offline folder keeps its record", readFolders, (value) => value.cards.length === 1 && value.cards[0].available === false && /离线/.test(value.cards[0].text));
+    assert.match(keptOffline.cards[0].text, /部作品/);
+    await capture("folders-offline");
+
+    await evaluate(window, "document.querySelector('#rescan-all-button')?.click()");
+    const offlinePromptAll = await waitFor("rescan all asks the offline question", readFolders, (value) => value.offlineOpen === true, 20_000);
+    assert.match(offlinePromptAll.offlineCopy, /暂时断开/);
+    await evaluate(window, "document.querySelector('#offline-source-keep')?.click()");
+    await waitFor("offline question dismissed after rescan all", readFolders, (value) => value.offlineOpen === false);
+    assert.equal((await readFolders()).cards.length, 1, "temporarily disconnected folders stay registered");
+
     await evaluate(window, "document.querySelector('[data-nav=all]')?.click()");
     await evaluate(window, "(() => { const search = document.querySelector('#library-search-input'); search.value = 'Owned UX Audit Feature Film 2026'; search.dispatchEvent(new Event('input', { bubbles: true })); })()");
     await waitFor("offline movie card", () => evaluate(window, "document.querySelector('#library-grid .media-card-title')?.textContent || ''"), (value) => value === LONG_TITLE);
@@ -478,6 +533,34 @@ async function run(): Promise<void> {
     await waitFor("offline movie detail", () => evaluate(window, "document.querySelector('#detail-offline-banner')?.hidden === false && document.querySelector('#media-detail-open')?.disabled === true"), Boolean);
     assert.equal(await evaluate(window, "document.querySelector('#media-detail-restart')?.disabled"), true, "offline movie cannot restart playback");
     await capture("movie-offline");
+
+    await evaluate(window, "document.querySelector('[data-nav=folder]')?.click()");
+    await waitFor("folder page before removal", readFolders, (value) => value.visible && value.cards.length === 1);
+    await evaluate(window, "document.querySelector('[data-remove-source-id]')?.click()");
+    const removePrompt = await waitFor("remove dialog with counts", readFolders, (value) => value.removeOpen === true);
+    assert.match(removePrompt.removeCopy, /将从片库移除 \d+ 部作品、\d+ 集/);
+    assert.match(removePrompt.removeCopy, /观看进度/);
+    assert.match(removePrompt.removeCopy, /不会删除源文件/);
+    assert.match(removePrompt.removeConfirmClass, /destructive-button/);
+    assert.equal(removePrompt.removeConfirmText, "移除并删除进度");
+    assert.equal(removePrompt.activeId, "remove-source-cancel", "cancel is the default focus");
+    await evaluate(window, "document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
+    await waitFor("remove dialog dismissed by Esc", readFolders, (value) => value.removeOpen === false);
+    assert.equal((await readFolders()).cards.length, 1, "Esc cancels removal without changing the folder");
+
+    await evaluate(window, "document.querySelector('[data-remove-source-id]')?.click()");
+    await waitFor("remove dialog reopened", readFolders, (value) => value.removeOpen === true);
+    failNextSourceRemove = true;
+    await evaluate(window, "document.querySelector('#remove-source-confirm')?.click()");
+    const removeFailure = await waitFor("remove failure stays in the dialog", readFolders, (value) => value.removeOpen === true && value.removeErrorHidden === false);
+    assert.match(removeFailure.removeError, /占用|重试/);
+    assert.equal(removeFailure.removeConfirmText, "重试移除");
+    assert.equal(removeFailure.cards.length, 1, "a failed removal leaves the folder record intact");
+    await evaluate(window, "document.querySelector('#remove-source-confirm')?.click()");
+    const removed = await waitFor("remove retry succeeds", readFolders, (value) => value.removeOpen === false && value.cards.length === 0 && /还没有添加文件夹/.test(value.sourceText), 20_000);
+    assert.equal(removed.libraryCards, 0, "removing the folder refreshes the library too");
+    assert.match(await evaluate(window, "document.querySelector('#app-notice')?.textContent || ''"), /源文件没有被删除/);
+    await capture("folders-removed");
 
     const diagnostics = await readFile(join(logDir, "diagnostics.jsonl"), "utf8").catch(() => "");
     assert.match(diagnostics, /"operation":"window\.renderer-ready"/);
@@ -499,6 +582,8 @@ async function run(): Promise<void> {
       detail: { default: { title: detail.title, plotLength: detail.plot.length, play: detail.button, viewport: detail.viewport }, minimum: { outer: minOuter, content: minContent, playVisible: minDetail.visible, viewport: minDetail.viewport } },
       player: { currentTitle: player.currentTitle, controlsHeight: player.controlsHeight, titleInControls: player.titleInControls, titleOutsideSurface: player.titleOutsideSurface },
       continueWatching: { minimum: continueMin, default: continueDefault, defaultContent: continueDefault.windowContent, defaultOuter: defaultAfterContinueOuter },
+      removeFailure: { prompt: removePrompt.removeCopy, title: removePrompt.removeTitle, destructive: /destructive-button/.test(removePrompt.removeConfirmClass), defaultFocus: removePrompt.activeId, error: removeFailure.removeError, retryLabel: removeFailure.removeConfirmText },
+      folders: { page: folderPage.cards.map((card: { text: string }) => card.text.slice(0, 160)), notice: folderPage.sourceText.includes(fixtureRoot) ? "root-leaked" : "safe", offline: { title: offlinePrompt.offlineTitle, copy: offlinePrompt.offlineCopy, kept: keptOffline.cards[0]?.text.slice(0, 120) }, rescanAllPrompt: offlinePromptAll.offlineCopy },
     }, null, 2) + "\n", "utf8");
     process.stdout.write("PASS: production local-library UX smoke (running scan, detail/player layout, continue row)\n");
     await quitProductionApp();

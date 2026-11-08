@@ -11,6 +11,7 @@ export const IPC_CHANNELS = {
   localLibraryContinueWatching: "local-library:continue-watching",
   localLibraryRemoveSource: "local-library:source-remove",
   localLibraryRefreshSource: "local-library:source-refresh",
+  localLibraryRescanAll: "local-library:rescan-all",
   localLibraryScan: "local-library:scan",
   localLibraryCancelScan: "local-library:scan-cancel",
   localLibraryScanProgress: "local-library:scan-progress",

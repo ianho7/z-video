@@ -41,10 +41,8 @@ const ARTWORK_CONCURRENCY = 4;
 
 const chooseFolderButton = document.querySelector<HTMLButtonElement>("#choose-folder-button");
 const appShell = document.querySelector<HTMLElement>(".app-shell");
-const scanFolderButton = document.querySelector<HTMLButtonElement>("#scan-folder-button");
 const openVideoButton = document.querySelector<HTMLButtonElement>("#open-video-button");
-const allSourcesButton = document.querySelector<HTMLButtonElement>("#all-sources-button");
-const allSourceCount = document.querySelector<HTMLElement>("#all-source-count");
+const rescanAllButton = document.querySelector<HTMLButtonElement>("#rescan-all-button");
 const sourceList = document.querySelector<HTMLElement>("#source-list");
 const libraryMessage = document.querySelector<HTMLElement>("#library-message");
 const libraryGrid = document.querySelector<HTMLElement>("#library-grid");
@@ -123,7 +121,21 @@ const libraryContent = document.querySelector<HTMLElement>(".library-content");
 const onboarding = document.querySelector<HTMLElement>("#onboarding");
 const scanPanel = document.querySelector<HTMLElement>("#scan-panel");
 const removeDialog = document.querySelector<HTMLDialogElement>("#remove-source-dialog");
+const removeDialogTitle = document.querySelector<HTMLElement>("#remove-source-title");
+const removeDialogCopy = document.querySelector<HTMLElement>("#remove-source-copy");
+const removeDialogError = document.querySelector<HTMLElement>("#remove-source-error");
+const removeCancelButton = document.querySelector<HTMLButtonElement>("#remove-source-cancel");
+const removeConfirmButton = document.querySelector<HTMLButtonElement>("#remove-source-confirm");
+const offlineDialog = document.querySelector<HTMLDialogElement>("#offline-source-dialog");
+const offlineDialogTitle = document.querySelector<HTMLElement>("#offline-source-title");
+const offlineDialogCopy = document.querySelector<HTMLElement>("#offline-source-copy");
+const offlineDialogError = document.querySelector<HTMLElement>("#offline-source-error");
+const offlineKeepButton = document.querySelector<HTMLButtonElement>("#offline-source-keep");
+const offlineDeleteButton = document.querySelector<HTMLButtonElement>("#offline-source-delete");
 let removingSourceId: string | undefined;
+let offlineSourceId: string | undefined;
+let sourceDialogBusy = false;
+const singleVideoSourceIds = new Set<string>();
 let state: LocalLibraryState | undefined;
 type LibraryPageView =
   | { mode: "collection"; items: LocalCollectionSummary[]; totalCount: number; page: number; pageSize: number }
@@ -595,8 +607,7 @@ function renderState(next: LocalLibraryState): void {
     if (showsSection) showsSection.hidden = true;
   }
   if (collectionSection && !isDetailOrPlayerVisible()) collectionSection.hidden = next.status === "error" || homeVisible;
-  renderSources(next, scanProgress, sourceList);
-  if (allSourceCount) allSourceCount.textContent = String(next.sources.reduce((sum, source) => sum + source.itemCount, 0));
+  renderSources(next, scanProgress, sourceList, { singleVideoSourceIds });
   renderSourceFilters();
   if (next.status === "error") setMessage(next.error?.message ?? "本地片库不可用。", true);
 }
@@ -1149,14 +1160,18 @@ async function handleImport(operation: () => Promise<Awaited<ReturnType<typeof w
   if (sourceBusy) return;
   sourceBusy = true;
   chooseFolderButton?.setAttribute("disabled", "true");
-  scanFolderButton?.setAttribute("disabled", "true");
   openVideoButton?.setAttribute("disabled", "true");
   setMessage("正在索引本地媒体…");
   try {
     const outcome = await operation();
+    sourceBusy = false;
     if (outcome.status === "cancelled") setMessage("已取消。" );
     else if (outcome.status === "empty") setMessage("所选文件夹没有找到支持的视频文件。", true);
-    else setMessage(`已导入《${outcome.item.title}》。`);
+    else {
+      singleVideoSourceIds.add(outcome.item.sourceId);
+      setMessage(`已加入《${outcome.item.title}》。`);
+      showAppNotice("已加入单个视频", `只加入了《${outcome.item.title}》，并把它所在的文件夹登记为片库文件夹。以后重新扫描，会把整个文件夹里的其他支持视频也加入片库。`);
+    }
     renderState(outcome.state);
     await loadLibrary();
     await loadContinueWatching();
@@ -1166,15 +1181,14 @@ async function handleImport(operation: () => Promise<Awaited<ReturnType<typeof w
   } finally {
     sourceBusy = false;
     chooseFolderButton?.removeAttribute("disabled");
-    scanFolderButton?.removeAttribute("disabled");
     openVideoButton?.removeAttribute("disabled");
   }
 }
 
-async function runScan(operation: () => Promise<LocalScanResult>): Promise<void> {
+async function runScan(operation: () => Promise<LocalScanResult | LocalScanResult[]>): Promise<void> {
   if (sourceBusy) return;
   sourceBusy = true;
-  scanFolderButton?.setAttribute("disabled", "true");
+  rescanAllButton?.setAttribute("disabled", "true");
   chooseFolderButton?.setAttribute("disabled", "true");
   openVideoButton?.setAttribute("disabled", "true");
   scanId = undefined;
@@ -1189,11 +1203,18 @@ async function runScan(operation: () => Promise<LocalScanResult>): Promise<void>
   updateScanUi();
   setMessage("正在扫描本地来源…");
   try {
-    const result = await operation();
+    const raw = await operation();
+    // The scan is no longer running once the main process resolves it; keep the
+    // refresh work below from blocking a follow-up rescan click.
+    sourceBusy = false;
+    const results = Array.isArray(raw) ? raw : [raw];
+    const result = results.length === 1 ? results[0] : aggregateScanResults(results);
     renderScanResult(result);
     await loadLibrary();
     await loadContinueWatching();
     await loadHomeShelves();
+    const unavailable = results.find((entry) => entry.status === "unavailable");
+    if (unavailable) offerOfflineSource(unavailable);
   } catch (error) {
     scanProgress = undefined;
     if (!isDetailOrPlayerVisible()) requestEpoch += 1;
@@ -1218,9 +1239,134 @@ async function runScan(operation: () => Promise<LocalScanResult>): Promise<void>
       scanRefreshTimer = undefined;
     }
     updateScanUi();
-    scanFolderButton?.removeAttribute("disabled");
+    rescanAllButton?.removeAttribute("disabled");
     chooseFolderButton?.removeAttribute("disabled");
     openVideoButton?.removeAttribute("disabled");
+  }
+}
+
+function aggregateScanResults(results: LocalScanResult[]): LocalScanResult {
+  const status: LocalScanResult["status"] = results.some((result) => result.status === "unavailable")
+    ? "unavailable"
+    : results.some((result) => result.status === "partial")
+      ? "partial"
+      : results.some((result) => result.status === "cancelled")
+        ? "cancelled"
+        : "completed";
+  return {
+    scanId: results[0]?.scanId ?? "scan_all",
+    sourceId: results[0]?.sourceId ?? "",
+    sourceLabel: `全部 ${results.length} 个文件夹`,
+    status,
+    scannedFiles: results.reduce((sum, result) => sum + result.scannedFiles, 0),
+    importedFiles: results.reduce((sum, result) => sum + result.importedFiles, 0),
+    updatedFiles: results.reduce((sum, result) => sum + result.updatedFiles, 0),
+    warningCount: results.reduce((sum, result) => sum + result.warningCount, 0),
+    warnings: results.flatMap((result) => result.warnings),
+    ...(results.find((result) => result.status === "unavailable")?.error ? { error: results.find((result) => result.status === "unavailable")?.error } : {}),
+  };
+}
+
+function setDialogError(element: HTMLElement | null, message: string | undefined): void {
+  if (!element) return;
+  element.textContent = message ?? "";
+  element.hidden = !message;
+}
+
+function setSourceDialogBusy(busy: boolean): void {
+  sourceDialogBusy = busy;
+  for (const button of [removeCancelButton, removeConfirmButton, offlineKeepButton, offlineDeleteButton]) {
+    if (button) button.disabled = busy;
+  }
+}
+
+async function refreshAfterSourceChange(): Promise<void> {
+  setQuery({ sourceId: undefined, page: 1 });
+  await Promise.all([loadLibrary(), loadContinueWatching(), loadHomeShelves()]);
+}
+
+function openRemoveDialog(source: { sourceId: string; label: string; collectionCount: number; itemCount: number }): void {
+  if (!removeDialog || sourceDialogBusy) return;
+  removingSourceId = source.sourceId;
+  if (removeDialogTitle) removeDialogTitle.textContent = `移除「${source.label}」？`;
+  if (removeDialogCopy) removeDialogCopy.textContent = `将从片库移除 ${source.collectionCount} 部作品、${source.itemCount} 集，并删除这些视频的观看进度。不会删除源文件。`;
+  setDialogError(removeDialogError, undefined);
+  if (removeConfirmButton) removeConfirmButton.textContent = "移除并删除进度";
+  setSourceDialogBusy(false);
+  removeDialog.showModal();
+  removeCancelButton?.focus();
+}
+
+async function confirmRemoveSource(): Promise<void> {
+  const sourceId = removingSourceId;
+  if (!sourceId || sourceDialogBusy) return;
+  const source = state?.sources.find((candidate) => candidate.sourceId === sourceId);
+  setSourceDialogBusy(true);
+  setDialogError(removeDialogError, undefined);
+  if (removeConfirmButton) removeConfirmButton.textContent = "正在移除…";
+  try {
+    const next = await window.zVideo.localLibrary.removeSource(sourceId);
+    removingSourceId = undefined;
+    removeDialog?.close();
+    renderState(next);
+    await refreshAfterSourceChange();
+    showAppNotice("已移除文件夹", `已移除「${source?.label ?? "所选文件夹"}」的作品和观看进度，源文件没有被删除。`, "info");
+    setMessage(`已移除「${source?.label ?? "所选文件夹"}」。`);
+  } catch (error) {
+    setDialogError(removeDialogError, error instanceof Error ? error.message : "移除失败，请重试。文件夹、作品和观看进度均未改变。");
+    if (removeConfirmButton) removeConfirmButton.textContent = "重试移除";
+    removeConfirmButton?.focus();
+  } finally {
+    setSourceDialogBusy(false);
+  }
+}
+
+function offerOfflineSource(result: LocalScanResult): void {
+  if (!offlineDialog || sourceDialogBusy) return;
+  const source = state?.sources.find((candidate) => candidate.sourceId === result.sourceId);
+  if (!source) return;
+  offlineSourceId = source.sourceId;
+  if (offlineDialogTitle) offlineDialogTitle.textContent = `「${source.label}」现在不可用`;
+  if (offlineDialogCopy) offlineDialogCopy.textContent = `可能只是驱动器或网络位置暂时断开，也可能是文件夹已经被删除。选择“暂时断开”会保留 ${source.collectionCount} 部作品、${source.itemCount} 集和观看进度；只有确认已删除才会清理这些记录。`;
+  setDialogError(offlineDialogError, undefined);
+  if (offlineDeleteButton) offlineDeleteButton.textContent = "已删除（清理记录）";
+  setSourceDialogBusy(false);
+  offlineDialog.showModal();
+  offlineKeepButton?.focus();
+}
+
+function keepOfflineSource(): void {
+  const source = state?.sources.find((candidate) => candidate.sourceId === offlineSourceId);
+  offlineSourceId = undefined;
+  offlineDialog?.close();
+  setDialogError(offlineDialogError, undefined);
+  if (source) {
+    showAppNotice("文件夹暂时断开", `已保留「${source.label}」的作品、集数和观看进度。重新连接驱动器或网络位置后，在文件夹页重新扫描即可恢复播放。`, "warning");
+    setMessage(`「${source.label}」暂时不可用；记录和观看进度已保留。`, true);
+  }
+}
+
+async function deleteOfflineSource(): Promise<void> {
+  const sourceId = offlineSourceId;
+  if (!sourceId || sourceDialogBusy) return;
+  const source = state?.sources.find((candidate) => candidate.sourceId === sourceId);
+  setSourceDialogBusy(true);
+  setDialogError(offlineDialogError, undefined);
+  if (offlineDeleteButton) offlineDeleteButton.textContent = "正在清理…";
+  try {
+    const next = await window.zVideo.localLibrary.removeSource(sourceId);
+    offlineSourceId = undefined;
+    offlineDialog?.close();
+    renderState(next);
+    await refreshAfterSourceChange();
+    showAppNotice("已清理文件夹记录", `已确认「${source?.label ?? "所选文件夹"}」被删除，相关作品、集数和观看进度已从片库清理；源文件未被改动。`, "info");
+    setMessage(`已清理「${source?.label ?? "所选文件夹"}」的记录。`);
+  } catch (error) {
+    setDialogError(offlineDialogError, error instanceof Error ? error.message : "清理失败，请重试。记录和观看进度均未改变。");
+    if (offlineDeleteButton) offlineDeleteButton.textContent = "重试清理";
+    offlineDeleteButton?.focus();
+  } finally {
+    setSourceDialogBusy(false);
   }
 }
 
@@ -1306,7 +1452,7 @@ function requestScanCancel(): void {
 
 function renderScanProgress(progress: LocalScanProgress): void {
   scanProgress = progress;
-  if (state) renderSources(state, progress, sourceList);
+  if (state) renderSources(state, progress, sourceList, { singleVideoSourceIds });
   if (scanPanel) scanPanel.hidden = false;
   const panelTitle = document.querySelector<HTMLElement>("#scan-panel-title");
   const counts = document.querySelector<HTMLElement>("#scan-counts");
@@ -1374,10 +1520,30 @@ function navigateHomeOrLibrary(target: string): void {
   else { if (hero) hero.hidden = true; if (continueSection) continueSection.hidden = true; if (recentSection) recentSection.hidden = true; if (showsSection) showsSection.hidden = true; setQuery({ sourceId: undefined, filter: target === "movie" || target === "show" ? target : "all", sort: target === "recent" ? "added_desc" : currentQuery.sort }); void loadLibrary(); }
   updateScanUi();
 }
-document.querySelectorAll<HTMLButtonElement>("[data-nav]").forEach((button) => button.addEventListener("click", () => navigateHomeOrLibrary(button.dataset.nav ?? "home")));
+document.querySelectorAll<HTMLButtonElement>("[data-nav]").forEach((button) => button.addEventListener("click", () => {
+  if (button.dataset.nav === "folder") showSources();
+  else navigateHomeOrLibrary(button.dataset.nav ?? "home");
+}));
 document.querySelectorAll<HTMLButtonElement>("[data-shelf]").forEach((button) => button.addEventListener("click", () => navigateHomeOrLibrary(button.dataset.shelf ?? "all")));
-function showSources(): void { navigateHomeOrLibrary("all"); if (sidebar) sidebar.hidden = false; if (libraryContent) libraryContent.hidden = true; }
-document.querySelector<HTMLButtonElement>("#manage-sources-button")?.addEventListener("click", showSources);
+function showSources(): void {
+  requestEpoch += 1;
+  homeVisible = false;
+  if (detail) detail.hidden = true;
+  if (sidebar) sidebar.hidden = false;
+  if (libraryContent) libraryContent.hidden = true;
+  if (onboarding) onboarding.hidden = true;
+  if (hero) hero.hidden = true;
+  if (continueSection) continueSection.hidden = true;
+  if (recentSection) recentSection.hidden = true;
+  if (showsSection) showsSection.hidden = true;
+  if (collectionSection) collectionSection.hidden = true;
+  document.querySelectorAll<HTMLButtonElement>("[data-nav]").forEach((button) => {
+    if (button.dataset.nav === "folder") button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current");
+  });
+  setQuery({ query: undefined, sourceId: undefined, page: 1 });
+  if (state) renderSources(state, scanProgress, sourceList, { singleVideoSourceIds });
+  updateScanUi();
+}
 document.querySelector<HTMLAnchorElement>('#detail-offline-banner a')?.addEventListener("click", (event) => { event.preventDefault(); showSources(); });
 document.querySelectorAll<HTMLButtonElement>('[data-import="folder"]').forEach((button) => button.addEventListener("click", () => chooseFolderButton?.click()));
 document.querySelectorAll<HTMLButtonElement>('[data-import="video"]').forEach((button) => button.addEventListener("click", () => openVideoButton?.click()));
@@ -1415,19 +1581,16 @@ document.querySelector<HTMLButtonElement>("#hero-detail")?.addEventListener("cli
 for (const [id, restart] of [["#hero-play", false], ["#hero-restart", true]] as const) document.querySelector<HTMLButtonElement>(id)?.addEventListener("click", () => { const item = homeItems[0]?.item ?? recentItems[0]; if (!item || !item.available) return; selectedMediaId = item.mediaId; activeDetail = { item, episodes: [item] }; void openSelectedLocalMedia(restart); });
 chooseFolderButton?.addEventListener("click", () => void runScan(() => window.zVideo.localLibrary.chooseFolder()));
 openVideoButton?.addEventListener("click", () => void handleImport(() => window.zVideo.localLibrary.openVideo()));
-scanFolderButton?.addEventListener("click", () => void runScan(() => window.zVideo.localLibrary.scanFolder()));
-allSourcesButton?.addEventListener("click", () => {
-  setQuery({ sourceId: undefined, page: 1 });
-  allSourcesButton.setAttribute("aria-pressed", "true");
-  void loadLibrary();
+rescanAllButton?.addEventListener("click", () => {
+  if (!state?.sources.length) { setMessage("还没有可重新扫描的文件夹。", true); return; }
+  void runScan(() => window.zVideo.localLibrary.rescanAll());
 });
 sourceList?.addEventListener("click", (event) => {
-  const target = (event.target as HTMLElement).closest<HTMLElement>("[data-source-id], [data-refresh-source-id], [data-remove-source-id], [data-cancel-source-scan]");
+  const target = (event.target as HTMLElement).closest<HTMLElement>("[data-refresh-source-id], [data-remove-source-id], [data-cancel-source-scan]");
   if (!target) return;
   if (target.dataset.cancelSourceScan) { requestScanCancel(); return; }
   const refreshId = target.dataset.refreshSourceId;
   const removeId = target.dataset.removeSourceId;
-  const sourceId = target.dataset.sourceId;
   if (refreshId) {
     void runScan(() => window.zVideo.localLibrary.refreshSource(refreshId));
     return;
@@ -1435,27 +1598,29 @@ sourceList?.addEventListener("click", (event) => {
   if (removeId) {
     const source = state?.sources.find((candidate) => candidate.sourceId === removeId);
     if (!source || !removeDialog || sourceBusy) return;
-    removingSourceId = removeId;
-    const copy = document.querySelector<HTMLElement>("#remove-source-copy");
-    if (copy) copy.textContent = "只移除“" + source.label + "”的应用索引？不删除源文件。";
-    removeDialog.showModal();
-    document.querySelector<HTMLButtonElement>("#remove-source-cancel")?.focus();
-    return;
-  }
-  if (sourceId) {
-    setQuery({ sourceId, page: 1 });
-    allSourcesButton?.setAttribute("aria-pressed", "false");
-    void loadLibrary();
+    openRemoveDialog(source);
   }
 });
-document.querySelector<HTMLButtonElement>("#remove-source-cancel")?.addEventListener("click", () => removeDialog?.close());
-document.querySelector<HTMLButtonElement>("#remove-source-confirm")?.addEventListener("click", () => {
-  const id = removingSourceId; removeDialog?.close(); if (!id || sourceBusy) return;
-  sourceBusy = true; setMessage("正在移除应用索引…");
-  void window.zVideo.localLibrary.removeSource(id).then((next) => {
-    renderState(next); setQuery({ sourceId: undefined, page: 1 });
-    return Promise.all([loadLibrary(), loadContinueWatching(), loadHomeShelves()]);
-  }).catch((error: unknown) => setMessage(error instanceof Error ? error.message : "移除来源失败。", true)).finally(() => { sourceBusy = false; });
+removeCancelButton?.addEventListener("click", () => removeDialog?.close());
+removeConfirmButton?.addEventListener("click", () => void confirmRemoveSource());
+removeDialog?.addEventListener("close", () => {
+  removingSourceId = undefined;
+  setDialogError(removeDialogError, undefined);
+  if (removeConfirmButton) removeConfirmButton.textContent = "移除并删除进度";
+  setSourceDialogBusy(false);
+});
+offlineKeepButton?.addEventListener("click", keepOfflineSource);
+offlineDeleteButton?.addEventListener("click", () => void deleteOfflineSource());
+offlineDialog?.addEventListener("close", () => {
+  offlineSourceId = undefined;
+  setDialogError(offlineDialogError, undefined);
+  if (offlineDeleteButton) offlineDeleteButton.textContent = "已删除（清理记录）";
+  setSourceDialogBusy(false);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  if (removeDialog?.open) { event.preventDefault(); removeDialog.close(); }
+  else if (offlineDialog?.open) { event.preventDefault(); offlineDialog.close(); }
 });
 libraryGrid?.addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-media-id]");

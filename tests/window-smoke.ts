@@ -33,11 +33,15 @@ const replacement: SmokeItem = { ...item, mediaId: "media_123e4567-e89b-12d3-a45
 const fanartOnly: SmokeItem = { ...item, mediaId: "media_123e4567-e89b-12d3-a456-426614174004", title: "仅有背景", artwork: [{ kind: "fanart", cacheKey: "fanart" }] };
 const good: SmokeItem = { ...item, mediaId: "media_123e4567-e89b-12d3-a456-426614174005", title: "有效海报", artwork: [{ kind: "poster", cacheKey: "good" }] };
 const items: SmokeItem[] = [item, broken, delayed, replacement, fanartOnly, good];
+const otherSourceId = "source_123e4567-e89b-12d3-a456-426614174001";
 const state = {
   status: "ready",
   schemaVersion: 2,
   sqliteAvailable: true,
-  sources: [{ sourceId: item.sourceId, label: "owned-fixture", available: true, itemCount: 1 }],
+  sources: [
+    { sourceId: item.sourceId, label: "Movies", locationHint: "D 盘 · 上级：影片", available: true, itemCount: 34, collectionCount: 12 },
+    { sourceId: otherSourceId, label: "Movies", locationHint: "E 盘 · 上级：备份", available: false, itemCount: 9, collectionCount: 4 },
+  ],
 };
 
 async function run(): Promise<void> {
@@ -46,6 +50,10 @@ async function run(): Promise<void> {
   const artworkRequests: string[] = [];
   const delayedResponses: Array<(value: { dataUrl: string }) => void> = [];
   const cancelledScans: string[] = [];
+  const removedSources: string[] = [];
+  let refreshedSources: string[] = [];
+  let rescanAllCalls = 0;
+  let failNextRemove = false;
   let delayNextList = false;
   const scanProgress = (overrides: Record<string, unknown> = {}) => ({
     scanId: "scan_123e4567-e89b-42d3-a456-426614174000",
@@ -70,7 +78,44 @@ async function run(): Promise<void> {
     warningCount: 0,
     warnings: [],
   }));
-  ipcMain.handle("local-library:source-remove", async () => { state.sources = []; return state; });
+  ipcMain.handle("local-library:source-remove", async (_event, sourceId: string) => {
+    if (failNextRemove) {
+      failNextRemove = false;
+      throw new Error("片库文件暂时被占用，请重试。");
+    }
+    removedSources.push(sourceId);
+    state.sources = state.sources.filter((source) => source.sourceId !== sourceId);
+    return state;
+  });
+  ipcMain.handle("local-library:source-refresh", async (_event, sourceId: string) => {
+    refreshedSources.push(sourceId);
+    return {
+      status: "completed",
+      scanId: "scan_123e4567-e89b-42d3-a456-426614174010",
+      sourceId,
+      sourceLabel: "Movies",
+      scannedFiles: 34,
+      importedFiles: 0,
+      updatedFiles: 34,
+      warningCount: 0,
+      warnings: [],
+    };
+  });
+  ipcMain.handle("local-library:rescan-all", async () => {
+    rescanAllCalls += 1;
+    return [{
+      status: "unavailable",
+      scanId: "scan_123e4567-e89b-42d3-a456-426614174011",
+      sourceId: otherSourceId,
+      sourceLabel: "Movies",
+      scannedFiles: 0,
+      importedFiles: 0,
+      updatedFiles: 0,
+      warningCount: 0,
+      warnings: [],
+      error: "来源不可用，已保留此前索引和播放历史",
+    }];
+  });
   ipcMain.handle("local-library:open-video", async () => ({ status: "imported", item, state }));
   ipcMain.handle("local-library:list", async (_event, query) => {
     queries.push((query ?? {}) as Record<string, unknown>);
@@ -325,18 +370,105 @@ async function run(): Promise<void> {
   await waitFor("search query", async () => queries.at(-1)?.query, (value) => value === "窗口");
   assert.equal(queries.at(-1)?.query, "窗口");
 
-  await window.webContents.executeJavaScript("document.querySelector('#manage-sources-button').click()", true);
-  assert.equal(await window.webContents.executeJavaScript("document.querySelector('#sources-page').hidden", true), false);
-  assert.match(await window.webContents.executeJavaScript("document.querySelector('#source-list').textContent", true), /owned-fixture/);
+  await window.webContents.executeJavaScript("document.querySelector('[data-nav=folder]').click()", true);
+  const readFolders = () => window.webContents.executeJavaScript(`(() => {
+    const cards = [...document.querySelectorAll('#source-list [data-source-card-id]')].map((card) => ({
+      text: card.textContent || '',
+      sourceId: card.dataset.sourceCardId || '',
+      available: card.dataset.available !== 'false',
+    }));
+    return {
+      visible: document.querySelector('#sources-page')?.hidden === false,
+      navCurrent: document.querySelector('[data-nav=folder]')?.getAttribute('aria-current') || '',
+      cards,
+      removeOpen: document.querySelector('#remove-source-dialog')?.open === true,
+      offlineOpen: document.querySelector('#offline-source-dialog')?.open === true,
+      removeCopy: document.querySelector('#remove-source-copy')?.textContent || '',
+      removeTitle: document.querySelector('#remove-source-title')?.textContent || '',
+      removeConfirmText: document.querySelector('#remove-source-confirm')?.textContent || '',
+      removeConfirmClass: document.querySelector('#remove-source-confirm')?.className || '',
+      removeError: document.querySelector('#remove-source-error')?.textContent || '',
+      removeErrorHidden: document.querySelector('#remove-source-error')?.hidden !== false,
+      offlineTitle: document.querySelector('#offline-source-title')?.textContent || '',
+      offlineCopy: document.querySelector('#offline-source-copy')?.textContent || '',
+      offlineError: document.querySelector('#offline-source-error')?.textContent || '',
+      activeId: document.activeElement?.id || '',
+      noticeTitle: document.querySelector('#app-notice-title')?.textContent || '',
+    };
+  })()`, true) as Promise<any>;
+
+  const folderPage = await waitFor("folder page with distinct same-name folders", readFolders, (value) => value.visible && value.navCurrent === "page" && value.cards.length === 2);
+  assert.match(folderPage.cards[0].text, /12 部作品/);
+  assert.match(folderPage.cards[0].text, /34 集/);
+  assert.match(folderPage.cards[0].text, /D 盘 · 上级：影片/);
+  assert.match(folderPage.cards[0].text, /可用/);
+  assert.match(folderPage.cards[1].text, /4 部作品/);
+  assert.match(folderPage.cards[1].text, /9 集/);
+  assert.match(folderPage.cards[1].text, /E 盘 · 上级：备份/);
+  assert.match(folderPage.cards[1].text, /离线/);
+  assert.equal(folderPage.cards[1].available, false);
+
+  await window.webContents.executeJavaScript("document.querySelector('#open-video-button').click()", true);
+  const singleVideo = await waitFor("single-video folder note", readFolders, (value) => /由添加单个视频登记/.test(value.cards[0]?.text || ""));
+  assert.match(singleVideo.cards[0].text, /重新扫描会把整个文件夹/);
+  assert.match(await window.webContents.executeJavaScript("document.querySelector('#app-notice').textContent", true), /登记为片库文件夹/);
+  await waitFor("single-video import settles", () => window.webContents.executeJavaScript("document.querySelector('#open-video-button').disabled", true) as Promise<boolean>, (disabled) => disabled === false);
+
+  await window.webContents.executeJavaScript("document.querySelector('[data-refresh-source-id]').click()", true);
+  await waitFor("single-folder rescan", async () => refreshedSources, (value) => value.includes(item.sourceId));
+  await waitFor("single-folder rescan settles", () => window.webContents.executeJavaScript("document.querySelector('#rescan-all-button').disabled", true) as Promise<boolean>, (disabled) => disabled === false);
+  assert.equal(await window.webContents.executeJavaScript("document.querySelector('#offline-source-dialog').open", true), false, "a readable folder never asks the offline question");
+
+  await window.webContents.executeJavaScript("document.querySelector('#rescan-all-button').click()", true);
+  const offlinePrompt = await waitFor("offline source question", readFolders, (value) => value.offlineOpen === true);
+  assert.equal(rescanAllCalls, 1);
+  assert.match(offlinePrompt.offlineTitle, /Movies/);
+  assert.match(offlinePrompt.offlineCopy, /4 部作品、9 集/);
+  assert.match(offlinePrompt.offlineCopy, /暂时断开/);
+  assert.match(offlinePrompt.offlineCopy, /已删除/);
+  assert.equal(await window.webContents.executeJavaScript("document.querySelector('#offline-source-keep').textContent", true), "暂时断开（保留记录）");
+  assert.equal(await window.webContents.executeJavaScript("document.querySelector('#offline-source-delete').textContent", true), "已删除（清理记录）");
+  assert.equal(offlinePrompt.activeId, "offline-source-keep");
+  await window.webContents.executeJavaScript("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))", true);
+  await waitFor("offline question dismissed by Esc", readFolders, (value) => value.offlineOpen === false);
+  assert.equal((await readFolders()).cards.length, 2, "temporarily disconnecting keeps the folder record");
+  assert.match((await readFolders()).cards[1].text, /4 部作品/);
+
+  await window.webContents.executeJavaScript("document.querySelector('#rescan-all-button').click()", true);
+  await waitFor("offline source question again", readFolders, (value) => value.offlineOpen === true);
+  await window.webContents.executeJavaScript("document.querySelector('#offline-source-delete').click()", true);
+  const deletedOffline = await waitFor("confirmed deletion cleans the offline folder", readFolders, (value) => value.offlineOpen === false && value.cards.length === 1);
+  assert.equal(removedSources.includes(otherSourceId), true, "only the confirmed-deleted folder is removed");
+  assert.match(deletedOffline.cards[0].text, /D 盘/u);
+
   await window.webContents.executeJavaScript("document.querySelector('[data-remove-source-id]').click()", true);
-  assert.equal(await window.webContents.executeJavaScript("document.querySelector('#remove-source-dialog').open", true), true);
-  assert.match(await window.webContents.executeJavaScript("document.querySelector('#remove-source-copy').textContent", true), /不删除源文件/);
-  assert.equal(await window.webContents.executeJavaScript("document.activeElement.id", true), "remove-source-cancel");
-  await window.webContents.executeJavaScript("document.querySelector('#remove-source-cancel').click(); document.querySelector('[data-remove-source-id]').click(); document.querySelector('#remove-source-confirm').click()", true);
-  await waitFor("removed source", () => window.webContents.executeJavaScript("document.querySelector('#source-list').textContent", true) as Promise<string>, (text) => /尚未添加来源/.test(text));
+  const removeDialog = await waitFor("remove dialog", readFolders, (value) => value.removeOpen === true);
+  assert.match(removeDialog.removeTitle, /移除「Movies」/);
+  assert.match(removeDialog.removeCopy, /12 部作品、34 集/);
+  assert.match(removeDialog.removeCopy, /观看进度/);
+  assert.match(removeDialog.removeCopy, /不会删除源文件/);
+  assert.match(removeDialog.removeConfirmClass, /destructive-button/);
+  assert.equal(removeDialog.removeConfirmText, "移除并删除进度");
+  assert.equal(removeDialog.activeId, "remove-source-cancel", "cancel owns the default focus");
+  await window.webContents.executeJavaScript("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))", true);
+  await waitFor("remove dialog dismissed by Esc", readFolders, (value) => value.removeOpen === false);
+  assert.equal((await readFolders()).cards.length, 1, "Esc cancels without removing the folder");
+
+  await window.webContents.executeJavaScript("document.querySelector('[data-remove-source-id]').click()", true);
+  await waitFor("remove dialog reopened", readFolders, (value) => value.removeOpen === true);
+  failNextRemove = true;
+  await window.webContents.executeJavaScript("document.querySelector('#remove-source-confirm').click()", true);
+  const removeFailure = await waitFor("remove failure stays inside the dialog", readFolders, (value) => !value.removeErrorHidden && value.removeOpen === true);
+  assert.match(removeFailure.removeError, /占用|重试/);
+  assert.equal(removeFailure.removeConfirmText, "重试移除");
+  assert.equal(removeFailure.cards.length, 1, "a failed removal leaves the folder record unchanged");
+  await window.webContents.executeJavaScript("document.querySelector('#remove-source-confirm').click()", true);
+  const removed = await waitFor("remove retry succeeds", readFolders, (value) => value.removeOpen === false && value.cards.length === 0);
+  assert.equal(removedSources.includes(item.sourceId), true);
+  assert.match(await window.webContents.executeJavaScript("document.querySelector('#app-notice').textContent", true), /源文件没有被删除/);
 
   window.close();
-  for (const channel of ["local-library:state", "local-library:source-remove", "local-library:choose-folder", "local-library:open-video", "local-library:list", "local-library:list-collections", "local-library:scan-cancel", "local-library:get", "local-library:artwork", "local-library:continue-watching", "app-preferences:get", "app-preferences:set-sort"]) ipcMain.removeHandler(channel);
+  for (const channel of ["local-library:state", "local-library:source-remove", "local-library:source-refresh", "local-library:rescan-all", "local-library:choose-folder", "local-library:open-video", "local-library:list", "local-library:list-collections", "local-library:scan-cancel", "local-library:get", "local-library:artwork", "local-library:continue-watching", "app-preferences:get", "app-preferences:set-sort"]) ipcMain.removeHandler(channel);
 }
 
 run().then(() => app.quit()).catch((error: unknown) => {

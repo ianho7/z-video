@@ -183,6 +183,33 @@ export class LocalLibraryDatabase {
     return result;
   }
 
+  /** Rescan every registered folder in source order; one unreadable source never aborts the rest. */
+  async rescanAll(): Promise<LocalScanResult[]> {
+    const state = await this.refreshState();
+    const results: LocalScanResult[] = [];
+    for (const source of state.sources) {
+      const rootPath = await this.sourceRoot(source.sourceId);
+      if (!rootPath) continue;
+      try {
+        results.push(await this.scanFolder(rootPath));
+      } catch (error) {
+        results.push({
+          scanId: "",
+          sourceId: source.sourceId,
+          sourceLabel: source.label,
+          status: "unavailable",
+          scannedFiles: 0,
+          importedFiles: 0,
+          updatedFiles: 0,
+          warningCount: 0,
+          warnings: [],
+          error: localLibraryErrorMessage("storage", error instanceof Error ? error.message : undefined),
+        });
+      }
+    }
+    return results;
+  }
+
   async cancelScan(scanId: string): Promise<boolean> {
     return this.call<boolean>({ command: "cancel-scan", scanId });
   }
