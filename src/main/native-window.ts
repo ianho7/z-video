@@ -107,10 +107,10 @@ export class NativeVideoWindow {
     const rect = { left: 0, top: 0, right: 0, bottom: 0 };
     if (!this.api.getClientRect(this.parentHandle(), rect)) return;
     const dpi = Number(this.api.getDpiForWindow(this.parentHandle())) || 96;
-    const controlsHeight = Math.round((152 * dpi) / 96);
     const width = Math.max(1, Number(rect.right) - Number(rect.left));
-    const height = Math.max(1, Number(rect.bottom) - Number(rect.top) - controlsHeight);
-    this.api.setWindowPos(this.handle, 0n, 0, 0, width, height, SWP_NOACTIVATE | (this.visible ? SWP_SHOWWINDOW : 0));
+    const titleHeight = this.parent.isFullScreen() ? 0 : Math.round((36 * dpi) / 96);
+    const height = Math.max(1, Number(rect.bottom) - Number(rect.top) - titleHeight);
+    this.api.setWindowPos(this.handle, 0n, 0, titleHeight, width, height, SWP_NOACTIVATE | (this.visible ? SWP_SHOWWINDOW : 0));
     this.api.showWindow(this.handle, this.visible ? SW_SHOW : SW_HIDE);
   }
 

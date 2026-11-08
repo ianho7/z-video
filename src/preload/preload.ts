@@ -21,6 +21,8 @@ import type { LocalLibrarySort } from "../shared/local-library-contracts";
 // Sandboxed preloads may require Electron's built-ins, but not local CommonJS
 // modules. Keep these names identical to shared/ipc-channels.ts.
 const IPC_CHANNELS = {
+  windowAction: "window:action",
+  windowMaximized: "window:maximized",
   localLibraryState: "local-library:state",
   localLibraryChooseFolder: "local-library:choose-folder",
   localLibraryOpenVideo: "local-library:open-video",
@@ -62,6 +64,21 @@ const IPC_CHANNELS = {
 } as const;
 
 const api: ElectronApi = {
+  overlay: {
+    visible: (value) => ipcRenderer.send("overlay:visible", value),
+    state: (value) => ipcRenderer.send("overlay:state", value),
+    action: (value) => ipcRenderer.send("overlay:action", value),
+    ignore: (value) => ipcRenderer.send("overlay:ignore", value),
+    onReady: (listener) => { ipcRenderer.on("overlay:ready", () => listener()); },
+    onState: (listener) => { ipcRenderer.on("overlay:state", (_event, value) => listener(value)); },
+    onAction: (listener) => { ipcRenderer.on("overlay:action", (_event, value) => listener(value)); },
+  },
+  windowAction: (action) => ipcRenderer.send(IPC_CHANNELS.windowAction, action),
+  onWindowMaximized: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, maximized: boolean) => listener(maximized);
+    ipcRenderer.on(IPC_CHANNELS.windowMaximized, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.windowMaximized, handler);
+  },
   localLibrary: {
     getState: () => ipcRenderer.invoke(IPC_CHANNELS.localLibraryState),
     chooseFolder: () => ipcRenderer.invoke(IPC_CHANNELS.localLibraryChooseFolder),

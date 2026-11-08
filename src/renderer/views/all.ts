@@ -1,4 +1,4 @@
-import { generatedCover } from "../cover.js";
+import { coverData, generatedCover } from "../cover.js";
 import type { LocalMediaItem } from "../../shared/local-library-contracts";
 import { artworkKind, kindLabel, formatBytes } from "./shared.js";
 
@@ -12,7 +12,7 @@ export function card(item: LocalMediaItem): HTMLElement {
   button.dataset.mediaId = item.mediaId;
   button.setAttribute("aria-label", `查看 ${item.title}`);
   const poster = document.createElement("span");
-  poster.className = "media-poster";
+  poster.className = `media-poster cover-shape-${coverData(item).shape}`;
   const kind = artworkKind(item);
   if (kind) {
     poster.dataset.artworkMediaId = item.mediaId;

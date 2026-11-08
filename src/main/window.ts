@@ -1,9 +1,10 @@
-import { BrowserWindow, nativeTheme } from "electron";
+import { BrowserWindow, ipcMain, nativeTheme } from "electron";
 import { join } from "node:path";
 
 import { IPC_CHANNELS } from "../shared/ipc-channels";
 import type { WindowAppearanceState } from "../shared/contracts";
 import { recordUiOperation } from "./diagnostics";
+import { createPlayerOverlay } from "./player-overlay";
 
 const WINDOW_BACKGROUND = "#101113";
 
@@ -62,6 +63,7 @@ export function createMainWindow(): BrowserWindow {
     height: 720,
     minWidth: 900,
     minHeight: 640,
+    frame: false,
     backgroundColor: appearance.nativeBackdrop ? "#00000000" : WINDOW_BACKGROUND,
     backgroundMaterial: appearance.nativeBackdrop ? "acrylic" : "none",
     show: false,
@@ -72,6 +74,21 @@ export function createMainWindow(): BrowserWindow {
       sandbox: true,
     },
   });
+  window.setMenuBarVisibility(false);
+  createPlayerOverlay(window);
+  const onWindowAction = (event: Electron.IpcMainEvent, action: unknown) => {
+    if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) return;
+    if (action === "minimize") window.minimize();
+    else if (action === "maximize") window.isMaximized() ? window.unmaximize() : window.maximize();
+    else if (action === "close") window.close();
+  };
+  ipcMain.on(IPC_CHANNELS.windowAction, onWindowAction);
+  window.once("closed", () => ipcMain.removeListener(IPC_CHANNELS.windowAction, onWindowAction));
+  const sendMaximized = () => {
+    if (!window.webContents.isDestroyed()) window.webContents.send(IPC_CHANNELS.windowMaximized, window.isMaximized());
+  };
+  window.on("maximize", sendMaximized);
+  window.on("unmaximize", sendMaximized);
   const sendAppearance = () => {
     applyWindowAppearance(window, readWindowAppearance());
   };

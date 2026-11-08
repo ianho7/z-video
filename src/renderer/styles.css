@@ -283,6 +283,17 @@ button:disabled { cursor: wait; opacity: .55; }
 .hero-actions .primary-button, .hero-actions .secondary-button { min-height: 52px; }
 .continue-card { display: flex; flex: 0 0 160px; flex-direction: column; gap: 10px; padding: 0; background: transparent; }
 .continue-image { width: 100%; height: auto; aspect-ratio: 2 / 3; border-radius: var(--r-poster); }
+.media-poster.cover-shape-0, .continue-image.cover-shape-0 { border-radius: 20px; }
+.media-poster.cover-shape-1, .continue-image.cover-shape-1 { border-radius: 60px 20px 20px 20px; }
+.media-poster.cover-shape-2, .continue-image.cover-shape-2 { border-radius: 20px 20px 60px 20px; }
+.media-poster.cover-shape-3, .continue-image.cover-shape-3 { border-radius: 20px 60px 20px 20px; }
+.home-hero { display: flex; align-items: center; justify-content: space-between; gap: 40px; padding-right: 48px; background: var(--tone-deep, var(--surface)); }
+.home-hero .hero-copy { flex: 1; min-width: 0; justify-content: center; background: none; }
+.home-hero .hero-copy h1 { max-width: 100%; }
+.home-hero[hidden] { display: none; }
+.home-hero::before, .home-hero::after { display: none; }
+.hero-poster { flex: 0 0 auto; width: 174px; aspect-ratio: 2 / 3; overflow: hidden; }
+.hero-poster img { width: 100%; height: 100%; object-fit: contain; }
 .continue-copy { gap: 6px; }
 .shelf-row .media-card { flex-basis: 160px; }
 @media (max-width: 980px) { .player-controls { padding-block: 16px; } }
@@ -306,6 +317,29 @@ button:disabled { cursor: wait; opacity: .55; }
 .player-spacer { flex: 1; }
 .player-actions #player-toggle-button { min-width: 64px; background: var(--tone-container, var(--lavender)); color: var(--tone-on, #1b1035); }
 .player-actions button { border-radius: 999px; }
+.player-controls { min-height: 0; margin: 0 28px 24px; padding: 12px 26px; border-radius: 36px; background: #0e0e10; }
+.player-heading { flex: 0 0 72px; display: flex; align-items: center; gap: 14px; padding: 12px 28px; background: #08090b; }
+.player-heading #player-close-button { width: 48px; height: 48px; padding: 0; border-radius: 50%; font-size: 22px; }
+.player-heading #player-close-button svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.player-actions #player-toggle-button svg { width: 24px; height: 24px; fill: currentColor; vertical-align: middle; }
+.player-heading .player-now-playing { display: flex; flex-direction: column; align-items: flex-start; max-width: none; flex: 1; }
+.player-heading .player-now-playing strong { max-width: 100%; font-size: 18px; }
+.player-progress-row { gap: 16px; }
+.player-elapsed, .player-time { font: 900 15px Nunito, sans-serif; min-width: 56px; font-variant-numeric: tabular-nums; }
+.seek-control { height: 24px; display: flex; align-items: center; background: linear-gradient(to right, transparent var(--progress, 0%), #ffffff30 var(--progress, 0%)) center / 100% 5px no-repeat; }
+.player-wave { height: 24px; }
+.player-wave path { stroke-width: 2.5; stroke-linecap: round; }
+.player-seek-thumb { position: absolute; top: 0; left: var(--progress, 0%); width: 8px; height: 24px; margin-left: -4px; border-radius: 999px; background: var(--tone-container, var(--lavender)); pointer-events: none; }
+#player-seek { position: absolute; inset: 0; height: 24px; margin: 0; opacity: 0; cursor: pointer; }
+.seek-control:focus-within { outline: 3px solid var(--lavender); outline-offset: 3px; border-radius: 12px; }
+.player-actions #player-toggle-button { min-width: 64px; height: 56px; border-radius: 22px; }
+.window-bar { height: 36px; display: flex; align-items: center; background: var(--bg); color: var(--text-muted); user-select: none; }
+.window-drag { flex: 1; height: 100%; display: flex; align-items: center; padding-left: 18px; font: 800 12px Nunito, sans-serif; -webkit-app-region: drag; }
+.window-actions { display: flex; height: 100%; -webkit-app-region: no-drag; }
+.window-actions button { width: 46px; border: 0; color: var(--text); background: transparent; font-size: 18px; cursor: pointer; }
+.window-actions button:hover { background: var(--surface-2); }
+.window-actions button:last-child:hover { background: #b3261e; }
+.player-view, .player-shell { min-height: calc(100vh - 36px); }
 .sources-page { padding: 30px 5vw; }
 .sources-heading { display: flex; justify-content: space-between; align-items: end; gap: 24px; margin: 30px 0; }
 .sources-heading h1, .onboarding h1 { font-size: 42px; margin: 10px 0; }
@@ -324,3 +358,17 @@ dialog { width: min(460px, 90vw); border: 0; border-radius: 32px; padding: 32px;
 dialog::backdrop { background: #000b; }.dialog-actions { justify-content: flex-end; margin-top: 28px; }
 .scan-panel { position: relative; overflow: hidden; isolation: isolate; }
 .scan-panel:has([data-cancel-scan]:not([hidden]))::before { content: ""; position: absolute; z-index: -1; inset: 52% -10% 0; background: #c9b8ff20; border-radius: 45% 55% 0 0 / 30px 30px 0 0; }
+
+/* D2 ordinary-page motion: keep player and custom window chrome outside this scope. */
+.app-shell button:not(:disabled), .app-shell summary { transition: transform 100ms ease, background-color 180ms ease, color 180ms ease, box-shadow 180ms ease; }
+.app-shell button:not(:disabled):active, .app-shell summary:active { transform: scale(.96); }
+.media-card { transition: transform 220ms ease; }
+.media-card:hover, .media-card:focus-within { transform: translateY(-4px); }
+.source-card { transition: transform 220ms ease, background-color 220ms ease; }
+.source-card:hover, .source-card:focus-within { transform: translateY(-4px); }
+.app-shell :is(#home-hero, #continue-section, #recent-section, #shows-section, #collection-section, #onboarding, #library-error, #library-empty, #sources-page, #scan-panel, #media-detail):not([hidden]) { animation: soft-cinema-enter 200ms cubic-bezier(.2, .75, .25, 1) both; }
+.app-shell dialog[open] { animation: soft-cinema-dialog-enter 200ms cubic-bezier(.2, .75, .25, 1) both; }
+.app-shell dialog[open]::backdrop { animation: soft-cinema-backdrop-enter 180ms ease both; }
+@keyframes soft-cinema-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes soft-cinema-dialog-enter { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes soft-cinema-backdrop-enter { from { opacity: 0; } to { opacity: 1; } }

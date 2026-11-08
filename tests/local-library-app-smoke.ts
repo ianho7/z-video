@@ -111,6 +111,18 @@ async function run(): Promise<void> {
   try {
     require("../src/main/main.js");
     const window = await waitForProductionWindow();
+    // CI/automation desktop may mark the test window occluded despite focus.
+    window.webContents.setBackgroundThrottling(false);
+    assert.equal(window.isMenuBarVisible(), false);
+    await evaluate(window, "document.querySelector('[data-window-action=maximize]').click()");
+    await waitFor("custom maximize", async () => window.isMaximized(), Boolean);
+    await waitFor("restore label", () => evaluate(window, "document.querySelector('[data-window-action=maximize]').getAttribute('aria-label')"), (label) => label === "还原窗口");
+    await evaluate(window, "document.querySelector('[data-window-action=maximize]').click()");
+    await waitFor("custom restore", async () => window.isMaximized(), (maximized) => !maximized);
+    await waitFor("maximize label", () => evaluate(window, "document.querySelector('[data-window-action=maximize]').getAttribute('aria-label')"), (label) => label === "最大化窗口");
+    await evaluate(window, "document.querySelector('[data-window-action=minimize]').click()");
+    await waitFor("custom minimize", async () => window.isMinimized(), Boolean);
+    window.restore();
 
     const initial = await waitFor(
       "fresh local-library empty state",
@@ -256,18 +268,19 @@ async function run(): Promise<void> {
 
     window.setSize(900, 640);
     const minOuter = window.getSize();
-    const minContent = window.getContentSize();
-    const minDetail = await evaluate(window, "(() => { const button = document.querySelector('#media-detail-open')?.getBoundingClientRect(); const viewport = { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight }; const inner = { width: window.innerWidth, height: window.innerHeight }; return { visible: Boolean(button && button.left >= 0 && button.right <= viewport.width && button.top >= 0 && button.bottom <= viewport.height), viewport, inner }; })()");
+    const minDetail = await waitFor("minimum window resize", async () => {
+      const view = await evaluate(window, "(() => { const button = document.querySelector('#media-detail-open')?.getBoundingClientRect(); const viewport = { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight }; const inner = { width: window.innerWidth, height: window.innerHeight }; return { visible: Boolean(button && button.left >= 0 && button.right <= viewport.width && button.top >= 0 && button.bottom <= viewport.height), viewport, inner }; })()");
+      return { ...view, content: window.getContentSize() };
+    }, (value) => Math.abs(value.content[0] - value.inner.width) <= 4 && Math.abs(value.content[1] - value.inner.height) <= 4);
+    const minContent = minDetail.content;
     assert.ok(minOuter[0] >= 900 && minOuter[1] >= 640);
-    assert.ok(Math.abs(minContent[0] - minDetail.inner.width) <= 4 && Math.abs(minContent[1] - minDetail.inner.height) <= 4);
     assert.equal(minDetail.visible, true);
-
     await evaluate(window, "document.querySelector('#library-search-clear')?.click()");
     await evaluate(window, "document.querySelector('#media-detail-open')?.click()");
     const player = await waitFor(
       "player title and controls",
-      () => evaluate(window, "(() => { const view = document.querySelector('[data-view=\"player\"]'); const surface = document.querySelector('.player-surface')?.getBoundingClientRect(); const controls = document.querySelector('.player-controls')?.getBoundingClientRect(); const title = document.querySelector('#player-current-title')?.getBoundingClientRect(); const toggle = document.querySelector('#player-toggle-button'); return { visible: view?.hidden === false, currentTitle: document.querySelector('#player-current-title')?.textContent || '', ready: toggle?.disabled === false, controlsHeight: controls?.height || 0, titleInControls: Boolean(title && controls && title.top >= controls.top && title.bottom <= controls.bottom), titleOutsideSurface: Boolean(title && surface && title.top >= surface.bottom) }; })()"),
-      (value) => value.visible && value.currentTitle === LONG_TITLE && Math.abs(value.controlsHeight - 152) < 1 && value.titleInControls && value.titleOutsideSurface && value.ready,
+      () => evaluate(window, "(() => { const view = document.querySelector('[data-view=\"player\"]'); const surface = document.querySelector('.player-surface')?.getBoundingClientRect(); const controls = document.querySelector('.player-controls')?.getBoundingClientRect(); const title = document.querySelector('#player-current-title')?.getBoundingClientRect(); const toggle = document.querySelector('#player-toggle-button'); return { visible: view?.hidden === false, currentTitle: document.querySelector('#player-current-title')?.textContent || '', ready: toggle?.disabled === false, controlsHeight: controls?.height || 0, titleInControls: Boolean(title && controls && title.top >= controls.top && title.bottom <= controls.bottom), titleOutsideSurface: Boolean(title && surface && title.bottom <= surface.top) }; })()"),
+      (value) => value.visible && value.currentTitle === LONG_TITLE && Math.abs(value.controlsHeight - 152) < 1 && !value.titleInControls && value.titleOutsideSurface && value.ready,
       15_000,
     );
     assert.equal(player.currentTitle, LONG_TITLE);
@@ -275,6 +288,7 @@ async function run(): Promise<void> {
     await evaluate(window, "window.zVideo.localPlayback.command({ type: 'seek', positionSec: 5 })");
     await new Promise((resolve) => setTimeout(resolve, 400));
     await evaluate(window, "document.querySelector('#player-close-button')?.click()");
+    await waitFor("player close complete", () => evaluate(window, "document.querySelector('[data-view=player]')?.hidden === true"), Boolean);
     await evaluate(window, "document.querySelector('[data-nav=home]')?.click()");
     const continueMin = await waitFor(
       "continue row at minimum size",
@@ -288,14 +302,13 @@ async function run(): Promise<void> {
 
     window.setSize(1040, 720);
     const defaultAfterContinueOuter = window.getSize();
-    const defaultAfterContinueContent = window.getContentSize();
     const continueDefault = await waitFor(
       "continue row at default size",
-      () => evaluate(window, "(() => { const firstTitle = document.querySelector('.media-card-title'); const rect = firstTitle?.getBoundingClientRect(); return { outer: { width: window.outerWidth, height: window.outerHeight }, content: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight }, inner: { width: window.innerWidth, height: window.innerHeight }, hidden: document.querySelector('#continue-section')?.hidden, title: document.querySelector('.continue-card .continue-copy > strong')?.textContent || '', firstTitle: firstTitle?.textContent || '', firstTop: rect?.top || -1, firstBottom: rect?.bottom || -1 }; })()"),
-      (value) => value.hidden === false && value.title === LONG_TITLE && value.firstTitle.length > 0,
+      async () => ({ ...(await evaluate(window, "(() => { const firstTitle = document.querySelector('.media-card-title'); const rect = firstTitle?.getBoundingClientRect(); return { outer: { width: window.outerWidth, height: window.outerHeight }, content: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight }, inner: { width: window.innerWidth, height: window.innerHeight }, hidden: document.querySelector('#continue-section')?.hidden, title: document.querySelector('.continue-card .continue-copy > strong')?.textContent || '', firstTitle: firstTitle?.textContent || '', firstTop: rect?.top || -1, firstBottom: rect?.bottom || -1 }; })()")), windowContent: window.getContentSize() }),
+      (value) => value.hidden === false && value.title === LONG_TITLE && value.firstTitle.length > 0 && Math.abs(value.windowContent[0] - value.inner.width) <= 4 && Math.abs(value.windowContent[1] - value.inner.height) <= 4,
     );
     assert.ok(defaultAfterContinueOuter[0] >= 1040 && defaultAfterContinueOuter[1] >= 720);
-    assert.ok(Math.abs(defaultAfterContinueContent[0] - continueDefault.inner.width) <= 4 && Math.abs(defaultAfterContinueContent[1] - continueDefault.inner.height) <= 4, `content=${JSON.stringify(defaultAfterContinueContent)} inner=${JSON.stringify(continueDefault.inner)}`);
+    assert.ok(Math.abs(continueDefault.windowContent[0] - continueDefault.inner.width) <= 4 && Math.abs(continueDefault.windowContent[1] - continueDefault.inner.height) <= 4, `content=${JSON.stringify(continueDefault.windowContent)} inner=${JSON.stringify(continueDefault.inner)}`);
     assert.ok(continueDefault.content.width > 0 && continueDefault.content.height > 0);
     assert.ok(continueDefault.firstTitle.length > 0);
 
@@ -325,7 +338,7 @@ async function run(): Promise<void> {
       defaultWindow: { outer: defaultOuter },
       detail: { default: { title: detail.title, plotLength: detail.plot.length, play: detail.button, viewport: detail.viewport }, minimum: { outer: minOuter, content: minContent, playVisible: minDetail.visible, viewport: minDetail.viewport } },
       player: { currentTitle: player.currentTitle, controlsHeight: player.controlsHeight, titleInControls: player.titleInControls, titleOutsideSurface: player.titleOutsideSurface },
-      continueWatching: { minimum: continueMin, default: continueDefault, defaultContent: defaultAfterContinueContent, defaultOuter: defaultAfterContinueOuter },
+      continueWatching: { minimum: continueMin, default: continueDefault, defaultContent: continueDefault.windowContent, defaultOuter: defaultAfterContinueOuter },
     }, null, 2) + "\n", "utf8");
     process.stdout.write("PASS: production local-library UX smoke (running scan, detail/player layout, continue row)\n");
     await quitProductionApp();

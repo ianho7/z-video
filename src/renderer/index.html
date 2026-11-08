@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
+    <div class="window-bar" aria-label="窗口标题栏"><span class="window-drag">z-video</span><div class="window-actions"><button type="button" data-window-action="minimize" aria-label="最小化">−</button><button type="button" data-window-action="maximize" aria-label="最大化或还原">□</button><button type="button" data-window-action="close" aria-label="关闭">×</button></div></div>
     <div class="app-shell" data-view="library">
       <header class="app-header">
         <div class="brand-lockup" aria-label="z-video 本地片库">
@@ -56,7 +57,7 @@
           </section>
 
             <div id="onboarding" class="onboarding" hidden><p class="eyebrow">WELCOME</p><h1>你的私人影院，从这里开始</h1><p>添加本地文件夹，或直接打开一个视频。</p><button type="button" class="primary-button" data-import="folder">添加文件夹</button> <button type="button" class="secondary-button" data-import="video">打开单个视频</button></div>
-          <section id="home-hero" class="home-hero" hidden><div id="hero-artwork" class="hero-artwork"></div><div class="hero-copy"><p id="hero-label" class="eyebrow"></p><h1 id="hero-title"></h1><div class="hero-episode"><strong id="hero-episode"></strong><span id="hero-meta"></span></div><svg class="hero-progress" viewBox="0 0 360 18" preserveAspectRatio="none" aria-hidden="true"><path id="hero-progress-track"/><path id="hero-progress-fill" pathLength="100"/></svg><div class="hero-actions"><button id="hero-play" class="primary-button" type="button">继续观看</button><button id="hero-restart" class="secondary-button" type="button">从头播放</button><button id="hero-detail" class="secondary-button" type="button">详情</button></div></div></section>
+          <section id="home-hero" class="home-hero" hidden><div class="hero-copy"><p id="hero-label" class="eyebrow"></p><h1 id="hero-title"></h1><div class="hero-episode"><strong id="hero-episode"></strong><span id="hero-meta"></span></div><svg class="hero-progress" viewBox="0 0 360 18" preserveAspectRatio="none" aria-hidden="true"><path id="hero-progress-track"/><path id="hero-progress-fill" pathLength="100"/></svg><div class="hero-actions"><button id="hero-play" class="primary-button" type="button">继续观看</button><button id="hero-restart" class="secondary-button" type="button">从头播放</button><button id="hero-detail" class="secondary-button" type="button">详情</button></div></div><div id="hero-poster" class="hero-poster"></div></section>
           <section id="continue-section" class="continue-section" hidden aria-labelledby="continue-title">
             <div class="section-heading"><h2 id="continue-title">继续观看</h2><span id="continue-scope" class="muted"></span><button type="button" data-shelf="all">查看全部 →</button></div>
             <div id="continue-row" class="continue-row"></div>
@@ -138,21 +139,20 @@
     </div>
     <section class="player-view" data-view="player" hidden aria-label="播放器">
       <main class="player-shell">
+        <header class="player-heading"><button id="player-close-button" class="secondary-button" type="button" aria-label="返回片库"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5m0 0 7-7m-7 7 7 7"/></svg></button><span class="player-now-playing" aria-live="polite"><strong id="player-current-title"></strong><span>正在播放</span></span></header>
         <div class="player-surface" aria-label="原生视频区域" aria-keyshortcuts="Space ArrowLeft ArrowRight ArrowUp ArrowDown M F Escape" title="视频区域快捷键：Space 暂停 · ←/→ 前后 5 秒 · ↑/↓ 音量 ±5 · M 静音 · F 全屏 · Esc 退出全屏" tabindex="-1">
           <p id="player-surface-message" class="player-surface-message">正在准备原生播放器…</p>
         </div>
         <div class="player-controls" aria-label="播放控制">
           <div class="player-control-row player-progress-row">
-            <button id="player-close-button" class="secondary-button" type="button">返回片库</button>
-            <span class="player-now-playing" aria-live="polite"><span>正在播放</span><strong id="player-current-title"></strong></span>
-            <label class="seek-control" for="player-seek"><span class="sr-only">播放进度</span><svg class="player-wave" viewBox="0 0 200 12" preserveAspectRatio="none" aria-hidden="true"><path d="M0 6 Q5 0 10 6 T20 6 T30 6 T40 6 T50 6 T60 6 T70 6 T80 6 T90 6 T100 6 T110 6 T120 6 T130 6 T140 6 T150 6 T160 6 T170 6 T180 6 T190 6 T200 6"/></svg><input id="player-seek" type="range" min="0" max="0" value="0" step="0.1" aria-keyshortcuts="ArrowLeft ArrowRight" title="视频区域焦点时 ←/→ 前后 5 秒；滑块聚焦时微调" disabled /></label>
-            <span id="player-time" class="player-time" aria-live="off">00:00 / 00:00</span>
+            <span id="player-elapsed" class="player-elapsed">00:00</span><label class="seek-control" for="player-seek"><span class="sr-only">播放进度</span><svg class="player-wave" viewBox="0 0 200 12" preserveAspectRatio="none" aria-hidden="true"><path d="M0 6 Q5 0 10 6 T20 6 T30 6 T40 6 T50 6 T60 6 T70 6 T80 6 T90 6 T100 6 T110 6 T120 6 T130 6 T140 6 T150 6 T160 6 T170 6 T180 6 T190 6 T200 6"/></svg><span class="player-seek-thumb" aria-hidden="true"></span><input id="player-seek" type="range" min="0" max="0" value="0" step="0.1" aria-keyshortcuts="ArrowLeft ArrowRight" title="视频区域焦点时 ←/→ 前后 5 秒；滑块聚焦时微调" disabled /></label>
+            <span id="player-time" class="player-time" aria-live="off">00:00</span>
           </div>
           <div class="player-control-row player-actions">
             <button id="player-back-10" class="secondary-button" type="button" aria-label="后退 10 秒">−10</button>
-            <button id="player-toggle-button" class="primary-button" type="button" aria-keyshortcuts="Space" title="Space" disabled>播放</button>
+            <button id="player-toggle-button" class="primary-button" type="button" aria-label="播放" aria-keyshortcuts="Space" title="Space" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg><span class="sr-only">播放</span></button>
             <button id="player-forward-10" class="secondary-button" type="button" aria-label="前进 10 秒">+10</button>
-            <button id="player-next-button" class="secondary-button" type="button" disabled>下一集</button>
+            <button id="player-next-button" class="secondary-button" type="button" hidden disabled>下一集</button>
             <span class="player-spacer"></span>
             <label class="player-volume-control" for="player-volume"><span>音量</span><input id="player-volume" type="range" min="0" max="100" step="5" value="100" aria-keyshortcuts="ArrowUp ArrowDown" disabled /></label>
             <button id="player-mute-button" class="secondary-button" type="button" aria-keyshortcuts="M" aria-pressed="false" title="M" disabled>静音</button>

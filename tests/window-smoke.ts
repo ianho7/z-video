@@ -20,7 +20,8 @@ const broken = { ...item, mediaId: "media_123e4567-e89b-12d3-a456-426614174001",
 const delayed = { ...item, mediaId: "media_123e4567-e89b-12d3-a456-426614174002", title: "延迟海报", artwork: [{ kind: "poster", cacheKey: "delayed" }] };
 const replacement = { ...item, mediaId: "media_123e4567-e89b-12d3-a456-426614174003", title: "新详情", artwork: [] };
 const fanartOnly = { ...item, mediaId: "media_123e4567-e89b-12d3-a456-426614174004", title: "仅有背景", artwork: [{ kind: "fanart", cacheKey: "fanart" }] };
-const items = [item, broken, delayed, replacement, fanartOnly];
+const good = { ...item, mediaId: "media_123e4567-e89b-12d3-a456-426614174005", title: "有效海报", artwork: [{ kind: "poster", cacheKey: "good" }] };
+const items = [item, broken, delayed, replacement, fanartOnly, good];
 const state = {
   status: "ready",
   schemaVersion: 1,
@@ -56,6 +57,7 @@ async function run(): Promise<void> {
     const { mediaId } = request;
     artworkRequests.push(mediaId);
     if (mediaId === delayed.mediaId) return new Promise<{ dataUrl: string }>((resolve) => { delayedResponses.push(resolve); });
+    if (mediaId === good.mediaId) return { dataUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='18'%3E%3Crect width='12' height='18' fill='red'/%3E%3C/svg%3E" };
     return { dataUrl: "data:image/png;base64,aW52YWxpZA==" };
   });
   ipcMain.handle("local-library:continue-watching", async () => ({ state, items: [] }));
@@ -135,6 +137,28 @@ async function run(): Promise<void> {
   await waitFor("initial card restored", () => window.webContents.executeJavaScript("Boolean(document.querySelector('[data-media-id]'))", true) as Promise<boolean>, Boolean);
   await waitFor("home shelves", () => window.webContents.executeJavaScript(`({ recent: document.querySelector('#recent-row')?.textContent || '', shows: document.querySelector('#shows-row')?.textContent || '' })`, true) as Promise<{ recent: string; shows: string }>, (value) => Boolean(value.recent && value.shows));
   assert.equal(await window.webContents.executeJavaScript("document.querySelector('#hero-title')?.textContent", true), item.title);
+  const setHero = async (target: typeof item) => {
+    items.splice(0, items.length, target as typeof items[number], ...items.filter((value) => value.mediaId !== target.mediaId));
+    await window.webContents.executeJavaScript("document.querySelector('[data-nav=home]').click()", true);
+    await waitFor("hero item", () => window.webContents.executeJavaScript("document.querySelector('#hero-title')?.textContent", true) as Promise<string>, (title) => title === target.title);
+  };
+  await setHero(good);
+  await waitFor("hero poster loaded", () => window.webContents.executeJavaScript("Boolean(document.querySelector('#hero-poster img'))", true) as Promise<boolean>, Boolean);
+  assert.equal(await window.webContents.executeJavaScript("document.querySelector('#home-hero').style.getPropertyValue('--tone-container')", true), "#f4a07c");
+  assert.equal(await window.webContents.executeJavaScript("getComputedStyle(document.querySelector('#hero-poster img')).objectFit", true), "contain");
+  await setHero(broken);
+  await waitFor("broken hero fallback", () => window.webContents.executeJavaScript("document.querySelector('#hero-poster')?.dataset.artworkLoading", true) as Promise<string>, (loading) => loading === "false");
+  assert.equal(await window.webContents.executeJavaScript("Boolean(document.querySelector('#hero-poster .poster-fallback'))", true), true);
+  await setHero(delayed);
+  await waitFor("delayed hero", () => window.webContents.executeJavaScript("document.querySelector('#hero-poster')?.dataset.artworkLoading", true) as Promise<string>, (loading) => loading === "true");
+  await setHero(replacement);
+  const replacementTone = await window.webContents.executeJavaScript("document.querySelector('#home-hero').style.getPropertyValue('--tone-container')", true);
+  for (const resolve of delayedResponses) resolve({ dataUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='18'%3E%3Crect width='12' height='18' fill='red'/%3E%3C/svg%3E" });
+  await window.webContents.executeJavaScript("new Promise(resolve => setTimeout(resolve, 100))", true);
+  assert.equal(await window.webContents.executeJavaScript("Boolean(document.querySelector('#hero-poster .poster-fallback'))", true), true);
+  assert.equal(await window.webContents.executeJavaScript("document.querySelector('#hero-title')?.textContent", true), replacement.title);
+  assert.equal(await window.webContents.executeJavaScript("document.querySelector('#home-hero').style.getPropertyValue('--tone-container')", true), replacementTone);
+  await setHero(item);
   assert.ok(queries.some((query) => query.sort === "added_desc" && query.pageSize === 12));
   assert.ok(queries.some((query) => query.filter === "show" && query.pageSize === 12));
   await window.webContents.executeJavaScript("document.querySelector('[data-nav=movie]').click()", true);

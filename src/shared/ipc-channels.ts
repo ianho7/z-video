@@ -1,4 +1,6 @@
 export const IPC_CHANNELS = {
+  windowAction: "window:action",
+  windowMaximized: "window:maximized",
   localLibraryState: "local-library:state",
   localLibraryChooseFolder: "local-library:choose-folder",
   localLibraryOpenVideo: "local-library:open-video",

@@ -1,4 +1,16 @@
 import { coverData, generatedCover } from "./cover.js";
+document.querySelectorAll<HTMLButtonElement>("[data-window-action]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const action = button.dataset.windowAction;
+    if (action === "minimize" || action === "maximize" || action === "close") window.zVideo.windowAction(action);
+  });
+});
+window.zVideo.onWindowMaximized((maximized) => {
+  const button = document.querySelector<HTMLButtonElement>('[data-window-action="maximize"]');
+  if (!button) return;
+  button.setAttribute("aria-label", maximized ? "还原窗口" : "最大化窗口");
+  button.textContent = maximized ? "❐" : "□";
+});
 import { applyTone, posterTone } from "./tone.js";
 import { escapeHtml, formatTime, kindLabel, formatBytes, artworkKind } from "./views/shared.js";
 import { card } from "./views/all.js";
@@ -235,7 +247,47 @@ function showPlayer(visible: boolean): void {
   const nextTitle = visible ? activePlaybackTitle : "";
   if (playerCurrentTitle && playerCurrentTitle.textContent !== nextTitle) playerCurrentTitle.textContent = nextTitle;
   if (visible && !wasVisible) playerSurface?.focus();
+  if (wasVisible !== visible) window.zVideo.overlay.visible(visible);
 }
+
+const overlayIds = ["player-current-title", "player-close-button", "player-elapsed", "player-time", "player-seek", "player-toggle-button", "player-next-button", "player-back-10", "player-forward-10", "player-volume", "player-mute-button", "player-settings-button", "player-fullscreen-button", "player-settings", "player-settings-close", "player-speed", "player-audio-track", "player-subtitle-track", "player-subtitle-file-button", "player-status", "player-ended", "player-countdown", "player-play-next", "player-cancel-next", "player-return-list"];
+const overlayActions = new Set(overlayIds);
+let overlayActivity = 0;
+function sendOverlayState(): void {
+  if (playerView?.hidden !== false) return;
+  const elements: Record<string, Record<string, unknown>> = {};
+  for (const id of overlayIds) {
+    const element = document.getElementById(id);
+    if (!element) continue;
+    const value: Record<string, unknown> = { hidden: element.hidden, style: element.getAttribute("style") ?? "" };
+    if (element instanceof HTMLButtonElement || element instanceof HTMLInputElement || element instanceof HTMLSelectElement) value.disabled = element.disabled;
+    if (element instanceof HTMLInputElement || element instanceof HTMLSelectElement) value.value = element.value;
+    if (element instanceof HTMLInputElement) { value.max = element.max; value.min = element.min; }
+    if (["player-current-title", "player-elapsed", "player-time", "player-toggle-button", "player-mute-button", "player-fullscreen-button", "player-status", "player-countdown", "player-audio-track", "player-subtitle-track"].includes(id)) value.html = element.innerHTML;
+    for (const attribute of ["expanded", "pressed", "label"]) if (element.hasAttribute(`aria-${attribute}`)) value[attribute] = element.getAttribute(`aria-${attribute}`);
+    elements[id] = value;
+  }
+  window.zVideo.overlay.state({ heading: document.querySelector(".player-heading")?.outerHTML, controls: document.querySelector(".player-controls")?.outerHTML, elements, progress: playerSeek?.parentElement?.getAttribute("style") ?? "", fullscreen: playerFullscreen, playing: playerState === "playing", activity: overlayActivity });
+}
+window.zVideo.overlay.onReady(sendOverlayState);
+window.addEventListener("keydown", () => { if (playerView?.hidden === false) { overlayActivity += 1; sendOverlayState(); } });
+setInterval(sendOverlayState, 250);
+window.zVideo.overlay.onAction((action) => {
+  if (!action || typeof action !== "object" || playerView?.hidden !== false) return;
+  if (action.type === "key" && typeof action.key === "string" && typeof action.code === "string") {
+    handlePlayerShortcut(new KeyboardEvent("keydown", { key: action.key, code: action.code }));
+    return;
+  }
+  if (!overlayActions.has(action.id) || !["click", "input", "change"].includes(action.type)) return;
+  const element = document.getElementById(action.id);
+  if (!element) return;
+  if ((element instanceof HTMLButtonElement || element instanceof HTMLInputElement || element instanceof HTMLSelectElement) && element.disabled) return;
+  if (action.type === "click" && !(element instanceof HTMLButtonElement)) return;
+  if (action.type !== "click" && !(element instanceof HTMLInputElement || element instanceof HTMLSelectElement)) return;
+  if ((element instanceof HTMLInputElement || element instanceof HTMLSelectElement) && typeof action.value === "string") element.value = action.value;
+  element.dispatchEvent(new Event(action.type, { bubbles: true }));
+  sendOverlayState();
+});
 
 function setPlayerStatus(message: string, error = false): void {
   if (!playerStatus) return;
@@ -254,7 +306,7 @@ function setPlayerControlsEnabled(enabled: boolean): void {
   if (playerVolume) playerVolume.disabled = !enabled;
   if (playerMuteButton) playerMuteButton.disabled = !enabled;
   if (playerSpeed) playerSpeed.disabled = !enabled;
-  if (playerNextButton) playerNextButton.disabled = !enabled || !nextEpisode();
+  if (playerNextButton) { playerNextButton.hidden = !nextEpisode(); playerNextButton.disabled = !enabled || playerNextButton.hidden; }
 }
 
 function renderMuteButton(): void {
@@ -443,8 +495,13 @@ function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
       playerState = event.state;
       if (event.state === "ended" && !wasEnded) showPlaybackEnded();
       else if (event.state !== "ended") { clearNextTimer(); if (playerEnded) playerEnded.hidden = true; }
-      if (playerNextButton) playerNextButton.disabled = !nextEpisode();
-      if (playerToggleButton) playerToggleButton.textContent = event.state === "playing" ? "暂停" : "播放";
+      if (playerNextButton) { playerNextButton.hidden = !nextEpisode(); playerNextButton.disabled = playerNextButton.hidden; }
+      if (playerToggleButton) {
+        const playing = event.state === "playing";
+        const label = playing ? "暂停" : "播放";
+        playerToggleButton.setAttribute("aria-label", label);
+        playerToggleButton.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${playing ? '<path d="M6 5h4v14H6zm8 0h4v14h-4z"/>' : '<path d="M8 5v14l11-7z"/>'}</svg><span class="sr-only">${label}</span>`;
+      }
       if (event.state === "playing") setPlayerStatus("视频区域快捷键：Space 暂停 · ←/→ ±5秒 · ↑/↓ 音量±5 · M 静音 · F 全屏 · Esc 退出");
       else if (event.state === "paused") setPlayerStatus("已暂停 · Space 继续播放");
       else if (event.state === "buffering") setPlayerStatus("缓冲中…");
@@ -454,7 +511,9 @@ function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
       playerDurationSec = event.durationSec ?? playerDurationSec;
       if (playerSeek && document.activeElement !== playerSeek) playerSeek.value = String(event.positionSec);
       if (playerSeek) playerSeek.parentElement?.style.setProperty("--progress", `${playerDurationSec > 0 ? Math.min(100, event.positionSec / playerDurationSec * 100) : 0}%`);
-      if (playerTime) playerTime.textContent = `${formatTime(event.positionSec)} / ${formatTime(playerDurationSec)}`;
+      const elapsed = document.querySelector<HTMLElement>("#player-elapsed");
+      if (elapsed) elapsed.textContent = formatTime(event.positionSec);
+      if (playerTime) playerTime.textContent = formatTime(playerDurationSec);
       break;
     case "tracks":
       renderTrackOptions(playerAudioTrack, event.audio, "自动");
@@ -593,7 +652,7 @@ function renderHomeHero(): void {
   const episode = hero.querySelector<HTMLElement>("#hero-episode");
   const restart = hero.querySelector<HTMLButtonElement>("#hero-restart");
   const play = hero.querySelector<HTMLButtonElement>("#hero-play");
-  const background = hero.querySelector<HTMLElement>("#hero-artwork");
+  const poster = hero.querySelector<HTMLElement>("#hero-poster");
   if (title) title.textContent = item.title;
   if (label) label.textContent = entry ? "继续观看" : "最近添加";
   if (episode) episode.textContent = item.episodeNumber !== undefined ? `E${String(item.episodeNumber).padStart(2, "0")}` : "";
@@ -605,10 +664,12 @@ function renderHomeHero(): void {
   if (restart) { restart.hidden = !entry; restart.disabled = !item.available; }
   if (play) { play.textContent = entry ? "继续观看" : "播放"; play.disabled = !item.available; }
   applyTone(hero, coverData(item).tone);
-  if (background) {
-    background.replaceChildren();
-    delete background.dataset.artworkMediaId; delete background.dataset.artworkKind; delete background.dataset.artworkLoaded; delete background.dataset.artworkLoading;
-    if (item.artwork?.some((art) => art.kind === "fanart")) { background.dataset.artworkMediaId = item.mediaId; background.dataset.artworkKind = "fanart"; enqueueArtwork(background, 2); }
+  if (poster) {
+    poster.className = `hero-poster cover-shape-${coverData(item).shape}`;
+    poster.replaceChildren(generatedCover(item));
+    poster.dataset.artworkGeneration = String(Number(poster.dataset.artworkGeneration ?? 0) + 1);
+    delete poster.dataset.artworkMediaId; delete poster.dataset.artworkKind; delete poster.dataset.artworkLoaded; delete poster.dataset.artworkLoading;
+    if (item.artwork?.some((art) => art.kind === "poster")) { poster.dataset.artworkMediaId = item.mediaId; poster.dataset.artworkKind = "poster"; enqueueArtwork(poster, 2); }
   }
 }
 
@@ -690,6 +751,7 @@ async function pumpArtwork(): Promise<void> {
       task.element.replaceChildren(image);
       task.element.dataset.artworkLoaded = "true";
       applyTone(task.element, tone);
+      if (task.element.id === "hero-poster" && hero) applyTone(hero, tone);
       if (selectedMediaId === task.mediaId && detail && !detail.hidden) {
         applyTone(detail, tone);
         if (playerView) applyTone(playerView, tone);

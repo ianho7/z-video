@@ -61,7 +61,7 @@ export class MainPlaybackHost implements PlaybackHost {
       engine,
       (event) => this.send(event),
       (enabled) => {
-        if (!window.isDestroyed()) window.setFullScreen(enabled);
+        if (!window.isDestroyed() && window.isFullScreen() !== enabled) window.setFullScreen(enabled);
       },
       context
         ? {
@@ -197,7 +197,7 @@ export class MainLocalPlaybackHost implements LocalPlaybackHost {
         if (event.type === "settings") void this.persistNativeSettings(event);
       },
       (enabled) => {
-        if (!window.isDestroyed()) window.setFullScreen(enabled);
+        if (!window.isDestroyed() && window.isFullScreen() !== enabled) window.setFullScreen(enabled);
       },
       store,
     );

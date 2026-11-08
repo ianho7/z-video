@@ -1,4 +1,4 @@
-import { generatedCover } from "../cover.js";
+import { coverData, generatedCover } from "../cover.js";
 import type { LocalContinueWatchingItem } from "../../shared/local-library-contracts";
 import { artworkKind, kindLabel, formatTime } from "./shared.js";
 
@@ -10,7 +10,7 @@ export function renderContinueCards(items: LocalContinueWatchingItem[], continue
     button.dataset.mediaId = entry.item.mediaId;
     button.setAttribute("aria-label", `继续观看《${entry.item.title}》，从 ${formatTime(entry.playback.positionSec)} 开始`);
     const poster = document.createElement("span");
-    poster.className = "continue-image";
+    poster.className = `continue-image cover-shape-${coverData(entry.item).shape}`;
     const kind = artworkKind(entry.item);
     if (kind) {
       poster.dataset.artworkMediaId = entry.item.mediaId;

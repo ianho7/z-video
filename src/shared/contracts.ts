@@ -268,6 +268,17 @@ export type PlaybackEvent =
   | { type: "closed"; episodeId?: string };
 
 export interface ElectronApi {
+  overlay: {
+    visible(visible: boolean): void;
+    state(state: unknown): void;
+    action(action: unknown): void;
+    ignore(ignore: boolean): void;
+    onReady(listener: () => void): void;
+    onState(listener: (state: any) => void): void;
+    onAction(listener: (action: any) => void): void;
+  };
+  windowAction(action: "minimize" | "maximize" | "close"): void;
+  onWindowMaximized(listener: (maximized: boolean) => void): () => void;
   localLibrary: LocalLibraryApi;
   localPlayback: LocalPlaybackApi;
   appPreferences: AppPreferencesApi;
