@@ -2,7 +2,8 @@ import { coverData, generatedCover } from "../cover.js";
 import type { LocalCollectionSummary, LocalMediaItem } from "../../shared/local-library-contracts";
 import { artworkKind, kindLabel, formatBytes, formatTime } from "./shared.js";
 
-function summaryItem(collection: LocalCollectionSummary): LocalMediaItem {
+/** Project a work summary onto the opaque media shape used by the hero. */
+export function collectionAsMediaItem(collection: LocalCollectionSummary): LocalMediaItem {
   return {
     mediaId: collection.representativeMediaId,
     sourceId: "",
@@ -14,6 +15,7 @@ function summaryItem(collection: LocalCollectionSummary): LocalMediaItem {
     available: collection.available,
     ...(collection.year === undefined ? {} : { year: collection.year }),
     premieredDate: collection.premieredDate,
+    ...(collection.artwork ? { artwork: collection.artwork } : {}),
   };
 }
 
@@ -39,7 +41,7 @@ export function collectionCard(collection: LocalCollectionSummary, includeReleas
   button.dataset.mediaId = collection.representativeMediaId;
   button.dataset.collectionId = collection.collectionId;
   button.setAttribute("aria-label", `打开《${collection.title}》详情`);
-  const posterItem = summaryItem(collection);
+  const posterItem = collectionAsMediaItem(collection);
   const poster = document.createElement("span");
   poster.className = `media-poster cover-shape-${coverData(posterItem, collection.episodeCount).shape}`;
   const artwork = collection.artwork?.find((entry) => entry.kind === "poster");

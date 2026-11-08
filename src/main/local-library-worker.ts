@@ -1211,23 +1211,45 @@ function getDetail(mediaId: string): LocalMediaDetail | undefined {
 
 function listContinueWatching(): LocalContinueWatchingItem[] {
   const db = requireDatabase();
+  // One entry per work: rank in-progress episodes by their latest update and
+  // keep only the most recent one. A work enters once playback is real enough
+  // to resume (30 seconds, or 3% for a work shorter than ten minutes).
   const rows = db.prepare(`
-    SELECT media_files.media_id AS mediaId, media_files.collection_id AS collectionId, media_files.source_id AS sourceId,
-      media_files.display_title AS displayTitle, media_files.media_kind AS mediaKind,
-      media_files.size_bytes AS sizeBytes, media_files.modified_at_ms AS modifiedAtMs,
-      media_files.season_number AS seasonNumber, media_files.episode_number AS episodeNumber,
-      media_files.available, sources.available AS sourceAvailable,
-      collections.title, collections.kind, collections.year, collections.plot,
-      collections.genre_json AS genreJson, collections.rating, collections.premiered_at AS premieredAt,
-      playback_state.position_sec AS positionSec, playback_state.duration_sec AS durationSec,
-      playback_state.audio_track_id AS audioTrackId, playback_state.subtitle_track_id AS subtitleTrackId,
-      playback_state.watched, playback_state.updated_at AS updatedAtMs
-    FROM playback_state
-      JOIN media_files ON media_files.media_id = playback_state.media_id
-      JOIN collections USING (collection_id)
-      JOIN sources USING (source_id)
-    WHERE playback_state.watched = 0 AND playback_state.position_sec > 0
-    ORDER BY playback_state.updated_at DESC
+    WITH candidates AS (
+      SELECT media_files.media_id AS mediaId, media_files.collection_id AS collectionId, media_files.source_id AS sourceId,
+        media_files.display_title AS displayTitle, media_files.media_kind AS mediaKind,
+        media_files.size_bytes AS sizeBytes, media_files.modified_at_ms AS modifiedAtMs,
+        media_files.season_number AS seasonNumber, media_files.episode_number AS episodeNumber,
+        media_files.available, sources.available AS sourceAvailable,
+        collections.title, collections.kind, collections.year, collections.plot,
+        collections.genre_json AS genreJson, collections.rating, collections.premiered_at AS premieredAt,
+        collections.title AS collectionTitle, collections.kind AS collectionKind,
+        playback_state.position_sec AS positionSec, playback_state.duration_sec AS durationSec,
+        playback_state.audio_track_id AS audioTrackId, playback_state.subtitle_track_id AS subtitleTrackId,
+        playback_state.watched, playback_state.updated_at AS updatedAtMs,
+        ROW_NUMBER() OVER (
+          PARTITION BY media_files.collection_id
+          ORDER BY playback_state.updated_at DESC, media_files.media_id ASC
+        ) AS collectionRank
+      FROM playback_state
+        JOIN media_files ON media_files.media_id = playback_state.media_id
+        JOIN collections USING (collection_id)
+        JOIN sources USING (source_id)
+      WHERE playback_state.watched = 0
+        AND playback_state.position_sec > 0
+        AND (
+          playback_state.position_sec >= 30
+          OR (
+            playback_state.duration_sec IS NOT NULL
+            AND playback_state.duration_sec > 0
+            AND playback_state.duration_sec < 600
+            AND playback_state.position_sec * 100 >= playback_state.duration_sec * 3
+          )
+        )
+    )
+    SELECT * FROM candidates
+    WHERE collectionRank = 1
+    ORDER BY updatedAtMs DESC, collectionId ASC
     LIMIT 50
   `).all() as Array<Record<string, unknown>>;
   return rows.map((row) => ({
@@ -1241,6 +1263,11 @@ function listContinueWatching(): LocalContinueWatchingItem[] {
       watched: false,
       updatedAtMs: Number(row.updatedAtMs),
     },
+    collectionTitle: String(row.collectionTitle ?? row.title ?? ""),
+    collectionKind: row.collectionKind === "movie" || row.collectionKind === "show" ? row.collectionKind : "unclassified",
+    episodeTitle: String(row.displayTitle ?? ""),
+    ...(row.seasonNumber === null || row.seasonNumber === undefined ? {} : { seasonNumber: Number(row.seasonNumber) }),
+    ...(row.episodeNumber === null || row.episodeNumber === undefined ? {} : { episodeNumber: Number(row.episodeNumber) }),
   }));
 }
 
