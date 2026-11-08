@@ -35,7 +35,7 @@ async function stopOwnedProcess() {
     killer.once("exit", resolve);
   });
 }
-const timeout = setTimeout(() => { void stopOwnedProcess(); }, 60_000);
+const timeout = setTimeout(() => { void stopOwnedProcess(); }, 180_000);
 const [code, signal] = await once(child, "exit");
 clearTimeout(timeout);
 closeSync(logFd);

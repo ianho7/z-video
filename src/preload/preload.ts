@@ -13,6 +13,7 @@ import type {
   DiscoveryOutcome,
   WindowAppearanceState,
   LocalLibraryQuery,
+  LocalCollectionQuery,
   LocalPlaybackControlCommand,
   LocalPlaybackOpenOptions,
 } from "../shared/contracts";
@@ -27,6 +28,7 @@ const IPC_CHANNELS = {
   localLibraryChooseFolder: "local-library:choose-folder",
   localLibraryOpenVideo: "local-library:open-video",
   localLibraryList: "local-library:list",
+  localLibraryListCollections: "local-library:list-collections",
   localLibraryGet: "local-library:get",
   localLibraryArtwork: "local-library:artwork",
   localLibraryContinueWatching: "local-library:continue-watching",
@@ -84,6 +86,7 @@ const api: ElectronApi = {
     chooseFolder: () => ipcRenderer.invoke(IPC_CHANNELS.localLibraryChooseFolder),
     openVideo: () => ipcRenderer.invoke(IPC_CHANNELS.localLibraryOpenVideo),
     list: (query?: Partial<LocalLibraryQuery>) => ipcRenderer.invoke(IPC_CHANNELS.localLibraryList, query),
+    listCollections: (query?: Partial<LocalCollectionQuery>) => ipcRenderer.invoke(IPC_CHANNELS.localLibraryListCollections, query),
     get: (mediaId: string) => ipcRenderer.invoke(IPC_CHANNELS.localLibraryGet, mediaId),
     getArtwork: (mediaId: string, kind?: "poster" | "fanart") => ipcRenderer.invoke(IPC_CHANNELS.localLibraryArtwork, { mediaId, kind }),
     listContinueWatching: () => ipcRenderer.invoke(IPC_CHANNELS.localLibraryContinueWatching),

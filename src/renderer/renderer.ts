@@ -13,7 +13,7 @@ window.zVideo.onWindowMaximized((maximized) => {
 });
 import { applyTone, posterTone } from "./tone.js";
 import { escapeHtml, formatTime, kindLabel, formatBytes, artworkKind } from "./views/shared.js";
-import { card } from "./views/all.js";
+import { card, collectionCard } from "./views/all.js";
 import { renderSources } from "./views/sources.js";
 import { episodeRows, renderMovieFileInfo, renderSeasonTabs } from "./views/detail.js";
 import { renderTrackOptions } from "./views/player.js";
@@ -21,6 +21,8 @@ import { renderContinueCards } from "./views/home.js";
 import { biscuitPath, wavePath } from "./shapes.js";
 import type {
   LocalArtworkReference,
+  LocalCollectionQuery,
+  LocalCollectionSummary,
   LocalContinueWatchingItem,
   LocalLibraryQuery,
   LocalLibrarySort,
@@ -123,7 +125,10 @@ const scanPanel = document.querySelector<HTMLElement>("#scan-panel");
 const removeDialog = document.querySelector<HTMLDialogElement>("#remove-source-dialog");
 let removingSourceId: string | undefined;
 let state: LocalLibraryState | undefined;
-let activePage: { items: LocalMediaItem[]; totalCount: number; page: number; pageSize: number } | undefined;
+type LibraryPageView =
+  | { mode: "collection"; items: LocalCollectionSummary[]; totalCount: number; page: number; pageSize: number }
+  | { mode: "media"; items: LocalMediaItem[]; totalCount: number; page: number; pageSize: number };
+let activePage: LibraryPageView | undefined;
 let libraryLoadedOnce = false;
 let activeDetail: LocalMediaDetail | undefined;
 let selectedMediaId: string | undefined;
@@ -222,7 +227,17 @@ function currentEmptyCopy(totalCount: number): { title: string; message: string 
 }
 
 function filterLabel(filter: NonNullable<LocalLibraryQuery["filter"]>): string {
-  return ({ all: "全部类型", movie: "电影", show: "电视剧", episode: "剧集", unclassified: "未分类" })[filter];
+  return ({ all: "全部类型", movie: "电影", show: "剧集", episode: "单集", unclassified: "未分类" })[filter];
+}
+
+/** "单集" keeps the file-level list; every other filter is work-level. */
+function usesCollectionList(): boolean {
+  return (currentQuery.filter ?? "all") !== "episode";
+}
+
+function currentCollectionQuery(): LocalCollectionQuery {
+  const { filter, ...rest } = currentQuery;
+  return { ...rest, ...(filter && filter !== "episode" ? { filter } : {}) };
 }
 
 function updateEmptyCopy(totalCount: number): void {
@@ -586,7 +601,11 @@ function renderState(next: LocalLibraryState): void {
   if (next.status === "error") setMessage(next.error?.message ?? "本地片库不可用。", true);
 }
 
-function renderPage(page: { items: LocalMediaItem[]; totalCount: number; page: number; pageSize: number }): void {
+function collectionCardSignature(item: LocalCollectionSummary): string {
+  return [item.title, item.kind, item.year ?? "", item.rating ?? "", item.premieredDate ?? "", item.episodeCount, item.watchedEpisodeCount, item.availableEpisodeCount, item.available ? 1 : 0, item.resume?.mediaId ?? "", item.resume?.updatedAtMs ?? 0].join(":");
+}
+
+function renderPage(page: LibraryPageView): void {
   activePage = page;
   if (onboarding) onboarding.hidden = !(state?.status !== "error" && homeVisible && page.totalCount === 0 && !currentQuery.query);
   const focusedMediaId = preserveGridFocus();
@@ -599,12 +618,33 @@ function renderPage(page: { items: LocalMediaItem[]; totalCount: number; page: n
     if (article && button.dataset.mediaId) existingCards.set(button.dataset.mediaId, article);
   });
   const keptCards = new Set<HTMLElement>();
-  for (const item of page.items) {
-    const cached = existingCards.get(item.mediaId);
-    const node = cached && cached.dataset.releaseDate === String(includeReleaseDate) ? cached : card(item, includeReleaseDate);
-    node.dataset.releaseDate = String(includeReleaseDate);
-    libraryGrid.append(node);
-    keptCards.add(node);
+  if (page.mode === "collection") {
+    for (const item of page.items) {
+      const cached = existingCards.get(item.representativeMediaId);
+      const signature = collectionCardSignature(item);
+      const node = cached
+        && cached.dataset.cardMode === "collection"
+        && cached.dataset.releaseDate === String(includeReleaseDate)
+        && cached.dataset.collectionSignature === signature
+        ? cached
+        : collectionCard(item, includeReleaseDate);
+      node.dataset.cardMode = "collection";
+      node.dataset.releaseDate = String(includeReleaseDate);
+      node.dataset.collectionSignature = signature;
+      libraryGrid.append(node);
+      keptCards.add(node);
+    }
+  } else {
+    for (const item of page.items) {
+      const cached = existingCards.get(item.mediaId);
+      const node = cached && cached.dataset.cardMode === "media" && cached.dataset.releaseDate === String(includeReleaseDate)
+        ? cached
+        : card(item, includeReleaseDate);
+      node.dataset.cardMode = "media";
+      node.dataset.releaseDate = String(includeReleaseDate);
+      libraryGrid.append(node);
+      keptCards.add(node);
+    }
   }
   libraryGrid.querySelectorAll<HTMLElement>(":scope > *").forEach((child) => {
     if (!keptCards.has(child)) child.remove();
@@ -614,8 +654,9 @@ function renderPage(page: { items: LocalMediaItem[]; totalCount: number; page: n
   if (searchAllTypesButton) searchAllTypesButton.hidden = !(page.items.length === 0 && Boolean(currentQuery.query) && currentQuery.filter !== "all");
   if (libraryRetryButton) libraryRetryButton.hidden = true;
   if (pageScope) {
-    const total = state?.sources.reduce((count, source) => count + source.itemCount, 0) ?? page.totalCount;
-    pageScope.textContent = currentQuery.query ? `“${currentQuery.query}” · ${page.totalCount} / ${total}` : page.totalCount ? `${page.totalCount} 项 · 第 ${page.page} 页` : "";
+    if (currentQuery.query) pageScope.textContent = page.mode === "collection" ? `“${currentQuery.query}” · ${page.totalCount} 部作品` : `“${currentQuery.query}” · ${page.totalCount} 集`;
+    else if (page.totalCount) pageScope.textContent = page.mode === "collection" ? `共 ${page.totalCount} 部作品 · 第 ${page.page} 页` : `共 ${page.totalCount} 集 · 第 ${page.page} 页`;
+    else pageScope.textContent = "";
   }
   renderPagination(page);
   artworkObserver = new IntersectionObserver((entries) => {
@@ -845,16 +886,32 @@ async function loadLibrary(): Promise<boolean> {
     setMessage("正在加载片库…");
   }
   try {
+    if (usesCollectionList()) {
+      const result = await window.zVideo.localLibrary.listCollections(currentCollectionQuery());
+      if (epoch !== requestEpoch || !result.page) return false;
+      libraryLoadedOnce = true;
+      renderState(result.state);
+      renderPage({ mode: "collection", ...result.page });
+      libraryGrid?.removeAttribute("aria-busy");
+      if (scanProgress?.status === "running") {
+        setMessage(`正在扫描：已索引 ${result.page.totalCount} 部作品，已提交 ${scanProgress.importedFiles + scanProgress.updatedFiles} 项。`, false);
+      } else if (result.page.totalCount) {
+        setMessage(`已索引 ${result.page.totalCount} 部作品。`, false);
+      } else {
+        setMessage(currentEmptyCopy(0).message, false);
+      }
+      return true;
+    }
     const result = await window.zVideo.localLibrary.list(query);
     if (epoch !== requestEpoch || !result.page) return false;
     libraryLoadedOnce = true;
     renderState(result.state);
-    renderPage(result.page);
+    renderPage({ mode: "media", ...result.page });
     libraryGrid?.removeAttribute("aria-busy");
     if (scanProgress?.status === "running") {
-      setMessage(`正在扫描：已索引 ${result.page.totalCount} 项，已提交 ${scanProgress.importedFiles + scanProgress.updatedFiles} 项。`, false);
+      setMessage(`正在扫描：已索引 ${result.page.totalCount} 集，已提交 ${scanProgress.importedFiles + scanProgress.updatedFiles} 项。`, false);
     } else if (result.page.totalCount) {
-      setMessage(`已索引 ${result.page.totalCount} 项媒体。`, false);
+      setMessage(`已索引 ${result.page.totalCount} 集。`, false);
     } else {
       setMessage(currentEmptyCopy(0).message, false);
     }
@@ -940,7 +997,7 @@ function renderDetail(detailValue: LocalMediaDetail): void {
   activeDetailPlayback = detailPlayback(detailValue);
   activePlaybackTitle = item.title;
   if (playerCurrentTitle) playerCurrentTitle.textContent = activePlaybackTitle;
-  if (detailTitle) detailTitle.textContent = detailValue.collectionTitle && detailValue.collectionKind === "show" ? detailValue.collectionTitle : item.title;
+  if (detailTitle) detailTitle.textContent = detailValue.collectionTitle?.trim() || item.title;
   if (detailMeta) {
     const parts: HTMLElement[] = [];
     for (const value of [kindLabel(item.kind), ...(item.year === undefined ? [] : [String(item.year)]), item.premieredDate ? `发布日期 ${item.premieredDate}` : "发布日期未知", ...(item.seasonNumber !== undefined && item.episodeNumber !== undefined ? [`S${String(item.seasonNumber).padStart(2, "0")}E${String(item.episodeNumber).padStart(2, "0")}`] : [])]) {

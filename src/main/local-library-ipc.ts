@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import {
   isOpaqueMediaId,
   type LocalLibraryQuery,
+  type LocalCollectionQuery,
 } from "../shared/local-library-contracts";
 import { IPC_CHANNELS } from "../shared/ipc-channels";
 import { recordUiOperation } from "./diagnostics";
@@ -49,6 +50,10 @@ export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, 
     // and their current source summary without refreshing on every progress event.
     return { state: await database.refreshState(), page };
   }));
+  ipcMain.handle(IPC_CHANNELS.localLibraryListCollections, (_event, value: unknown) => withUiOperation("local-library.list-collections", async () => {
+    const page = await database.listCollections(parseLocalCollectionQuery(value));
+    return { state: await database.refreshState(), page };
+  }));
   ipcMain.handle(IPC_CHANNELS.localLibraryGet, (_event, value: unknown) => withUiOperation("local-library.get", async () => {
     const mediaId = parseMediaId(value);
     const detail = await database.getDetail(mediaId);
@@ -92,6 +97,7 @@ export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, 
       IPC_CHANNELS.localLibraryChooseFolder,
       IPC_CHANNELS.localLibraryOpenVideo,
       IPC_CHANNELS.localLibraryList,
+      IPC_CHANNELS.localLibraryListCollections,
       IPC_CHANNELS.localLibraryGet,
       IPC_CHANNELS.localLibraryArtwork,
       IPC_CHANNELS.localLibraryContinueWatching,
@@ -126,6 +132,29 @@ function parseLocalLibraryQuery(value: unknown): LocalLibraryQuery {
     ...(typeof record.query === "string" && record.query.trim() ? { query: record.query.trim().slice(0, 200) } : {}),
     ...(typeof record.filter === "string" ? { filter: record.filter as LocalLibraryQuery["filter"] } : {}),
     ...(typeof record.sort === "string" ? { sort: record.sort as LocalLibraryQuery["sort"] } : {}),
+    ...(typeof record.sourceId === "string" ? { sourceId: record.sourceId } : {}),
+  };
+}
+
+function parseLocalCollectionQuery(value: unknown): LocalCollectionQuery {
+  if (value === undefined || value === null) return { page: 1, pageSize: 50 };
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("作品查询参数格式无效");
+  const record = value as Record<string, unknown>;
+  const page = record.page === undefined ? 1 : parseInteger(record.page, "页码");
+  const pageSize = record.pageSize === undefined ? 50 : parseInteger(record.pageSize, "分页大小");
+  if (page < 1 || pageSize < 1 || pageSize > 100) throw new Error("作品分页参数无效");
+  if (record.query !== undefined && record.query !== null && typeof record.query !== "string") throw new Error("作品搜索词格式无效");
+  const filters = new Set(["all", "movie", "show", "unclassified"]);
+  const sorts = new Set(["recent", "title", "year_desc", "score_desc", "added_desc", "released_desc"]);
+  if (record.filter !== undefined && (!filters.has(String(record.filter)))) throw new Error("作品筛选条件无效");
+  if (record.sort !== undefined && (!sorts.has(String(record.sort)))) throw new Error("作品排序条件无效");
+  if (record.sourceId !== undefined && (typeof record.sourceId !== "string" || !/^source_[0-9a-f-]{36}$/i.test(record.sourceId))) throw new Error("作品来源格式无效");
+  return {
+    page,
+    pageSize,
+    ...(typeof record.query === "string" && record.query.trim() ? { query: record.query.trim().slice(0, 200) } : {}),
+    ...(typeof record.filter === "string" ? { filter: record.filter as LocalCollectionQuery["filter"] } : {}),
+    ...(typeof record.sort === "string" ? { sort: record.sort as LocalCollectionQuery["sort"] } : {}),
     ...(typeof record.sourceId === "string" ? { sourceId: record.sourceId } : {}),
   };
 }

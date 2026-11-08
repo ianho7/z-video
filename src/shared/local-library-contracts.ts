@@ -135,9 +135,76 @@ export interface LocalLibraryPage {
   items: LocalMediaItem[];
 }
 
+export type LocalCollectionKind = "movie" | "show" | "unclassified";
+export type LocalCollectionFilter = "all" | LocalCollectionKind;
+
+/** Work-level query. "episode" stays a file-level filter on LocalLibraryQuery. */
+export interface LocalCollectionQuery {
+  page: number;
+  pageSize: number;
+  query?: string;
+  filter?: LocalCollectionFilter;
+  sort?: LocalLibrarySort;
+  sourceId?: string;
+}
+
+export interface LocalCollectionResume {
+  mediaId: `media_${string}`;
+  positionSec: number;
+  durationSec?: number;
+  seasonNumber?: number;
+  episodeNumber?: number;
+  episodeTitle: string;
+  updatedAtMs: number;
+}
+
+export interface LocalCollectionMatchedEpisode {
+  mediaId: `media_${string}`;
+  title: string;
+  seasonNumber?: number;
+  episodeNumber?: number;
+}
+
+/**
+ * One card per work. Counts are episode counts for that work; resume and
+ * representative IDs are opaque media IDs only and never carry a path.
+ */
+export interface LocalCollectionSummary {
+  collectionId: string;
+  title: string;
+  kind: LocalCollectionKind;
+  year?: number;
+  rating?: number;
+  premieredDate: string | null;
+  episodeCount: number;
+  watchedEpisodeCount: number;
+  availableEpisodeCount: number;
+  available: boolean;
+  representativeMediaId: `media_${string}`;
+  coverMediaId: `media_${string}`;
+  resume?: LocalCollectionResume;
+  matchedEpisode?: LocalCollectionMatchedEpisode;
+  addedAtMs: number;
+  updatedAtMs: number;
+  artwork?: LocalArtworkReference[];
+}
+
+export interface LocalCollectionPage {
+  query: LocalCollectionQuery;
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  items: LocalCollectionSummary[];
+}
+
 export interface LocalLibraryListResult {
   state: LocalLibraryState;
   page?: LocalLibraryPage;
+}
+
+export interface LocalCollectionListResult {
+  state: LocalLibraryState;
+  page?: LocalCollectionPage;
 }
 
 export interface LocalLibraryDetailResult {
@@ -163,6 +230,7 @@ export interface LocalLibraryApi {
   chooseFolder(): Promise<LocalScanResult>;
   openVideo(): Promise<LocalImportOutcome>;
   list(query?: Partial<LocalLibraryQuery>): Promise<LocalLibraryListResult>;
+  listCollections(query?: Partial<LocalCollectionQuery>): Promise<LocalCollectionListResult>;
   get(mediaId: string): Promise<LocalLibraryDetailResult>;
   getArtwork(mediaId: string, kind?: LocalArtworkReference["kind"]): Promise<LocalLibraryArtworkResult>;
   listContinueWatching(): Promise<{ state: LocalLibraryState; items: LocalContinueWatchingItem[] }>;

@@ -40,6 +40,23 @@ async function run(): Promise<void> {
   await mkdir(showDirectory, { recursive: true });
   await mkdir(brokenDirectory, { recursive: true });
   await mkdir(cancelledRoot, { recursive: true });
+  const collectionRoot = join(profile, "collection-fixture");
+  const aggregateShowDirectory = join(collectionRoot, "Aggregate Show");
+  await mkdir(aggregateShowDirectory, { recursive: true });
+  await writeFile(join(aggregateShowDirectory, "tvshow.nfo"), `<tvshow>
+  <title>Aggregate Show</title>
+  <year>2020</year>
+  <premiered>2020-05-01</premiered>
+</tvshow>`);
+  for (const number of [1, 2, 3]) {
+    const stem = `Aggregate Show - S01E0${number}`;
+    await writeFile(join(aggregateShowDirectory, `${stem}.mkv`), Buffer.from(`aggregate episode ${number}`));
+    await writeFile(join(aggregateShowDirectory, `${stem}.nfo`), `<episodedetails><title>Aggregate Episode ${number}</title><season>1</season><episode>${number}</episode></episodedetails>`);
+  }
+  await writeFile(join(collectionRoot, "Aggregate Film.mkv"), Buffer.from("aggregate film fixture"));
+  await writeFile(join(collectionRoot, "Aggregate Film.nfo"), `<movie><title>Aggregate Film</title><year>2019</year></movie>`);
+  await writeFile(join(collectionRoot, "Second Film.mkv"), Buffer.from("second film fixture"));
+  await writeFile(join(collectionRoot, "Second Film.nfo"), `<movie><title>Second Film</title><year>2018</year></movie>`);
   const metadataMoviePath = join(movieDirectory, "Metadata Movie.mkv");
   const episodePath = join(showDirectory, "Example Show - S01E02.mkv");
   const brokenMoviePath = join(brokenDirectory, "Broken Movie.mkv");
@@ -134,6 +151,90 @@ async function run(): Promise<void> {
     assert.equal(scanned.items[0]?.artwork?.[0]?.kind, "poster");
     assert.equal(scanned.items[0]?.premieredDate, "2026-10-05");
     assert.equal(JSON.stringify(scanned.items[0]).includes(movieDirectory), false);
+
+    const collectionScan = await database.scanFolder(collectionRoot);
+    assert.equal(collectionScan.status, "completed");
+    assert.equal(collectionScan.importedFiles, 5);
+    const aggregateFiles = await database.list({ page: 1, pageSize: 50, sourceId: collectionScan.sourceId });
+    assert.equal(aggregateFiles.totalCount, 5, "the file-level list still counts every media file");
+    const aggregateEpisodes = await database.list({ page: 1, pageSize: 50, sourceId: collectionScan.sourceId, filter: "episode" });
+    assert.equal(aggregateEpisodes.totalCount, 3);
+    const episodeByTitle = new Map(aggregateEpisodes.items.map((item) => [item.title, item]));
+    const aggregateEpisodeOne = episodeByTitle.get("Aggregate Episode 1");
+    const aggregateEpisodeTwo = episodeByTitle.get("Aggregate Episode 2");
+    const aggregateEpisodeThree = episodeByTitle.get("Aggregate Episode 3");
+    assert.ok(aggregateEpisodeOne, "first aggregate episode was indexed");
+    assert.ok(aggregateEpisodeTwo, "second aggregate episode was indexed");
+    assert.ok(aggregateEpisodeThree, "third aggregate episode was indexed");
+    const collectionPage = await database.listCollections({ page: 1, pageSize: 50, sourceId: collectionScan.sourceId });
+    assert.equal(collectionPage.totalCount, 3, "work counts count collections, not files");
+    assert.equal(collectionPage.items.length, 3);
+    assert.equal(JSON.stringify(collectionPage.items).includes(collectionRoot), false, "work summaries never expose the source root");
+    for (const summary of collectionPage.items) {
+      for (const key of Object.keys(summary)) assert.doesNotMatch(key, /path|root|relative/i, `work summary must not expose ${key}`);
+    }
+    const aggregateShow = collectionPage.items.find((summary) => summary.title === "Aggregate Show");
+    assert.ok(aggregateShow, "aggregate show collection summary exists");
+    assert.equal(aggregateShow.kind, "show");
+    assert.equal(aggregateShow.year, 2020);
+    assert.equal(aggregateShow.premieredDate, "2020-05-01");
+    assert.equal(aggregateShow.episodeCount, 3);
+    assert.equal(aggregateShow.availableEpisodeCount, 3);
+    assert.equal(aggregateShow.watchedEpisodeCount, 0);
+    assert.equal(aggregateShow.available, true);
+    assert.equal(aggregateShow.representativeMediaId, aggregateEpisodeOne.mediaId, "default episode is the first episode when nothing was watched");
+    assert.equal(aggregateShow.resume, undefined);
+    assert.equal(aggregateShow.coverMediaId, aggregateEpisodeOne.mediaId);
+    const aggregateFilm = collectionPage.items.find((summary) => summary.title === "Aggregate Film");
+    assert.ok(aggregateFilm, "movie collection summary exists");
+    assert.equal(aggregateFilm.kind, "movie");
+    assert.equal(aggregateFilm.episodeCount, 1);
+    const secondFilm = collectionPage.items.find((summary) => summary.title === "Second Film");
+    assert.ok(secondFilm, "a second movie file in the same folder is its own work");
+    assert.equal(secondFilm.kind, "movie");
+    assert.notEqual(secondFilm.collectionId, aggregateFilm.collectionId, "two movies in one folder never share a work card");
+
+    const showOnly = await database.listCollections({ page: 1, pageSize: 50, sourceId: collectionScan.sourceId, filter: "show" });
+    assert.equal(showOnly.totalCount, 1, "the show filter lists one card per show");
+    assert.equal(showOnly.items[0]?.collectionId, aggregateShow.collectionId);
+    const episodeTitleSearch = await database.listCollections({ page: 1, pageSize: 50, sourceId: collectionScan.sourceId, filter: "show", query: "Aggregate Episode 2" });
+    assert.equal(episodeTitleSearch.totalCount, 1, "an episode-title match is returned once, not once per episode");
+    assert.equal(episodeTitleSearch.items[0]?.collectionId, aggregateShow.collectionId);
+    assert.equal(episodeTitleSearch.items[0]?.matchedEpisode?.mediaId, aggregateEpisodeTwo.mediaId);
+    assert.equal(episodeTitleSearch.items[0]?.matchedEpisode?.seasonNumber, 1);
+    assert.equal(episodeTitleSearch.items[0]?.matchedEpisode?.episodeNumber, 2);
+
+    await database.savePlayback(aggregateEpisodeTwo.mediaId, { positionSec: 120, durationSec: 1800, watched: false, updatedAtMs: Date.now() });
+    const resumedShow = (await database.listCollections({ page: 1, pageSize: 50, sourceId: collectionScan.sourceId, filter: "show" })).items[0];
+    assert.equal(resumedShow?.representativeMediaId, aggregateEpisodeTwo.mediaId, "an in-progress episode becomes the representative episode");
+    assert.equal(resumedShow?.resume?.mediaId, aggregateEpisodeTwo.mediaId);
+    assert.equal(resumedShow?.resume?.positionSec, 120);
+    assert.equal(resumedShow?.resume?.seasonNumber, 1);
+    assert.equal(resumedShow?.resume?.episodeNumber, 2);
+    assert.equal(resumedShow?.resume?.episodeTitle, "Aggregate Episode 2");
+    await database.savePlayback(aggregateEpisodeOne.mediaId, { positionSec: 1800, durationSec: 1800, watched: true, updatedAtMs: Date.now() + 10 });
+    const afterWatched = (await database.listCollections({ page: 1, pageSize: 50, sourceId: collectionScan.sourceId, filter: "show" })).items[0];
+    assert.equal(afterWatched?.watchedEpisodeCount, 1, "watched episodes are counted per work");
+    assert.equal(afterWatched?.representativeMediaId, aggregateEpisodeTwo.mediaId);
+    await database.savePlayback(aggregateEpisodeTwo.mediaId, { positionSec: 1800, durationSec: 1800, watched: true, updatedAtMs: Date.now() + 20 });
+    const firstUnwatched = (await database.listCollections({ page: 1, pageSize: 50, sourceId: collectionScan.sourceId, filter: "show" })).items[0];
+    assert.equal(firstUnwatched?.representativeMediaId, aggregateEpisodeThree.mediaId, "after resume is gone, the first unwatched episode is selected");
+    await database.savePlayback(aggregateEpisodeThree.mediaId, { positionSec: 1800, durationSec: 1800, watched: true, updatedAtMs: Date.now() + 30 });
+    const fullyWatched = (await database.listCollections({ page: 1, pageSize: 50, sourceId: collectionScan.sourceId, filter: "show" })).items[0];
+    assert.equal(fullyWatched?.watchedEpisodeCount, 3);
+    assert.equal(fullyWatched?.representativeMediaId, aggregateEpisodeOne.mediaId, "when every episode is watched the first episode is the fallback");
+
+    const collectionFirstPage = await database.listCollections({ page: 1, pageSize: 1, sourceId: collectionScan.sourceId, sort: "title" });
+    const collectionSecondPage = await database.listCollections({ page: 2, pageSize: 1, sourceId: collectionScan.sourceId, sort: "title" });
+    assert.equal(collectionFirstPage.totalCount, 3);
+    assert.equal(collectionFirstPage.items.length, 1);
+    assert.equal(collectionSecondPage.items.length, 1);
+    assert.notEqual(collectionFirstPage.items[0]?.collectionId, collectionSecondPage.items[0]?.collectionId);
+    const releasedCollections = await database.listCollections({ page: 1, pageSize: 10, sourceId: collectionScan.sourceId, sort: "released_desc" });
+    assert.equal(releasedCollections.items[0]?.title, "Aggregate Show", "a dated work sorts before undated works");
+    assert.equal(releasedCollections.items[0]?.premieredDate, "2020-05-01");
+    assert.equal(releasedCollections.items.length, 3);
+    assert.equal(releasedCollections.items.slice(1).every((summary) => summary.premieredDate === null), true, "undated works stay last and never borrow a year");
 
     const releaseRoot = join(profile, "release-sort-fixture");
     await mkdir(releaseRoot, { recursive: true });
@@ -255,9 +356,10 @@ async function run(): Promise<void> {
     assert.equal(detail?.playback?.mediaId, episodeId);
     assert.equal(detail?.playback?.positionSec, 37);
     assert.equal(detail?.playback?.durationSec, 180);
-    const episodeFilter = await database.list({ page: 1, pageSize: 1, filter: "episode", sort: "title" });
-    assert.equal(episodeFilter.totalCount, 1);
-    assert.equal(episodeFilter.items[0]?.mediaId, episodeId);
+    const episodeFilter = await database.list({ page: 1, pageSize: 50, filter: "episode", sort: "title" });
+    assert.equal(episodeFilter.totalCount, 4);
+    assert.equal(episodeFilter.items.every((item) => item.kind === "episode"), true);
+    assert.equal(episodeFilter.items.some((item) => item.mediaId === episodeId), true);
     const titlePage = await database.list({ page: 1, pageSize: 1, sort: "title" });
     assert.equal(titlePage.pageSize, 1);
     assert.equal(titlePage.items.length, 1);
@@ -326,6 +428,16 @@ async function run(): Promise<void> {
     assert.equal(unavailable.status, "unavailable");
     assert.equal((await database.get(episodeId))?.available, false);
     assert.equal((await database.getPlayback(episodeId))?.positionSec, 42);
+
+    await rm(collectionRoot, { recursive: true, force: true });
+    const unavailableCollectionsScan = await database.scanFolder(collectionRoot);
+    assert.equal(unavailableCollectionsScan.status, "unavailable");
+    const offlineCollections = await database.listCollections({ page: 1, pageSize: 50, sourceId: collectionScan.sourceId });
+    assert.equal(offlineCollections.totalCount, 3, "offline sources keep their indexed works");
+    assert.equal(offlineCollections.items.every((summary) => summary.available === false), true);
+    assert.equal(offlineCollections.items.every((summary) => summary.availableEpisodeCount === 0), true);
+    assert.equal(offlineCollections.items.find((summary) => summary.title === "Aggregate Show")?.episodeCount, 3, "offline works keep their episode counts");
+    await database.removeSource(collectionScan.sourceId);
 
     const unsubscribeScan = database.onScanProgress((progress) => {
       if (progress.status === "running" && progress.scannedFiles === 1) void database.cancelScan(progress.scanId);

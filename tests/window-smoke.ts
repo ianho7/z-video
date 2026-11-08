@@ -7,7 +7,18 @@ const smokeUserData = process.env.Z_VIDEO_WINDOW_SMOKE_PROFILE ?? join(process.e
 app.setPath("userData", smokeUserData);
 app.setPath("sessionData", join(smokeUserData, "session"));
 
-const item = {
+interface SmokeItem {
+  mediaId: string;
+  sourceId: string;
+  title: string;
+  kind: string;
+  sizeBytes: number;
+  modifiedAtMs: number;
+  available: boolean;
+  artwork?: Array<{ kind: "poster" | "fanart"; cacheKey: string }>;
+}
+
+const item: SmokeItem = {
   mediaId: "media_123e4567-e89b-12d3-a456-426614174000",
   sourceId: "source_123e4567-e89b-12d3-a456-426614174000",
   title: "窗口测试影片",
@@ -16,12 +27,12 @@ const item = {
   modifiedAtMs: 1_793_440_000_000,
   available: true,
 };
-const broken = { ...item, mediaId: "media_123e4567-e89b-12d3-a456-426614174001", title: "损坏海报", artwork: [{ kind: "poster", cacheKey: "broken" }] };
-const delayed = { ...item, mediaId: "media_123e4567-e89b-12d3-a456-426614174002", title: "延迟海报", artwork: [{ kind: "poster", cacheKey: "delayed" }] };
-const replacement = { ...item, mediaId: "media_123e4567-e89b-12d3-a456-426614174003", title: "新详情", artwork: [] };
-const fanartOnly = { ...item, mediaId: "media_123e4567-e89b-12d3-a456-426614174004", title: "仅有背景", artwork: [{ kind: "fanart", cacheKey: "fanart" }] };
-const good = { ...item, mediaId: "media_123e4567-e89b-12d3-a456-426614174005", title: "有效海报", artwork: [{ kind: "poster", cacheKey: "good" }] };
-const items = [item, broken, delayed, replacement, fanartOnly, good];
+const broken: SmokeItem = { ...item, mediaId: "media_123e4567-e89b-12d3-a456-426614174001", title: "损坏海报", artwork: [{ kind: "poster", cacheKey: "broken" }] };
+const delayed: SmokeItem = { ...item, mediaId: "media_123e4567-e89b-12d3-a456-426614174002", title: "延迟海报", artwork: [{ kind: "poster", cacheKey: "delayed" }] };
+const replacement: SmokeItem = { ...item, mediaId: "media_123e4567-e89b-12d3-a456-426614174003", title: "新详情", artwork: [] };
+const fanartOnly: SmokeItem = { ...item, mediaId: "media_123e4567-e89b-12d3-a456-426614174004", title: "仅有背景", artwork: [{ kind: "fanart", cacheKey: "fanart" }] };
+const good: SmokeItem = { ...item, mediaId: "media_123e4567-e89b-12d3-a456-426614174005", title: "有效海报", artwork: [{ kind: "poster", cacheKey: "good" }] };
+const items: SmokeItem[] = [item, broken, delayed, replacement, fanartOnly, good];
 const state = {
   status: "ready",
   schemaVersion: 2,
@@ -68,6 +79,29 @@ async function run(): Promise<void> {
       await new Promise((resolve) => setTimeout(resolve, 300));
     }
     return { state, page: { query: query ?? { page: 1, pageSize: 50 }, page: 1, pageSize: 50, totalCount: items.length, items } };
+  });
+  ipcMain.handle("local-library:list-collections", async (_event, query) => {
+    queries.push((query ?? {}) as Record<string, unknown>);
+    if (delayNextList) {
+      delayNextList = false;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    const collections = items.map((entry) => ({
+      collectionId: `collection_${entry.mediaId}`,
+      title: entry.title,
+      kind: entry.kind === "movie" || entry.kind === "show" || entry.kind === "unclassified" ? entry.kind : "unclassified",
+      premieredDate: null,
+      episodeCount: 1,
+      watchedEpisodeCount: 0,
+      availableEpisodeCount: 1,
+      available: true,
+      representativeMediaId: entry.mediaId,
+      coverMediaId: entry.mediaId,
+      ...(entry.artwork ? { artwork: entry.artwork } : {}),
+      addedAtMs: 0,
+      updatedAtMs: entry.modifiedAtMs,
+    }));
+    return { state, page: { query: query ?? { page: 1, pageSize: 50 }, page: 1, pageSize: 50, totalCount: collections.length, items: collections } };
   });
   ipcMain.handle("local-library:scan-cancel", async (_event, scanId: string) => {
     cancelledScans.push(scanId);
@@ -302,7 +336,7 @@ async function run(): Promise<void> {
   await waitFor("removed source", () => window.webContents.executeJavaScript("document.querySelector('#source-list').textContent", true) as Promise<string>, (text) => /尚未添加来源/.test(text));
 
   window.close();
-  for (const channel of ["local-library:state", "local-library:source-remove", "local-library:choose-folder", "local-library:open-video", "local-library:list", "local-library:scan-cancel", "local-library:get", "local-library:artwork", "local-library:continue-watching", "app-preferences:get", "app-preferences:set-sort"]) ipcMain.removeHandler(channel);
+  for (const channel of ["local-library:state", "local-library:source-remove", "local-library:choose-folder", "local-library:open-video", "local-library:list", "local-library:list-collections", "local-library:scan-cancel", "local-library:get", "local-library:artwork", "local-library:continue-watching", "app-preferences:get", "app-preferences:set-sort"]) ipcMain.removeHandler(channel);
 }
 
 run().then(() => app.quit()).catch((error: unknown) => {

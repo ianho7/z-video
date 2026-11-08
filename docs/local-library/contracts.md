@@ -1,6 +1,6 @@
 # Local library contracts
 
-Status: Schema v2 (B0 premiere dates) plus local playback IPC, accepted 2026-10-31 and extended 2026-11-01/2026-11-06/2026-11-08. Schema owners: `src/main/local-library-worker.ts`, `src/main/local-library-database.ts`, and `src/shared/local-library-contracts.ts`; playback owners: `src/main/player.ts`, `src/main/mpv-player.ts`, `src/main/player-host.ts`, and `src/shared/local-playback-contracts.ts`; app-preferences owners: `src/main/app-preferences.ts`, `src/main/app-preferences-ipc.ts`, and `src/shared/app-preferences-contracts.ts`.
+Status: Schema v2 (B0 premiere dates) plus the work-level Collection read contract (B1), local playback IPC, accepted 2026-10-31 and extended 2026-11-01/2026-11-06/2026-11-08. Schema owners: `src/main/local-library-worker.ts`, `src/main/local-library-database.ts`, and `src/shared/local-library-contracts.ts`; playback owners: `src/main/player.ts`, `src/main/mpv-player.ts`, `src/main/player-host.ts`, and `src/shared/local-playback-contracts.ts`; app-preferences owners: `src/main/app-preferences.ts`, `src/main/app-preferences-ipc.ts`, and `src/shared/app-preferences-contracts.ts`.
 
 ## Schema v2
 
@@ -37,6 +37,20 @@ Channels are defined in `src/shared/ipc-channels.ts` and exposed through `window
 Renderer-visible `LocalMediaItem` fields are `mediaId`, `sourceId`, `collectionId`, title, kind, optional year, optional `premieredDate` (`YYYY-MM-DD` or `null`), optional plot/genres/rating/season/episode, artwork cache keys, size, modified time, and availability. Source summaries use a basename or a fixed drive/folder label; they never fall back to an absolute root. Absolute paths, UNC paths, source-relative paths, database rows, credentials, NAS signs, and raw playback URIs are never part of the public DTO. Worker, SQLite, filesystem and IPC errors are reduced to stable renderer-safe messages before entering state, scan results, or rejected IPC promises.
 
 `local-library:get` may include `detail.playback` for the requested opaque `mediaId` when local progress exists. The worker joins that state to the validated media row; the field contains only `LocalPlaybackState` and never a path or playback URI.
+
+## Work-level (Collection) read contract
+
+B1 adds one renderer-safe work list without changing schema v2. `local-library:list-collections` validates a bounded `LocalCollectionQuery` and returns `LocalCollectionListResult` (`state` plus `LocalCollectionPage`):
+
+- `filter` accepts `all`, `movie`, `show`, and `unclassified`. `episode` is intentionally rejected: the file-level "单集" view keeps using `local-library:list` with `filter: "episode"`.
+- `page`/`pageSize`, `query`, `sort` (`recent`/`title`/`year_desc`/`score_desc`/`added_desc`/`released_desc`), and `sourceId` are validated like the file list; `pageSize` is capped at 100.
+- `LocalCollectionPage.totalCount` counts works (collections), not files. `items` contains one `LocalCollectionSummary` per collection, so three episodes of one show produce one card.
+- `LocalCollectionSummary` carries only safe fields: `collectionId`, `title`, `kind`, optional `year`/`rating`, `premieredDate`, `episodeCount`, `watchedEpisodeCount`, `availableEpisodeCount`, `available`, `representativeMediaId`, `coverMediaId`, optional `resume`/`matchedEpisode`, `addedAtMs`/`updatedAtMs`, and artwork cache keys.
+- `representativeMediaId` follows the spec order: the most recently updated in-progress episode, then the first unwatched episode, then the first episode. `resume` contains only the opaque media ID, position/duration, season/episode numbers, and episode title.
+- `coverMediaId` prefers an episode with indexed poster artwork and falls back to the representative episode.
+- A movie or unclassified file is its own work; a show groups the files that share its show directory. Reusing an old directory-grouped collection is allowed only when the stored identity matches, so existing movie rows split into one work per file on the next scan.
+- Search matches the collection title or any episode title. A matching show still appears once and may carry one `matchedEpisode`; it never exposes the source-relative episode path.
+- No absolute path, UNC path, source-relative path, SQL row, or scan root enters the DTO or a rejected IPC promise.
 
 Ticket 02 adds main-owned `scanFolder`, `cancelScan`, and bounded `onScanProgress` operations. A scan progress/result reports counts, warnings, and `completed`/`cancelled`/`partial`/`unavailable` status without exposing a root path; `sourceLabel` is the same renderer-safe source label used by state and never a path. A successful traversal is the only operation allowed to mark unseen files unavailable; cancellation, permission errors, and disconnected roots preserve existing rows and playback state. If a source becomes unreadable during traversal, the scan remains partial and the source is reported unavailable until a later successful refresh.
 

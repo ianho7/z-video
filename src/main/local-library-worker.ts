@@ -10,6 +10,8 @@ import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
 import {
   LOCAL_LIBRARY_SCHEMA_VERSION,
   type LocalLibraryQuery,
+  type LocalCollectionQuery,
+  type LocalCollectionSummary,
   type LocalMediaItem,
   type LocalMediaDetail,
   type LocalContinueWatchingItem,
@@ -31,6 +33,7 @@ type WorkerRequest =
   | { id: number; command: "scan"; rootPath: string }
   | { id: number; command: "cancel-scan"; scanId: string }
   | { id: number; command: "list"; query: LocalLibraryQuery }
+  | { id: number; command: "list-collections"; query: LocalCollectionQuery }
   | { id: number; command: "get"; mediaId: string }
   | { id: number; command: "get-detail"; mediaId: string }
   | { id: number; command: "list-continue-watching" }
@@ -705,7 +708,11 @@ async function discoverMedia(
   const show = Boolean(showContext) || nfo?.kind === "tvshow" || nfo?.kind === "episode";
   const kind = collectionKind(nfo?.kind, episode, show);
   const collectionDirectory = showContext?.directory ?? dirname(filePath);
-  const collectionRelativePath = collectionDirectory === rootPath ? "." : makeRelative(rootPath, collectionDirectory);
+  // Shows group by directory; a movie or unclassified file is its own work so
+  // one folder with several videos still produces one card per file.
+  const collectionRelativePath = show
+    ? (collectionDirectory === rootPath ? relativePath : makeRelative(rootPath, collectionDirectory))
+    : relativePath;
   const collectionTitle = showContext?.metadata?.title ?? nfo?.showTitle ?? (show ? basename(collectionDirectory) : metadataTitle(nfo, baseName));
   const collectionNfo = showContext?.metadata ?? nfo;
   const displayTitle = episode ? metadataTitle(nfo, baseName) : metadataTitle(nfo, collectionTitle);
@@ -728,9 +735,9 @@ async function discoverMedia(
     ...(seasonNumber !== undefined ? { seasonNumber } : {}),
     ...(episodeNumber !== undefined ? { episodeNumber } : {}),
     collection: {
-      identityKey: stableCollectionKey(sourceId, collectionRelativePath === "." ? relativePath : collectionRelativePath, kind),
+      identityKey: stableCollectionKey(sourceId, collectionRelativePath, kind),
       sourceId,
-      relativePath: collectionRelativePath === "." ? relativePath : collectionRelativePath,
+      relativePath: collectionRelativePath,
       title: collectionTitle,
       kind,
       ...(collectionNfo?.year !== undefined ? { year: collectionNfo.year } : {}),
@@ -745,8 +752,14 @@ async function discoverMedia(
 
 function upsertCollection(metadata: CollectionMetadata, timestamp: number, preferredCollectionId?: string): string {
   const db = requireDatabase();
-  const existing = preferredCollectionId
-    ? { collectionId: preferredCollectionId }
+  const preferred = preferredCollectionId
+    ? profileSync("database", () => db.prepare("SELECT collection_id AS collectionId, identity_key AS identityKey FROM collections WHERE collection_id = ?").get(preferredCollectionId) as { collectionId?: string; identityKey?: string | null } | undefined)
+    : undefined;
+  // A previously directory-grouped movie row can share an old collection with
+  // other files. Reuse it only when the work identity is unchanged; otherwise
+  // split the movies into one collection per file.
+  const existing = preferred?.collectionId && preferred.identityKey === metadata.identityKey
+    ? { collectionId: String(preferred.collectionId) }
     : profileSync("database", () => db.prepare(`
     SELECT collection_id AS collectionId
     FROM collections
@@ -946,6 +959,202 @@ function list(query: LocalLibraryQuery): { totalCount: number; items: LocalMedia
     LIMIT ? OFFSET ?
   `).all(...parameters, query.pageSize, (query.page - 1) * query.pageSize) as Array<Record<string, unknown>>;
   return { totalCount: Number(count?.count ?? 0), items: rows.map(toPublicItem) };
+}
+
+interface CollectionEpisodeRow {
+  mediaId?: string;
+  collectionId?: string;
+  displayTitle?: string;
+  seasonNumber?: number | null;
+  episodeNumber?: number | null;
+  available?: number;
+  sourceAvailable?: number;
+  watched?: number | null;
+  positionSec?: number | null;
+  durationSec?: number | null;
+  updatedAtMs?: number | null;
+}
+
+/**
+ * Work-level read path: one row per collection, bounded by the requested page.
+ * Episodes for only the page's collections are loaded to derive watched counts,
+ * resume position and the representative media ID.
+ */
+function listCollections(query: LocalCollectionQuery): { totalCount: number; items: LocalCollectionSummary[] } {
+  const db = requireDatabase();
+  const text = query.query?.trim() ?? "";
+  const clauses: string[] = [];
+  const parameters: Array<string | number> = [];
+  if (text) {
+    clauses.push("(collections.title LIKE ? OR collections.collection_id IN (SELECT match_media.collection_id FROM media_files match_media WHERE match_media.display_title LIKE ?))");
+    parameters.push(`%${text}%`, `%${text}%`);
+  }
+  if (query.filter && query.filter !== "all") {
+    clauses.push("collections.kind = ?");
+    parameters.push(query.filter);
+  }
+  if (query.sourceId) {
+    clauses.push("collections.collection_id IN (SELECT source_media.collection_id FROM media_files source_media WHERE source_media.source_id = ?)");
+    parameters.push(query.sourceId);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const count = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM collections
+      JOIN (SELECT collection_id FROM media_files GROUP BY collection_id) scoped ON scoped.collection_id = collections.collection_id
+    ${where}
+  `).get(...parameters) as { count?: number } | undefined;
+  const sort = query.sort ?? "recent";
+  const orderBy = sort === "title"
+    ? "collections.title COLLATE NOCASE ASC, collections.collection_id ASC"
+    : sort === "year_desc"
+      ? "collections.year IS NULL ASC, collections.year DESC, collections.title COLLATE NOCASE ASC"
+      : sort === "score_desc"
+        ? "collections.rating IS NULL ASC, collections.rating DESC, collections.title COLLATE NOCASE ASC"
+        : sort === "added_desc"
+          ? "aggregate.addedAtMs DESC, collections.title COLLATE NOCASE ASC"
+          : sort === "released_desc"
+            ? "collections.premiered_at IS NULL ASC, collections.premiered_at DESC, collections.year IS NULL ASC, collections.year DESC, aggregate.addedAtMs DESC, collections.title COLLATE NOCASE ASC"
+            : "COALESCE(played.lastPlayedAtMs, aggregate.updatedAtMs) DESC, aggregate.updatedAtMs DESC, collections.title COLLATE NOCASE ASC";
+  const rows = db.prepare(`
+    WITH aggregate AS (
+      SELECT media_files.collection_id AS collectionId,
+        COUNT(*) AS episodeCount,
+        SUM(CASE WHEN media_files.available = 1 AND sources.available = 1 THEN 1 ELSE 0 END) AS availableEpisodeCount,
+        MAX(media_files.added_at) AS addedAtMs,
+        MAX(media_files.updated_at) AS updatedAtMs
+      FROM media_files JOIN sources ON sources.source_id = media_files.source_id
+      GROUP BY media_files.collection_id
+    ),
+    played AS (
+      SELECT media_files.collection_id AS collectionId, MAX(playback_state.updated_at) AS lastPlayedAtMs
+      FROM media_files JOIN playback_state ON playback_state.media_id = media_files.media_id
+      GROUP BY media_files.collection_id
+    )
+    SELECT collections.collection_id AS collectionId, collections.title, collections.kind,
+      collections.year, collections.rating, collections.premiered_at AS premieredAt,
+      aggregate.episodeCount, aggregate.availableEpisodeCount, aggregate.addedAtMs, aggregate.updatedAtMs,
+      played.lastPlayedAtMs
+    FROM collections
+      JOIN aggregate ON aggregate.collectionId = collections.collection_id
+      LEFT JOIN played ON played.collectionId = collections.collection_id
+    ${where}
+    ORDER BY ${orderBy}
+    LIMIT ? OFFSET ?
+  `).all(...parameters, query.pageSize, (query.page - 1) * query.pageSize) as Array<Record<string, unknown>>;
+  return { totalCount: Number(count?.count ?? 0), items: collectionSummaries(rows, text) };
+}
+
+function collectionSummaries(rows: Array<Record<string, unknown>>, text: string): LocalCollectionSummary[] {
+  if (!rows.length) return [];
+  const db = requireDatabase();
+  const collectionIds = rows.map((row) => String(row.collectionId));
+  const placeholders = collectionIds.map(() => "?").join(",");
+  const episodes = db.prepare(`
+    SELECT media_files.media_id AS mediaId, media_files.collection_id AS collectionId,
+      media_files.display_title AS displayTitle,
+      media_files.season_number AS seasonNumber, media_files.episode_number AS episodeNumber,
+      media_files.available, sources.available AS sourceAvailable,
+      playback_state.watched, playback_state.position_sec AS positionSec,
+      playback_state.duration_sec AS durationSec, playback_state.updated_at AS updatedAtMs
+    FROM media_files JOIN sources ON sources.source_id = media_files.source_id
+      LEFT JOIN playback_state ON playback_state.media_id = media_files.media_id
+    WHERE media_files.collection_id IN (${placeholders})
+    ORDER BY media_files.season_number IS NULL, media_files.season_number, media_files.episode_number IS NULL,
+      media_files.episode_number, media_files.display_title COLLATE NOCASE, media_files.media_id
+  `).all(...collectionIds) as CollectionEpisodeRow[];
+  const episodesByCollection = new Map<string, CollectionEpisodeRow[]>();
+  for (const episode of episodes) {
+    const key = String(episode.collectionId);
+    const list = episodesByCollection.get(key);
+    if (list) list.push(episode);
+    else episodesByCollection.set(key, [episode]);
+  }
+  const matchedByCollection = new Map<string, LocalCollectionSummary["matchedEpisode"]>();
+  if (text) {
+    const matches = db.prepare(`
+      SELECT media_files.collection_id AS collectionId, media_files.media_id AS mediaId,
+        media_files.display_title AS displayTitle, media_files.season_number AS seasonNumber,
+        media_files.episode_number AS episodeNumber
+      FROM media_files
+      WHERE media_files.collection_id IN (${placeholders}) AND media_files.display_title LIKE ?
+      ORDER BY media_files.collection_id, media_files.season_number IS NULL, media_files.season_number,
+        media_files.episode_number IS NULL, media_files.episode_number, media_files.display_title COLLATE NOCASE
+    `).all(...collectionIds, `%${text}%`) as CollectionEpisodeRow[];
+    for (const match of matches) {
+      const key = String(match.collectionId);
+      if (matchedByCollection.has(key) || !match.mediaId) continue;
+      matchedByCollection.set(key, {
+        mediaId: String(match.mediaId) as `media_${string}`,
+        title: String(match.displayTitle ?? ""),
+        ...(match.seasonNumber === null || match.seasonNumber === undefined ? {} : { seasonNumber: Number(match.seasonNumber) }),
+        ...(match.episodeNumber === null || match.episodeNumber === undefined ? {} : { episodeNumber: Number(match.episodeNumber) }),
+      });
+    }
+  }
+  const posterMediaIds = new Map<string, string>();
+  const posters = db.prepare(`
+    SELECT collection_id AS collectionId, media_id AS mediaId
+    FROM artwork
+    WHERE collection_id IN (${placeholders}) AND kind = 'poster' AND media_id IS NOT NULL
+    ORDER BY updated_at DESC
+  `).all(...collectionIds) as Array<{ collectionId?: string; mediaId?: string }>;
+  for (const poster of posters) {
+    const key = String(poster.collectionId);
+    if (!posterMediaIds.has(key) && poster.mediaId) posterMediaIds.set(key, poster.mediaId);
+  }
+  const output: LocalCollectionSummary[] = [];
+  for (const row of rows) {
+    const collectionId = String(row.collectionId);
+    const collectionEpisodes = episodesByCollection.get(collectionId) ?? [];
+    if (!collectionEpisodes.length) continue;
+    let watchedEpisodeCount = 0;
+    let availableEpisodeCount = 0;
+    let resumeRow: CollectionEpisodeRow | undefined;
+    for (const episode of collectionEpisodes) {
+      if (Number(episode.watched) === 1) watchedEpisodeCount += 1;
+      if (Number(episode.available) === 1 && Number(episode.sourceAvailable) === 1) availableEpisodeCount += 1;
+      if (Number(episode.watched) === 1 || !(Number(episode.positionSec) > 0)) continue;
+      if (!resumeRow || Number(episode.updatedAtMs) > Number(resumeRow.updatedAtMs)) resumeRow = episode;
+    }
+    const representative = resumeRow ?? collectionEpisodes.find((episode) => Number(episode.watched) !== 1) ?? collectionEpisodes[0];
+    if (!representative?.mediaId) continue;
+    const representativeMediaId = String(representative.mediaId) as `media_${string}`;
+    const coverMediaId = (posterMediaIds.get(collectionId) ?? representativeMediaId) as `media_${string}`;
+    const kind = row.kind === "movie" || row.kind === "show" ? row.kind : "unclassified";
+    const artwork = artworkFor(collectionId, coverMediaId);
+    const matchedEpisode = matchedByCollection.get(collectionId);
+    output.push({
+      collectionId,
+      title: String(row.title ?? ""),
+      kind,
+      ...(row.year === null || row.year === undefined ? {} : { year: Number(row.year) }),
+      ...(row.rating === null || row.rating === undefined ? {} : { rating: Number(row.rating) }),
+      premieredDate: parsePremieredDate(row.premieredAt),
+      episodeCount: Number(row.episodeCount),
+      watchedEpisodeCount,
+      availableEpisodeCount,
+      available: availableEpisodeCount > 0,
+      representativeMediaId,
+      coverMediaId,
+      ...(resumeRow?.mediaId ? {
+        resume: {
+          mediaId: String(resumeRow.mediaId) as `media_${string}`,
+          positionSec: Number(resumeRow.positionSec),
+          ...(resumeRow.durationSec === null || resumeRow.durationSec === undefined ? {} : { durationSec: Number(resumeRow.durationSec) }),
+          ...(resumeRow.seasonNumber === null || resumeRow.seasonNumber === undefined ? {} : { seasonNumber: Number(resumeRow.seasonNumber) }),
+          ...(resumeRow.episodeNumber === null || resumeRow.episodeNumber === undefined ? {} : { episodeNumber: Number(resumeRow.episodeNumber) }),
+          episodeTitle: String(resumeRow.displayTitle ?? ""),
+          updatedAtMs: Number(resumeRow.updatedAtMs),
+        },
+      } : {}),
+      ...(matchedEpisode ? { matchedEpisode } : {}),
+      addedAtMs: Number(row.addedAtMs),
+      updatedAtMs: Number(row.updatedAtMs),
+      ...(artwork ? { artwork } : {}),
+    });
+  }
+  return output;
 }
 
 function get(mediaId: string): LocalMediaItem | undefined {
@@ -1397,6 +1606,7 @@ async function handle(request: WorkerRequest): Promise<unknown> {
     return true;
   }
   if (request.command === "list") return list(request.query);
+  if (request.command === "list-collections") return listCollections(request.query);
   if (request.command === "get") return get(request.mediaId);
   if (request.command === "get-detail") return getDetail(request.mediaId);
   if (request.command === "list-continue-watching") return listContinueWatching();

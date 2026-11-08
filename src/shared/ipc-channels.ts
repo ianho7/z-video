@@ -5,6 +5,7 @@ export const IPC_CHANNELS = {
   localLibraryChooseFolder: "local-library:choose-folder",
   localLibraryOpenVideo: "local-library:open-video",
   localLibraryList: "local-library:list",
+  localLibraryListCollections: "local-library:list-collections",
   localLibraryGet: "local-library:get",
   localLibraryArtwork: "local-library:artwork",
   localLibraryContinueWatching: "local-library:continue-watching",
