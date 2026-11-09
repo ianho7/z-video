@@ -374,17 +374,42 @@ async function run(): Promise<void> {
     assert.equal(showDetail.rows.some((row: { progress: boolean }) => row.progress), false, "an unwatched episode never draws a progress bar");
     await capture("show-detail");
 
+    const detailScrollBefore = await evaluate(window, `(() => {
+      const scroller = document.querySelector('.library-content');
+      if (scroller) scroller.scrollTop = 120;
+      if (document.scrollingElement) document.scrollingElement.scrollTop = 120;
+      return { content: scroller ? scroller.scrollTop : 0, document: document.scrollingElement ? document.scrollingElement.scrollTop : window.scrollY };
+    })()`);
     await evaluate(window, "document.querySelector('#media-detail-open')?.click()");
     await waitFor("show episode playback ready", () => evaluate(window, "document.querySelector('#player-toggle-button')?.disabled === false"), Boolean, 15_000);
+    const detailOriginClose = await evaluate(window, "(() => { const button = document.querySelector('#player-close-button'); return { text: button?.textContent?.trim() || '', label: button?.getAttribute('aria-label') || '' }; })()");
+    assert.match(detailOriginClose.text, /返回详情/, "the player close control names the detail origin");
+    assert.equal(detailOriginClose.label, "返回详情", "the player close control reads out the detail return target");
     await evaluate(window, "window.zVideo.localPlayback.command({ type: 'seek', positionSec: 5 })");
     await new Promise((resolve) => setTimeout(resolve, 400));
     await evaluate(window, "document.querySelector('#player-close-button')?.click()");
     await waitFor("player closed after saving episode progress", () => evaluate(window, "document.querySelector('[data-view=player]')?.hidden === true"), Boolean);
-    const returnedDetail = await evaluate(window, "document.querySelector('#media-detail')?.hidden === false");
-    if (!returnedDetail) {
-      await waitFor("show list after playback close", () => evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.dataset.mediaId || ''"), Boolean);
-      await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
-    }
+    const detailReturn = await waitFor(
+      "detail restored after playback close",
+      () => evaluate(window, `(() => {
+        const rows = [...document.querySelectorAll('#detail-episodes .episode-row')];
+        const scroller = document.querySelector('.library-content');
+        return {
+          detailVisible: document.querySelector('#media-detail')?.hidden === false,
+          playerHidden: document.querySelector('[data-view="player"]')?.hidden === true,
+          title: document.querySelector('#media-detail-title')?.textContent || '',
+          currentIndex: rows.findIndex((row) => row.classList.contains('current')),
+          currentNumber: rows.find((row) => row.classList.contains('current'))?.querySelector('.episode-number')?.textContent || '',
+          firstMeta: rows[0]?.querySelector('.episode-duration')?.textContent || '',
+          scroll: { content: scroller ? scroller.scrollTop : 0, document: document.scrollingElement ? document.scrollingElement.scrollTop : window.scrollY },
+        };
+      })()`),
+      (value) => value.detailVisible === true && value.title === "Owned Next Show" && /看到|已看完/.test(value.firstMeta),
+    );
+    assert.equal(detailReturn.playerHidden, true);
+    assert.equal(detailReturn.currentIndex, 0, "returning from playback keeps the played episode selected");
+    assert.equal(detailReturn.currentNumber, "01");
+    assert.ok(Math.abs(detailReturn.scroll.content - detailScrollBefore.content) <= 4, `playback close restores the detail scroll position: ${JSON.stringify(detailReturn.scroll)} vs ${JSON.stringify(detailScrollBefore)}`);
     const episodeStates = await waitFor("per-episode watched/progress state", readShowDetail, (value) => value.hidden === false && value.title === "Owned Next Show" && value.count === 3);
     assert.ok(episodeStates.rows[0]?.meta !== "未看", `the played episode keeps its own progress: ${JSON.stringify(episodeStates.rows)}`);
     assert.equal(episodeStates.rows[1]?.meta, "未看", "a later episode stays unwatched when only the first episode was played");
@@ -396,6 +421,39 @@ async function run(): Promise<void> {
       assert.equal(episodeStates.playText, "重新播放", "a finished selected episode uses the replay label");
     }
     await capture("show-detail-episode-states");
+    await evaluate(window, "document.querySelectorAll('#detail-episodes .episode-row')[1]?.click()");
+    const selectedSecond = await waitFor("second episode selected in detail", readShowDetail, (value) => value.hidden === false && value.currentIndex === 1 && value.currentNumber === "02", 10_000);
+    assert.equal(selectedSecond.currentNumber, "02");
+    const secondScrollBefore = await evaluate(window, `(() => {
+      const scroller = document.querySelector('.library-content');
+      if (scroller) scroller.scrollTop = 96;
+      if (document.scrollingElement) document.scrollingElement.scrollTop = 96;
+      return { content: scroller ? scroller.scrollTop : 0, document: document.scrollingElement ? document.scrollingElement.scrollTop : window.scrollY };
+    })()`);
+    await evaluate(window, "document.querySelector('#media-detail-open')?.click()");
+    await waitFor("second episode playback ready", () => evaluate(window, "document.querySelector('#player-toggle-button')?.disabled === false"), Boolean, 15_000);
+    await evaluate(window, "window.zVideo.localPlayback.command({ type: 'seek', positionSec: 2 })");
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await evaluate(window, "document.querySelector('#player-close-button')?.click()");
+    const secondReturn = await waitFor(
+      "detail keeps the second episode selected after playback",
+      () => evaluate(window, `(() => {
+        const rows = [...document.querySelectorAll('#detail-episodes .episode-row')];
+        const current = rows.find((row) => row.classList.contains('current'));
+        const scroller = document.querySelector('.library-content');
+        return {
+          detailVisible: document.querySelector('#media-detail')?.hidden === false,
+          currentIndex: rows.findIndex((row) => row.classList.contains('current')),
+          currentNumber: current?.querySelector('.episode-number')?.textContent || '',
+          scroll: { content: scroller ? scroller.scrollTop : 0, document: document.scrollingElement ? document.scrollingElement.scrollTop : window.scrollY },
+          playText: document.querySelector('#media-detail-open')?.textContent || '',
+        };
+      })()`),
+      (value) => value.detailVisible === true && value.currentIndex === 1 && /继续播放|重新播放/.test(value.playText),
+    );
+    assert.equal(secondReturn.currentNumber, "02", "the exact episode that was playing stays selected after close");
+    assert.ok(Math.abs(secondReturn.scroll.content - secondScrollBefore.content) <= 4, `return from the second episode restores the detail scroll position: ${JSON.stringify(secondReturn.scroll)} vs ${JSON.stringify(secondScrollBefore)}`);
+    assert.match(secondReturn.playText, /继续播放 · 第 1 季 第 2 集/, `the detail main action follows the returned episode: ${JSON.stringify(secondReturn)}`);
     await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
     await waitFor("back to show work list", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === true);
 
@@ -562,32 +620,182 @@ async function run(): Promise<void> {
     await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
     await waitFor("episode detail", () => evaluate(window, "document.querySelector('#media-detail-open')?.disabled === false"), Boolean);
     await waitFor("episode detail title", () => evaluate(window, "document.querySelector('#media-detail-title')?.textContent"), (title) => title === "Owned Next Show");
+    const episodeSelection = await evaluate(window, `(() => {
+      const rows = [...document.querySelectorAll('#detail-episodes .episode-row')];
+      const currentIndex = rows.findIndex((row) => row.classList.contains('current'));
+      const read = (row) => row ? { number: row.querySelector('.episode-number')?.textContent || '', title: row.querySelector('.episode-title')?.textContent || '' } : undefined;
+      return { currentIndex, current: read(rows[currentIndex]), next: read(rows[currentIndex + 1]) };
+    })()`);
+    assert.ok(episodeSelection.current?.number, "the episode detail selects a playable episode");
+    assert.ok(episodeSelection.next?.number, "the played episode has a following episode in the fixture");
     const showEpisodeIds = await evaluate(window, "[...document.querySelectorAll('#detail-episodes .episode-row')].map((row) => row.dataset.mediaId || '')");
     assert.equal(showEpisodeIds.length, 3, "the show detail lists three episodes");
     assert.equal(showEpisodeIds.every(Boolean), true);
     await capture("episode-detail");
     await evaluate(window, "document.querySelector('#media-detail-open')?.click()");
     await waitFor("episode playback", () => evaluate(window, "document.querySelector('#player-toggle-button')?.disabled === false"), Boolean);
+    assert.equal(await evaluate(window, "document.querySelector('#player-current-title')?.textContent"), episodeSelection.current.title, "the player opens the selected episode");
     await capture("player");
     await evaluate(window, "document.querySelector('#player-settings-button')?.click()");
-    await waitFor("player settings visible", () => evaluate(window, "document.querySelector('#player-settings')?.hidden === false"), Boolean);
+    const settingsOpen = await waitFor(
+      "player settings visible",
+      () => evaluate(window, `(() => {
+        const panel = document.querySelector('#player-settings');
+        return {
+          visible: panel?.hidden === false,
+          role: panel?.getAttribute('role') || '',
+          groups: [...(panel?.querySelectorAll('.player-setting-group h3') ?? [])].map((heading) => heading.textContent || ''),
+          nativeSelects: document.querySelectorAll('[data-view="player"] select').length,
+          haspops: [...(panel?.querySelectorAll('[aria-haspopup="listbox"]') ?? [])].map((trigger) => trigger.id),
+          focusedId: document.activeElement instanceof HTMLElement ? document.activeElement.id : '',
+          focusInside: Boolean(panel && document.activeElement instanceof Node && panel.contains(document.activeElement)),
+          settingsExpanded: document.querySelector('#player-settings-button')?.getAttribute('aria-expanded') || '',
+        };
+      })()`),
+      (value) => value.visible === true,
+    );
+    assert.equal(settingsOpen.role, "dialog", "the settings panel exposes its region role");
+    assert.deepEqual(settingsOpen.groups, ["播放速度", "音轨", "字幕", "外挂字幕"], "settings group playback speed, audio, subtitles and external subtitles");
+    assert.equal(settingsOpen.nativeSelects, 0, "the player never falls back to native select controls");
+    assert.deepEqual(settingsOpen.haspops, ["player-speed-trigger", "player-audio-trigger", "player-subtitle-trigger"], "speed, audio and subtitle choices use app menus");
+    assert.equal(settingsOpen.settingsExpanded, "true", "the settings trigger reports the open panel");
+    assert.equal(settingsOpen.focusInside, true, `opening settings moves focus into the panel: ${settingsOpen.focusedId}`);
+
+    await evaluate(window, "document.querySelector('#player-speed-trigger')?.click()");
+    const speedMenu = await waitFor(
+      "speed menu open",
+      () => evaluate(window, `(() => {
+        const popover = document.querySelector('#player-speed-options');
+        return {
+          visible: popover?.hidden === false,
+          expanded: document.querySelector('#player-speed-trigger')?.getAttribute('aria-expanded') || '',
+          options: [...(popover?.querySelectorAll('[role="option"]') ?? [])].map((option) => ({ id: option.id, text: option.textContent || '', selected: option.getAttribute('aria-selected') })),
+          focusedId: document.activeElement instanceof HTMLElement ? document.activeElement.id : '',
+        };
+      })()`),
+      (value) => value.visible === true,
+    );
+    assert.equal(speedMenu.expanded, "true", "the speed trigger reports its listbox");
+    assert.equal(speedMenu.options.length, 8, "speed menu lists every supported rate");
+    assert.ok(speedMenu.options.some((option: { text: string; selected: string }) => option.text === "1×" && option.selected === "true"), "the current speed is marked selected");
+    assert.match(speedMenu.focusedId, /^player-speed-option-/, "opening a menu focuses the selected option");
+    await evaluate(window, "document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))");
+    const speedMoved = await waitFor(
+      "speed menu keyboard focus",
+      () => evaluate(window, "document.activeElement instanceof HTMLElement ? document.activeElement.id : ''"),
+      (id) => /^player-speed-option-/.test(String(id)) && id !== speedMenu.focusedId,
+    );
+    assert.ok(Boolean(speedMoved), "arrow keys move through the app menu");
+    await evaluate(window, "document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
+    const speedClosed = await waitFor(
+      "speed menu closed by Escape",
+      () => evaluate(window, "(() => ({ hidden: document.querySelector('#player-speed-options')?.hidden, expanded: document.querySelector('#player-speed-trigger')?.getAttribute('aria-expanded'), focusedId: document.activeElement instanceof HTMLElement ? document.activeElement.id : '' }))()"),
+      (value) => value.hidden === true,
+    );
+    assert.equal(speedClosed.expanded, "false", "Escape collapses the speed menu");
+    assert.equal(speedClosed.focusedId, "player-speed-trigger", "Escape returns focus to the speed trigger");
+    await evaluate(window, "document.querySelector('#player-speed-trigger')?.click()");
+    await waitFor("speed menu reopened", () => evaluate(window, "document.querySelector('#player-speed-options')?.hidden === false"), Boolean);
+    await evaluate(window, `(() => { const option = [...document.querySelectorAll('#player-speed-options [role="option"]')].find((candidate) => candidate.textContent === '1.25×'); if (option instanceof HTMLElement) option.click(); return Boolean(option); })()`);
+    const speedSelected = await waitFor(
+      "speed menu selection",
+      () => evaluate(window, "(() => ({ value: document.querySelector('#player-speed-value')?.textContent || '', hidden: document.querySelector('#player-speed-options')?.hidden, focusedId: document.activeElement instanceof HTMLElement ? document.activeElement.id : '' }))()"),
+      (value) => value.hidden === true && value.value === "1.25×",
+    );
+    assert.equal(speedSelected.focusedId, "player-speed-trigger", "choosing a speed returns focus to its trigger");
+    await evaluate(window, "document.querySelector('#player-audio-trigger')?.click()");
+    const audioMenu = await waitFor(
+      "audio menu open",
+      () => evaluate(window, "(() => ({ hidden: document.querySelector('#player-audio-options')?.hidden, options: [...(document.querySelectorAll('#player-audio-options [role=\\\"option\\\"]'))].map((option) => option.textContent || '') }))()"),
+      (value) => value.hidden === false,
+    );
+    assert.ok(audioMenu.options.includes("自动"), "the audio menu starts with the automatic choice");
+    await evaluate(window, "document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
+    await waitFor("audio menu closed", () => evaluate(window, "document.querySelector('#player-audio-options')?.hidden === true"), Boolean);
+    await evaluate(window, "document.querySelector('#player-subtitle-trigger')?.click()");
+    const subtitleMenu = await waitFor(
+      "subtitle menu open",
+      () => evaluate(window, "(() => ({ hidden: document.querySelector('#player-subtitle-options')?.hidden, options: [...(document.querySelectorAll('#player-subtitle-options [role=\\\"option\\\"]'))].map((option) => option.textContent || '') }))()"),
+      (value) => value.hidden === false,
+    );
+    assert.ok(subtitleMenu.options.includes("关闭"), "the subtitle menu includes the off choice");
+    await evaluate(window, "document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
+    await waitFor("subtitle menu closed", () => evaluate(window, "document.querySelector('#player-subtitle-options')?.hidden === true"), Boolean);
     await capture("player-menu");
+    await evaluate(window, "document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }))");
+    const settingsOutside = await waitFor(
+      "settings closed by outside pointer",
+      () => evaluate(window, "(() => ({ hidden: document.querySelector('#player-settings')?.hidden, focusedId: document.activeElement instanceof HTMLElement ? document.activeElement.id : '', expanded: document.querySelector('#player-settings-button')?.getAttribute('aria-expanded') }))()"),
+      (value) => value.hidden === true,
+    );
+    assert.equal(settingsOutside.focusedId, "player-settings-button", "clicking outside returns focus to the settings button");
+    assert.equal(settingsOutside.expanded, "false", "outside click collapses the settings trigger");
+    await evaluate(window, "document.querySelector('#player-settings-button')?.click()");
+    await waitFor("settings reopened", () => evaluate(window, "document.querySelector('#player-settings')?.hidden === false"), Boolean);
+    await evaluate(window, "document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
+    const settingsEscape = await waitFor(
+      "settings closed by Escape",
+      () => evaluate(window, "(() => ({ hidden: document.querySelector('#player-settings')?.hidden, focusedId: document.activeElement instanceof HTMLElement ? document.activeElement.id : '' }))()"),
+      (value) => value.hidden === true,
+    );
+    assert.equal(settingsEscape.focusedId, "player-settings-button", "Escape returns focus to the settings button");
+    await evaluate(window, "document.querySelector('#player-settings-button')?.click()");
+    await waitFor("settings reopened for close button", () => evaluate(window, "document.querySelector('#player-settings')?.hidden === false"), Boolean);
     await evaluate(window, "document.querySelector('#player-settings-close')?.click()");
+    const settingsClosed = await waitFor(
+      "settings closed by its close button",
+      () => evaluate(window, "(() => ({ hidden: document.querySelector('#player-settings')?.hidden, focusedId: document.activeElement instanceof HTMLElement ? document.activeElement.id : '' }))()"),
+      (value) => value.hidden === true,
+    );
+    assert.equal(settingsClosed.focusedId, "player-settings-button", "the close button returns focus to the settings button");
     await evaluate(window, "window.zVideo.localPlayback.command({ type: 'seek', positionSec: 1 })");
     await new Promise((resolve) => setTimeout(resolve, 400));
     await evaluate(window, "window.zVideo.localPlayback.command({ type: 'pause' })");
     await waitFor("episode paused", () => evaluate(window, "document.querySelector('#player-toggle-button')?.textContent"), (text) => text === "播放");
     window.webContents.send("local-playback:event", { type: "state", state: "ended" });
-    await waitFor("next episode prompt", () => evaluate(window, "document.querySelector('#player-ended')?.hidden === false"), Boolean);
+    const nextPrompt = await waitFor(
+      "next episode prompt",
+      () => evaluate(window, `(() => {
+        const ended = document.querySelector('#player-ended');
+        const playNext = document.querySelector('#player-play-next');
+        const cancelNext = document.querySelector('#player-cancel-next');
+        const replay = document.querySelector('#player-replay');
+        return {
+          visible: ended?.hidden === false,
+          endedTitle: document.querySelector('#player-ended-title')?.textContent || '',
+          nextTitle: document.querySelector('#player-next-title')?.textContent || '',
+          nextMeta: document.querySelector('#player-next-meta')?.textContent || '',
+          countdown: document.querySelector('#player-countdown')?.textContent || '',
+          returnLabel: document.querySelector('#player-return-list')?.textContent || '',
+          playNextHidden: playNext?.hidden,
+          cancelNextHidden: cancelNext?.hidden,
+          replayHidden: replay?.hidden,
+          countdownHidden: document.querySelector('#player-countdown-ring')?.hidden,
+          bodyText: document.body.textContent || '',
+        };
+      })()`),
+      (value) => value.visible === true,
+    );
+    assert.match(nextPrompt.endedTitle, /本集已看完/, "the episode end panel marks the episode as watched");
+    assert.ok(nextPrompt.nextTitle.includes(`第 1 季 第 ${Number(episodeSelection.next.number)} 集`) && nextPrompt.nextTitle.includes(episodeSelection.next.title), `the end panel names the complete next episode: ${nextPrompt.nextTitle}`);
+    assert.match(nextPrompt.nextMeta, /未看|分钟|时长未知/, "the next episode line carries its duration or watch state");
+    assert.match(nextPrompt.countdown, /^10 秒后自动播放下一集/, "the end panel starts a 10 second countdown");
+    assert.match(nextPrompt.returnLabel, /返回详情/, "the episode end panel returns to the detail view");
+    assert.doesNotMatch(nextPrompt.bodyText, /返回剧集列表/, "the legacy episode-list return copy is gone");
+    assert.equal(nextPrompt.playNextHidden, false, "立即播放 is available when a next episode exists");
+    assert.equal(nextPrompt.cancelNextHidden, false, "取消 is available during the countdown");
+    assert.equal(nextPrompt.replayHidden, true, "an episode with a next episode does not show the movie replay action");
+    assert.equal(nextPrompt.countdownHidden, false, "the countdown ring is visible with a next episode");
     await capture("next-episode");
     await evaluate(window, "document.querySelector('#player-cancel-next')?.click()");
     await new Promise((resolve) => setTimeout(resolve, 10_500));
-    assert.equal(await evaluate(window, "document.querySelector('#player-current-title')?.textContent"), "Next Episode 1", "cancel prevents automatic playback");
+    assert.equal(await evaluate(window, "document.querySelector('#player-current-title')?.textContent"), episodeSelection.current.title, "cancel prevents automatic playback");
+    assert.equal(await evaluate(window, "document.querySelector('#player-countdown')?.textContent"), "已取消自动播放", "cancel explains the countdown stopped");
     window.webContents.send("local-playback:event", { type: "state", state: "playing" });
     window.webContents.send("local-playback:event", { type: "state", state: "ended" });
     await evaluate(window, "document.querySelector('#player-play-next')?.click()");
-    await waitFor("next episode opened", () => evaluate(window, "document.querySelector('#player-current-title')?.textContent"), (title) => title === "Next Episode 2");
-    await waitFor("next episode ready", () => evaluate(window, "({ title: document.querySelector('#player-current-title')?.textContent || '', ready: document.querySelector('#player-toggle-button')?.disabled === false })"), (value) => value.title === "Next Episode 2" && value.ready);
+    await waitFor("next episode opened", () => evaluate(window, "document.querySelector('#player-current-title')?.textContent"), (title) => title === episodeSelection.next.title);
+    await waitFor("next episode ready", () => evaluate(window, "({ title: document.querySelector('#player-current-title')?.textContent || '', ready: document.querySelector('#player-toggle-button')?.disabled === false })"), (value) => value.title === episodeSelection.next.title && value.ready);
     await evaluate(window, "window.zVideo.localPlayback.command({ type: 'seek', positionSec: 1 })");
     await new Promise((resolve) => setTimeout(resolve, 500));
     await evaluate(window, "window.zVideo.localPlayback.command({ type: 'pause' })");
@@ -600,6 +808,9 @@ async function run(): Promise<void> {
       (positions: number[]) => positions.every((position) => position > 0),
     );
     assert.equal(episodeProgress.length, 2, "two episodes of the same work hold progress before the dedupe check");
+    await waitFor("detail restored after episode playback", () => evaluate(window, "({ hidden: document.querySelector('#media-detail')?.hidden, title: document.querySelector('#media-detail-title')?.textContent || '' })"), (value) => value.hidden === false && value.title === "Owned Next Show");
+    await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
+    await waitFor("back to library after episode playback", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === true);
 
     await evaluate(window, "(() => { const search = document.querySelector('#library-search-input'); if (!(search instanceof HTMLInputElement)) throw new Error('search missing'); search.value = 'Owned UX Audit Feature Film 2026'; search.dispatchEvent(new Event('input', { bubbles: true })); })()");
     await waitFor("long title card", () => evaluate(window, "document.querySelector('#library-grid .media-card-title')?.textContent || ''"), (value) => value === LONG_TITLE);
@@ -672,31 +883,86 @@ async function run(): Promise<void> {
     );
     assert.equal(player.currentTitle, LONG_TITLE);
 
-    await evaluate(window, "window.zVideo.localPlayback.command({ type: 'seek', positionSec: 5 })");
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    await evaluate(window, "document.querySelector('#player-close-button')?.click()");
+    window.webContents.send("local-playback:event", { type: "state", state: "ended" });
+    const movieEnded = await waitFor(
+      "movie ending panel",
+      () => evaluate(window, `(() => {
+        const ended = document.querySelector('#player-ended');
+        return {
+          visible: ended?.hidden === false,
+          endedTitle: document.querySelector('#player-ended-title')?.textContent || '',
+          nextTitle: document.querySelector('#player-next-title')?.textContent || '',
+          nextTitleHidden: document.querySelector('#player-next-title')?.hidden,
+          playNextHidden: document.querySelector('#player-play-next')?.hidden,
+          cancelNextHidden: document.querySelector('#player-cancel-next')?.hidden,
+          replayHidden: document.querySelector('#player-replay')?.hidden,
+          replayText: document.querySelector('#player-replay')?.textContent || '',
+          returnLabel: document.querySelector('#player-return-list')?.textContent || '',
+          countdownHidden: document.querySelector('#player-countdown-ring')?.hidden,
+          bodyText: document.body.textContent || '',
+        };
+      })()`),
+      (value) => value.visible === true,
+    );
+    assert.match(movieEnded.endedTitle, /电影已看完/, "a finished movie uses the movie end copy");
+    assert.equal(movieEnded.playNextHidden, true, "movies never offer a next-episode action");
+    assert.equal(movieEnded.cancelNextHidden, true, "movies have no next-episode countdown to cancel");
+    assert.equal(movieEnded.countdownHidden, true, "movies do not show the countdown ring");
+    assert.equal(movieEnded.replayHidden, false, "movies offer replay at the end panel");
+    assert.match(movieEnded.replayText, /重新播放/, "the movie replay action is explicit");
+    assert.match(movieEnded.returnLabel, /返回详情/, "a movie end panel returns to its detail origin");
+    assert.doesNotMatch(movieEnded.bodyText, /返回剧集列表/, "movies never show the episode-list action");
+    await capture("movie-ended");
+    await evaluate(window, "document.querySelector('#player-replay')?.click()");
+    await waitFor("movie replay ready", () => evaluate(window, "(() => ({ hidden: document.querySelector('#player-ended')?.hidden, ready: document.querySelector('#player-toggle-button')?.disabled === false, title: document.querySelector('#player-current-title')?.textContent || '' }))()"), (value) => value.hidden === true && value.ready === true && value.title === LONG_TITLE, 15_000);
+
+    await evaluate(window, "window.zVideo.localPlayback.command({ type: 'seek', positionSec: 3 })");
+    await waitFor("movie position after seek", () => evaluate(window, "Number(document.querySelector('#player-seek')?.value || 0)"), (position) => Number(position) >= 2, 5_000);
+    window.webContents.send("local-playback:event", { type: "error", mediaId: openedMediaId, message: "视频文件无法读取（测试）" });
+    const playbackError = await waitFor(
+      "in-surface playback error",
+      () => evaluate(window, `(() => ({
+        visible: document.querySelector('#player-error')?.hidden === false,
+        title: document.querySelector('#player-error-title')?.textContent || '',
+        message: document.querySelector('#player-error-message')?.textContent || '',
+        buttons: [...document.querySelectorAll('#player-error button')].map((button) => button.textContent || ''),
+        surfaceText: document.querySelector('.player-surface')?.textContent || '',
+        statusText: document.querySelector('#player-status')?.textContent || '',
+        controlsDisabled: document.querySelector('#player-toggle-button')?.disabled === true,
+        errorInsideSurface: Boolean(document.querySelector('.player-surface #player-error')),
+      }))()`),
+      (value) => value.visible === true,
+    );
+    assert.match(playbackError.message, /无法读取/, "the in-surface error keeps the failure reason visible");
+    assert.match(playbackError.surfaceText, /无法读取/, "the error is rendered on the player surface, not only in sr-only status");
+    assert.deepEqual(playbackError.buttons, ["重试", "返回详情"], "the in-surface error offers retry and an origin-aware back action");
+    assert.equal(playbackError.controlsDisabled, true, "playback controls stay disabled while the surface error is shown");
+    assert.equal(playbackError.errorInsideSurface, true, "the error card belongs to the player surface");
+    await capture("player-error");
+    await evaluate(window, "document.querySelector('#player-error-retry')?.click()");
+    await waitFor("playback retry recovers", () => evaluate(window, "(() => ({ errorHidden: document.querySelector('#player-error')?.hidden, ready: document.querySelector('#player-toggle-button')?.disabled === false }))()"), (value) => value.errorHidden === true && value.ready === true, 15_000);
+    await waitFor("movie position after retry", () => evaluate(window, "Number(document.querySelector('#player-seek')?.value || 0)"), (position) => Number(position) >= 2, 5_000);
+    window.webContents.send("local-playback:event", { type: "error", mediaId: openedMediaId, message: "视频文件无法读取（测试）" });
+    await waitFor("error shown again", () => evaluate(window, "document.querySelector('#player-error')?.hidden === false"), Boolean);
+    await evaluate(window, "document.querySelector('#player-error-back')?.click()");
     await waitFor("player close complete", () => evaluate(window, "document.querySelector('[data-view=player]')?.hidden === true"), Boolean);
     const savedPlayback = await evaluate(window, `window.zVideo.localLibrary.get(${JSON.stringify(openedMediaId)}).then((result) => result.detail?.playback?.positionSec ?? 0)`);
     assert.ok(savedPlayback > 0, "playback progress exists before the preservation check");
-    await evaluate(window, "(() => { const input = document.querySelector('#library-search-input'); if (!(input instanceof HTMLInputElement)) throw new Error('search missing'); input.value = 'Owned UX Audit Feature Film 2026'; input.dispatchEvent(new Event('input', { bubbles: true })); })()");
-    await new Promise((resolve) => setTimeout(resolve, 350));
-    await waitFor("movie card after playback", () => evaluate(window, "document.querySelector('#library-grid .media-card-title')?.textContent || ''"), (title) => title === LONG_TITLE);
-    await evaluate(window, `document.querySelector('#library-grid [data-media-id="${openedMediaId}"]')?.click()`);
-    const resumedMovie = await waitFor(
-      "resumed movie main action",
-      () => evaluate(window, "({ hidden: document.querySelector('#media-detail')?.hidden, contentHidden: document.querySelector('#detail-content')?.hidden, title: document.querySelector('#media-detail-title')?.textContent || '', playText: document.querySelector('#media-detail-open')?.textContent || '', restartHidden: document.querySelector('#media-detail-restart')?.hidden, restartDisabled: document.querySelector('#media-detail-restart')?.disabled, focusedTitle: document.activeElement?.id === 'media-detail-title' })"),
-      (value) => value.hidden === false && value.contentHidden === false && value.title === LONG_TITLE,
+    const returnedMovieDetail = await waitFor(
+      "movie detail restored after playback",
+      () => evaluate(window, "({ hidden: document.querySelector('#media-detail')?.hidden, contentHidden: document.querySelector('#detail-content')?.hidden, title: document.querySelector('#media-detail-title')?.textContent || '', playText: document.querySelector('#media-detail-open')?.textContent || '', restartHidden: document.querySelector('#media-detail-restart')?.hidden, restartDisabled: document.querySelector('#media-detail-restart')?.disabled, backLabel: document.querySelector('#media-detail-back')?.textContent || '' })"),
+      (value) => value.hidden === false && value.contentHidden === false && value.title === LONG_TITLE && /继续播放|重新播放/.test(value.playText),
     );
     const savedMoviePlayback = await evaluate(window, `window.zVideo.localLibrary.get(${JSON.stringify(openedMediaId)}).then((result) => ({ watched: result.detail?.playback?.watched === true }))`);
     if (savedMoviePlayback.watched) {
-      assert.equal(resumedMovie.playText, "重新播放", "a finished movie uses the replay label");
-      assert.equal(resumedMovie.restartHidden, true, "a finished movie has no separate restart action");
+      assert.equal(returnedMovieDetail.playText, "重新播放", "a finished movie uses the replay label");
+      assert.equal(returnedMovieDetail.restartHidden, true, "a finished movie has no separate restart action");
     } else {
-      assert.match(resumedMovie.playText, /^继续播放 · 00:0[5-9]$/, "a movie with progress uses the continue label");
-      assert.equal(resumedMovie.restartHidden, false, "progress keeps the secondary restart action visible");
-      assert.equal(resumedMovie.restartDisabled, false, "restart is enabled while the source is online");
+      assert.match(returnedMovieDetail.playText, /^继续播放 · \d{2}:\d{2}$/, `a movie with progress uses the continue label: ${returnedMovieDetail.playText}`);
+      assert.equal(returnedMovieDetail.restartHidden, false, "progress keeps the secondary restart action visible");
+      assert.equal(returnedMovieDetail.restartDisabled, false, "restart is enabled while the source is online");
     }
-    assert.equal(resumedMovie.focusedTitle, true);
+    assert.match(returnedMovieDetail.backLabel, /返回搜索结果/, "returning from playback keeps the detail back origin");
     await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
     await waitFor("back from resumed movie detail", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === true);
     await evaluate(window, "document.querySelector('#choose-folder-button')?.click()");
@@ -724,7 +990,7 @@ async function run(): Promise<void> {
     assert.equal(continueMin.cards.every((entry: { collectionId: string; mediaId: string }) => Boolean(entry.collectionId && entry.mediaId)), true, "continue cards keep the opaque work and episode identities");
     const showContinueCard = continueMin.cards.find((entry: { title: string }) => entry.title === "Owned Next Show");
     assert.ok(showContinueCard, "continue watching uses the collection title instead of an episode file title");
-    assert.match(showContinueCard!.detail, /第 1 季 第 2 集/, `continue copy names the season and episode: ${JSON.stringify(showContinueCard)}`);
+    assert.match(showContinueCard!.detail, new RegExp(`第 1 季 第 ${Number(episodeSelection.next.number)} 集`), `continue copy names the latest in-progress episode: ${JSON.stringify(showContinueCard)}`);
     assert.doesNotMatch(continueMin.cards.map((entry: { title: string }) => entry.title).join(" | "), /Next Episode/, "episode file titles never leak into the home continue shelf");
     assert.match(continueMin.scope, /2 部作品/, "continue count matches the number of work cards");
     assert.equal(Number(continueMin.scope.match(/(\d+) 部作品/)?.[1] ?? 0), continueMin.cards.length);
@@ -745,6 +1011,27 @@ async function run(): Promise<void> {
     window.show();
     window.focus();
     await waitFor("window focus for default size check", async () => window.isMinimized(), (minimized) => minimized === false);
+
+    const homeScrollBefore = await evaluate(window, "(() => { window.scrollTo(0, 200); return document.scrollingElement ? document.scrollingElement.scrollTop : window.scrollY; })()");
+    await evaluate(window, "document.querySelector('#hero-play')?.click()");
+    const homeOriginPlayer = await waitFor(
+      "home hero player ready",
+      () => evaluate(window, "(() => { const view = document.querySelector('[data-view=\"player\"]'); const button = document.querySelector('#player-close-button'); return { visible: view?.hidden === false, ready: document.querySelector('#player-toggle-button')?.disabled === false, title: document.querySelector('#player-current-title')?.textContent || '', text: button?.textContent?.trim() || '', label: button?.getAttribute('aria-label') || '' }; })()"),
+      (value) => value.visible === true && value.ready === true,
+      15_000,
+    );
+    assert.equal(homeOriginPlayer.title, LONG_TITLE, "home hero playback keeps the movie title");
+    assert.match(homeOriginPlayer.text, /返回首页/, "the player close control names the home origin");
+    assert.equal(homeOriginPlayer.label, "返回首页", "the player close control reads out the home return target");
+    await evaluate(window, "document.querySelector('#player-close-button')?.click()");
+    const homeReturn = await waitFor(
+      "home restored after home-origin playback",
+      () => evaluate(window, "(() => ({ playerHidden: document.querySelector('[data-view=\"player\"]')?.hidden, detailHidden: document.querySelector('#media-detail')?.hidden, hero: document.querySelector('#home-hero')?.hidden, nav: document.querySelector('[data-nav][aria-current=\"page\"]')?.dataset.nav || '', scroll: document.scrollingElement ? document.scrollingElement.scrollTop : window.scrollY }))()"),
+      (value) => value.playerHidden === true && value.detailHidden === true && value.hero === false,
+    );
+    assert.equal(homeReturn.nav, "home", "closing home-origin playback keeps home highlighted");
+    assert.ok(Math.abs(Number(homeReturn.scroll) - Number(homeScrollBefore)) <= 8, `closing home-origin playback restores the home scroll position: ${homeReturn.scroll} vs ${homeScrollBefore}`);
+
     window.setSize(1040, 720);
     const defaultAfterContinueOuter = window.getSize();
     const continueDefault = await waitFor(
@@ -834,7 +1121,11 @@ async function run(): Promise<void> {
 
     await evaluate(window, "document.querySelector('[data-nav=all]')?.click()");
     await evaluate(window, "(() => { const search = document.querySelector('#library-search-input'); search.value = 'Owned UX Audit Feature Film 2026'; search.dispatchEvent(new Event('input', { bubbles: true })); })()");
-    await waitFor("offline movie card", () => evaluate(window, "document.querySelector('#library-grid .media-card-title')?.textContent || ''"), (value) => value === LONG_TITLE);
+    await waitFor(
+      "offline movie card",
+      () => evaluate(window, "({ title: document.querySelector('#library-grid .media-card-title')?.textContent || '', count: document.querySelectorAll('#library-grid .media-card').length })"),
+      (value) => value.title === LONG_TITLE && value.count === 1,
+    );
     await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
     const offlineDetail = await waitFor(
       "offline movie detail",
@@ -915,6 +1206,7 @@ async function run(): Promise<void> {
     assert.match(removeFailure.removeError, /占用|重试/);
     assert.equal(removeFailure.removeConfirmText, "重试移除");
     assert.equal(removeFailure.cards.length, 1, "a failed removal leaves the folder record intact");
+    await waitFor("remove retry enabled", () => evaluate(window, "document.querySelector('#remove-source-confirm')?.disabled === false"), Boolean, 5_000);
     await evaluate(window, "document.querySelector('#remove-source-confirm')?.click()");
     const removed = await waitFor("remove retry succeeds", readFolders, (value) => value.removeOpen === false && value.cards.length === 0 && /还没有添加文件夹/.test(value.sourceText), 20_000);
     assert.equal(removed.libraryCards, 0, "removing the folder refreshes the library too");
@@ -944,6 +1236,17 @@ async function run(): Promise<void> {
       defaultWindow: { outer: defaultOuter },
       detail: { default: { title: detail.title, plotLength: detail.plot.length, play: detail.button, viewport: detail.viewport }, minimum: { outer: minOuter, content: minContent, playVisible: minDetail.visible, viewport: minDetail.viewport } },
       player: { currentTitle: player.currentTitle, controlsHeight: player.controlsHeight, titleInControls: player.titleInControls, titleOutsideSurface: player.titleOutsideSurface },
+      playbackContinuity: {
+        detailClose: detailOriginClose,
+        detailReturn: { currentIndex: detailReturn.currentIndex, scroll: detailReturn.scroll },
+        secondEpisodeReturn: { currentNumber: secondReturn.currentNumber, playText: secondReturn.playText, scroll: secondReturn.scroll },
+        homeOrigin: { close: homeOriginPlayer.label, scrollBefore: homeScrollBefore, scrollAfter: homeReturn.scroll, nav: homeReturn.nav },
+        nextEpisode: { title: nextPrompt.nextTitle, meta: nextPrompt.nextMeta, countdown: nextPrompt.countdown, returnLabel: nextPrompt.returnLabel, replayHidden: nextPrompt.replayHidden },
+        movieEnding: { title: movieEnded.endedTitle, replay: movieEnded.replayText, returnLabel: movieEnded.returnLabel, playNextHidden: movieEnded.playNextHidden },
+        error: { message: playbackError.message, buttons: playbackError.buttons, inSurface: playbackError.errorInsideSurface },
+        settings: { groups: settingsOpen.groups, nativeSelects: settingsOpen.nativeSelects, haspops: settingsOpen.haspops, focusInside: settingsOpen.focusInside, speedOptions: speedMenu.options.map((option: { text: string }) => option.text), speedSelected: speedSelected.value, outsideFocus: settingsOutside.focusedId, escapeFocus: settingsEscape.focusedId, closeFocus: settingsClosed.focusedId },
+      },
+
       detailStates: {
         perEpisode: episodeStates.rows,
         loading: { skeleton: loadingState.skeletonVisible, contentHidden: loadingState.contentHidden, title: loadingState.title, posterImages: loadingState.posterImages, blocks: loadingState.skeletonBlocks },

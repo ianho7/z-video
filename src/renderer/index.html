@@ -198,9 +198,17 @@
     </div>
     <section class="player-view" data-view="player" hidden aria-label="播放器">
       <main class="player-shell">
-        <header class="player-heading"><button id="player-close-button" class="secondary-button" type="button" aria-label="返回片库"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5m0 0 7-7m-7 7 7 7"/></svg></button><span class="player-now-playing" aria-live="polite"><strong id="player-current-title"></strong><span>正在播放</span></span></header>
+        <header class="player-heading"><button id="player-close-button" class="secondary-button" type="button" aria-label="返回详情"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5m0 0 7-7m-7 7 7 7"/></svg><span id="player-close-label">返回详情</span></button><span class="player-now-playing" aria-live="polite"><strong id="player-current-title"></strong><span>正在播放</span></span></header>
         <div class="player-surface" aria-label="原生视频区域" aria-keyshortcuts="Space ArrowLeft ArrowRight ArrowUp ArrowDown M F Escape" title="视频区域快捷键：Space 暂停 · ←/→ 前后 5 秒 · ↑/↓ 音量 ±5 · M 静音 · F 全屏 · Esc 退出全屏" tabindex="-1">
           <p id="player-surface-message" class="player-surface-message">正在准备原生播放器…</p>
+          <div id="player-error" class="player-error" role="alert" aria-labelledby="player-error-title" hidden>
+            <h2 id="player-error-title">播放失败</h2>
+            <p id="player-error-message"></p>
+            <div class="player-error-actions">
+              <button id="player-error-retry" class="primary-button" type="button">重试</button>
+              <button id="player-error-back" class="secondary-button" type="button"><span id="player-error-back-label">返回详情</span></button>
+            </div>
+          </div>
         </div>
         <div class="player-controls" aria-label="播放控制">
           <div class="player-control-row player-progress-row">
@@ -218,17 +226,57 @@
             <button id="player-settings-button" class="secondary-button" type="button" aria-expanded="false" aria-controls="player-settings">设置</button>
             <button id="player-fullscreen-button" class="secondary-button" type="button" aria-keyshortcuts="F" title="F" disabled>全屏</button>
           </div>
-          <div id="player-settings" class="player-settings" hidden>
-            <button id="player-settings-close" class="secondary-button" type="button">关闭设置</button>
-            <label class="player-speed-control" for="player-speed"><span>倍速</span><select id="player-speed" aria-label="播放倍速" disabled>
-              <option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option><option value="3">3×</option>
-            </select></label>
-            <label for="player-audio-track">音轨</label><select id="player-audio-track" disabled><option value="">自动</option></select>
-            <label for="player-subtitle-track">字幕</label><select id="player-subtitle-track" disabled><option value="">关闭</option></select>
-            <button id="player-subtitle-file-button" class="secondary-button" type="button" disabled>加载字幕</button>
+          <div id="player-settings" class="player-settings" role="dialog" aria-modal="false" aria-labelledby="player-settings-title" hidden>
+            <div class="player-settings-head">
+              <h2 id="player-settings-title">播放设置</h2>
+              <button id="player-settings-close" class="secondary-button" type="button" aria-label="关闭播放设置">关闭</button>
+            </div>
+            <div class="player-setting-group">
+              <h3 id="player-speed-label">播放速度</h3>
+              <div class="player-menu">
+                <button id="player-speed-trigger" class="player-menu-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="player-speed-options" aria-labelledby="player-speed-label player-speed-value"><span id="player-speed-value">1×</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+                <div id="player-speed-options" class="player-menu-popover" role="listbox" aria-labelledby="player-speed-label" hidden></div>
+              </div>
+            </div>
+            <div class="player-setting-group">
+              <h3 id="player-audio-label">音轨</h3>
+              <div class="player-menu">
+                <button id="player-audio-trigger" class="player-menu-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="player-audio-options" aria-labelledby="player-audio-label player-audio-value"><span id="player-audio-value">自动</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+                <div id="player-audio-options" class="player-menu-popover" role="listbox" aria-labelledby="player-audio-label" hidden></div>
+              </div>
+            </div>
+            <div class="player-setting-group">
+              <h3 id="player-subtitle-label">字幕</h3>
+              <div class="player-menu">
+                <button id="player-subtitle-trigger" class="player-menu-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="player-subtitle-options" aria-labelledby="player-subtitle-label player-subtitle-value"><span id="player-subtitle-value">关闭</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+                <div id="player-subtitle-options" class="player-menu-popover" role="listbox" aria-labelledby="player-subtitle-label" hidden></div>
+              </div>
+            </div>
+            <div class="player-setting-group">
+              <h3>外挂字幕</h3>
+              <div class="player-setting-row">
+                <button id="player-subtitle-file-button" class="secondary-button" type="button" disabled>选择字幕文件</button>
+                <span class="player-setting-note">支持 .srt / .ass</span>
+              </div>
+            </div>
+            <p class="player-settings-foot"><span class="key">Esc</span> 或点击面板外关闭；关闭后焦点返回“设置”按钮。</p>
           </div>
           <span id="player-status" class="sr-only" role="status" aria-live="polite"></span>
-          <div id="player-ended" class="player-ended" hidden><strong>已看完</strong><span class="player-countdown-ring"><svg viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="19" /></svg><span id="player-countdown"></span></span><button id="player-play-next" type="button">立即播放</button><button id="player-cancel-next" type="button">取消</button><button id="player-return-list" type="button">返回剧集列表</button></div>
+          <div id="player-ended" class="player-ended" hidden>
+            <div class="player-ended-copy">
+              <strong id="player-ended-title">已看完</strong>
+              <span id="player-next-title" class="player-next-title"></span>
+              <span id="player-next-meta" class="player-next-meta"></span>
+              <span id="player-countdown-ring" class="player-countdown-ring"><svg viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="19" /></svg><span id="player-countdown"></span></span>
+            </div>
+            <div class="player-ended-actions">
+              <button id="player-play-next" type="button">立即播放</button>
+              <button id="player-cancel-next" type="button">取消</button>
+              <button id="player-replay" type="button" hidden>重新播放</button>
+              <button id="player-return-list" type="button">返回详情</button>
+            </div>
+            <p id="player-countdown-announcement" class="sr-only" role="status"></p>
+          </div>
         </div>
       </main>
     </section>
