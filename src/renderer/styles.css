@@ -7,6 +7,9 @@
  --orange: #f4a07c; --orange-on: #3a1406; --orange-deep: #2b1a10; --mint: #9fe0d0; --mint-on: #0f3b33; --mint-deep: #10261f;
  --warning: #ffd66b; --warning-on: #3d2c00; --error: #ffb4ab; --error-on: #690005; --error-surface: #2d1416;
  --r-pill: 999px; --r-poster: 20px; --r-card: 28px; --r-panel: 40px;
+ /* B6b · motion is an editing language, not decoration. */
+ --mo-1: 90ms; --mo-2: 140ms; --mo-3: 200ms; --mo-4: 420ms; --mo-return: 160ms;
+ --ease-out: cubic-bezier(.2,.7,.3,1); --ease-inout: cubic-bezier(.4,0,.2,1);
  --font-ui: "Nunito", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
  font-family: var(--font-ui); background: var(--bg); color: var(--text);
 }
@@ -32,9 +35,9 @@ button:disabled { cursor: wait; opacity: .55; }
 .brand-mark i { display: block; width: 4px; border-radius: 2px; background: var(--lavender); }
 .brand-mark i:nth-child(1) { height: 12px; }.brand-mark i:nth-child(2) { height: 20px; }.brand-mark i:nth-child(3) { height: 16px; }
 .header-actions { display: flex; gap: 8px; }
-.primary-button, .secondary-button { border: 1px solid transparent; border-radius: 7px; padding: 8px 12px; font-weight: 650; transition: transform .15s ease, background .15s ease; }
-.primary-button { background: var(--lavender); color: var(--lavender-on); }.primary-button:hover { background: #ded4ff; transform: translateY(-1px); }
-.secondary-button { background: var(--surface-2); border-color: var(--surface-2); color: var(--text); }.secondary-button:hover { background: var(--surface-2); transform: translateY(-1px); }
+.primary-button, .secondary-button { border: 1px solid transparent; border-radius: 7px; padding: 8px 12px; font-weight: 650; transition: background-color var(--mo-2) var(--ease-out), color var(--mo-2) var(--ease-out), transform var(--mo-1) var(--ease-out); }
+.primary-button { background: var(--lavender); color: var(--lavender-on); }.primary-button:hover { background: #ded4ff; }
+.secondary-button { background: var(--surface-2); border-color: var(--surface-2); color: var(--text); }.secondary-button:hover { background: var(--surface-2); }
 .library-layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); min-height: calc(100vh - 66px); }
 .source-sidebar h2 { margin: 7px 0 22px; font-size: 18px; }.eyebrow { margin: 0; color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: .16em; }
 .source-list { display: grid; gap: 8px; }.source-row { display: grid; grid-template-columns: 9px 1fr auto; align-items: center; gap: 8px; padding: 9px 8px; border-radius: 7px; background: var(--surface-2); font-size: 13px; }.source-dot { width: 7px; height: 7px; border-radius: 99px; background: var(--lavender); }.source-count, .muted { color: var(--text-muted); }.source-note { margin-top: 30px; font-size: 11px; line-height: 1.6; }
@@ -217,8 +220,31 @@ button:disabled { cursor: wait; opacity: .55; }
 .chip[aria-pressed="true"], .segmented-control [aria-pressed="true"] { color: var(--lavender-on); background: var(--lavender); }
 .search-box { min-height: 44px; background: var(--surface); }
 :focus-visible { outline: 3px solid var(--lavender); outline-offset: 3px; }
+:focus-visible, html[data-motion] :focus-visible { transition: none !important; animation: none !important; }
 .media-card-button:focus-visible .media-poster { outline: none; }
-@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+/* B6b · default follows the system. auto + reduce becomes the "reduced" tier:
+   movement/loops disappear, 140ms colour/opacity feedback stays. */
+@media (prefers-reduced-motion: reduce) {
+  html[data-motion="auto"] *, html[data-motion="auto"] *::before, html[data-motion="auto"] *::after {
+    animation: none !important;
+    transition-property: background-color, color, border-color, opacity, fill, stroke !important;
+    transition-duration: var(--mo-2) !important;
+    transition-timing-function: var(--ease-out) !important;
+    scroll-behavior: auto !important;
+  }
+}
+html[data-motion="reduced"] *, html[data-motion="reduced"] *::before, html[data-motion="reduced"] *::after {
+  animation: none !important;
+  transition-property: background-color, color, border-color, opacity, fill, stroke !important;
+  transition-duration: var(--mo-2) !important;
+  transition-timing-function: var(--ease-out) !important;
+  scroll-behavior: auto !important;
+}
+html[data-motion="off"] *, html[data-motion="off"] *::before, html[data-motion="off"] *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}
 
 .poster-fallback { width: 100%; height: 100%; box-sizing: border-box; align-content: center; gap: 12px; background: var(--tone-container); color: var(--tone-on); }
 .poster-fallback strong { color: inherit; font-size: 48px; margin: 0; }
@@ -346,8 +372,20 @@ button:disabled { cursor: wait; opacity: .55; }
 .player-ended button { min-height: 44px; padding: 0 18px; border: 0; border-radius: 999px; }
 
 .player-countdown-ring { display: inline-flex; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
-.player-countdown-ring svg { width: 44px; height: 44px; fill: none; stroke: var(--tone-container, var(--lavender)); stroke-width: 3; }
- .player-countdown-ring circle { stroke-dasharray: 119.38; stroke-dashoffset: calc(119.38 * (1 - var(--remaining, 1))); transform: rotate(-90deg); transform-origin: center; }
+.player-countdown-ring svg { width: 44px; height: 44px; fill: none; stroke: var(--tone-container, var(--lavender)); stroke-width: 3; transform: rotate(-90deg); }
+/* B6b · ten fixed arcs; only their opacity animates (linear, 1s per tick). The
+   countdown consumes like a clock, not like a spinner. */
+.player-countdown-segment { opacity: 1; transition: opacity 1000ms linear; }
+.player-countdown-segment:nth-child(1) { opacity: clamp(0, calc(var(--remaining, 1) * 10 - 0), 1); }
+.player-countdown-segment:nth-child(2) { opacity: clamp(0, calc(var(--remaining, 1) * 10 - 1), 1); }
+.player-countdown-segment:nth-child(3) { opacity: clamp(0, calc(var(--remaining, 1) * 10 - 2), 1); }
+.player-countdown-segment:nth-child(4) { opacity: clamp(0, calc(var(--remaining, 1) * 10 - 3), 1); }
+.player-countdown-segment:nth-child(5) { opacity: clamp(0, calc(var(--remaining, 1) * 10 - 4), 1); }
+.player-countdown-segment:nth-child(6) { opacity: clamp(0, calc(var(--remaining, 1) * 10 - 5), 1); }
+.player-countdown-segment:nth-child(7) { opacity: clamp(0, calc(var(--remaining, 1) * 10 - 6), 1); }
+.player-countdown-segment:nth-child(8) { opacity: clamp(0, calc(var(--remaining, 1) * 10 - 7), 1); }
+.player-countdown-segment:nth-child(9) { opacity: clamp(0, calc(var(--remaining, 1) * 10 - 8), 1); }
+.player-countdown-segment:nth-child(10) { opacity: clamp(0, calc(var(--remaining, 1) * 10 - 9), 1); }
 
 .player-spacer { flex: 1; }
 .player-actions #player-toggle-button { min-width: 64px; background: var(--tone-container, var(--lavender)); color: var(--tone-on, #1b1035); }
@@ -423,19 +461,39 @@ dialog::backdrop { background: #000b; }.dialog-actions { justify-content: flex-e
 .scan-panel { position: relative; overflow: hidden; isolation: isolate; }
 .scan-panel:has([data-cancel-scan]:not([hidden]))::before { content: ""; position: absolute; z-index: -1; inset: 52% -10% 0; background: #c9b8ff20; border-radius: 45% 55% 0 0 / 30px 30px 0 0; }
 
-/* D2 ordinary-page motion: keep player and custom window chrome outside this scope. */
-.app-shell button:not(:disabled), .app-shell summary { transition: transform 100ms ease, background-color 180ms ease, color 180ms ease, box-shadow 180ms ease; }
-.app-shell button:not(:disabled):active, .app-shell summary:active { transform: scale(.96); }
-.media-card { transition: transform 220ms ease; }
-.media-card:hover, .media-card:focus-within { transform: translateY(-4px); }
-.source-card { transition: transform 220ms ease, background-color 220ms ease; }
-.source-card:hover, .source-card:focus-within { transform: translateY(-4px); }
-.app-shell :is(#home-hero, #continue-section, #recent-section, #shows-section, #collection-section, #onboarding, #library-error, #library-empty, #sources-page, #scan-panel, #media-detail):not([hidden]) { animation: soft-cinema-enter 200ms cubic-bezier(.2, .75, .25, 1) both; }
-.app-shell dialog[open] { animation: soft-cinema-dialog-enter 200ms cubic-bezier(.2, .75, .25, 1) both; }
-.app-shell dialog[open]::backdrop { animation: soft-cinema-backdrop-enter 180ms ease both; }
-@keyframes soft-cinema-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes soft-cinema-dialog-enter { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
-@keyframes soft-cinema-backdrop-enter { from { opacity: 0; } to { opacity: 1; } }
+/* B6b · prototype ① feedback and ② state change. Background/colour is 140ms;
+   press sinks 1px for 90ms. Nothing morphs its radius, nothing loops. */
+:is(button, summary, .media-card, .continue-card, .episode-row, .source-card, .app-menu-option, .media-poster, .continue-image) {
+  transition: background-color var(--mo-2) var(--ease-out), border-color var(--mo-2) var(--ease-out), color var(--mo-2) var(--ease-out), box-shadow var(--mo-2) var(--ease-out), opacity var(--mo-2) var(--ease-out), transform var(--mo-1) var(--ease-out);
+}
+button:not(:disabled):active, summary:active, .media-card-button:active .media-poster, .continue-card:active .continue-image, .episode-row:active { transform: translateY(1px); }
+.media-card-button:hover { background-color: #ffffff08; }
+.media-card-button:hover .media-poster { border-color: #59606e; background-color: #202126; }
+.continue-card:hover, .continue-card:focus-visible { background-color: #ffffff08; }
+.episode-row:hover, .episode-row:focus-visible, .episode-row[aria-selected="true"] { background-color: #1b2029; }
+.source-card:hover, .source-card:focus-within { background-color: #202126; }
+/* Prototype ② · a changed count rises 6px and fades in; the row never reflows. */
+.mo-count-rise { animation: mo-count-rise var(--mo-2) var(--ease-out) both; }
+@keyframes mo-count-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+/* Prototype ③ · the only shared-element transition in the app: home card →
+   detail poster. JS supplies the measured start/end rectangles. */
+#detail-content { transition: opacity var(--mo-3) var(--ease-out); }
+#motion-flight { position: fixed; z-index: 200; margin: 0; overflow: hidden; pointer-events: none; contain: layout paint; }
+#motion-flight img, #motion-flight .poster-fallback { width: 100%; height: 100%; object-fit: cover; }
+.mo-flight-target { visibility: hidden !important; }
+/* Prototype ④ · scanning is the only permitted loop; it reports activity, not progress. */
+#home-scan-card:not([hidden]) .scan-pill-dot { animation: mo-pulse 1600ms var(--ease-inout) infinite; }
+@keyframes mo-pulse { 0%, 100% { transform: scale(1); opacity: .55; } 50% { transform: scale(1.75); opacity: 1; } }
+.app-notice.mo-notice-in { animation: mo-notice-in var(--mo-3) var(--ease-out) both; }
+@keyframes mo-notice-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+/* Prototype ⑤ · the first work of the session enters once, for 420ms, and never
+   returns (per session, not per render). */
+.mo-first-content { animation: mo-first-content var(--mo-4) var(--ease-out) both; }
+@keyframes mo-first-content { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+/* Playback path: the player yields immediately; its fade is 140ms and never blocks. */
+/* The watched mark crossfades only when its state actually changes. */
+.episode-watched-mark.mo-watched-in { animation: mo-watched-in var(--mo-2) var(--ease-out) both; }
+@keyframes mo-watched-in { from { opacity: 0; } to { opacity: 1; } }
 
 /* Ticket 06 · B4a detail page states: wrapping title, local skeleton, failure and offline copy. */
 .detail-copy h2 { max-width: 100%; overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }

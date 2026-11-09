@@ -1,6 +1,7 @@
 import { coverData, generatedCover } from "./cover.js";
 import { AppListbox, type AppListboxOption } from "./menu.js";
 import { paginationModel, parseJumpTarget } from "./pagination.js";
+import { captureFlightSource, fadeIn, motionAllowsTransform, motionDuration, skipFlight, startFlight } from "./motion.js";
 document.querySelectorAll<HTMLButtonElement>("[data-window-action]").forEach((button) => {
   button.addEventListener("click", () => {
     const action = button.dataset.windowAction;
@@ -189,12 +190,16 @@ interface DetailOrigin {
   scrollTop: number;
   windowScrollY: number;
   focusMediaId: string | undefined;
-  focusContainerId: "#library-grid" | "#recent-row" | "#shows-row" | "#search-grid" | undefined;
+  focusContainerId: "#library-grid" | "#recent-row" | "#shows-row" | "#search-grid" | "#continue-row" | undefined;
   focusControlId: string | undefined;
 }
 let detailOrigin: DetailOrigin | undefined;
 let detailSearchFormOpen = false;
 let detailRequestMediaId: string | undefined;
+let detailFlightStarted = false;
+let detailRenderCount = 0;
+let previousWatchedIds = new Set<string>();
+let firstContentMotionPlayed = false;
 type SearchOriginKind = "home" | "library" | "episodes" | "sources" | "detail";
 interface SearchOrigin {
   kind: SearchOriginKind;
@@ -345,6 +350,48 @@ function detailPlayback(detailValue: LocalMediaDetail): LocalPlaybackState | und
 
 function hasResume(playback: LocalPlaybackState | undefined): playback is LocalPlaybackState {
   return Boolean(playback && playback.positionSec > 0 && !playback.watched);
+}
+
+/** The only shared-element source allowed by B6b: a work card on the home view. */
+function detailFlightSource(target: HTMLElement | undefined): HTMLElement | undefined {
+  if (!target || !homeVisible || searchActive) return undefined;
+  if (target.id === "hero-detail") return document.querySelector<HTMLElement>("#hero-poster") ?? undefined;
+  if (!target.closest("#recent-row, #shows-row, #continue-row")) return undefined;
+  return target.querySelector<HTMLElement>(".media-poster, .continue-image") ?? undefined;
+}
+
+/** Resolve the home card after the shelves have re-rendered on return. */
+function detailReturnTarget(origin: DetailOrigin): HTMLElement | null {
+  if (origin.focusControlId === "#hero-detail") return document.querySelector<HTMLElement>("#hero-poster");
+  if (!origin.focusMediaId || !origin.focusContainerId) return null;
+  const selector = `${origin.focusContainerId} [data-media-id="${cssEscape(origin.focusMediaId)}"]`;
+  const card = document.querySelector<HTMLElement>(selector);
+  return card?.querySelector<HTMLElement>(".media-poster, .continue-image") ?? null;
+}
+
+/** B6b ⑤ · the first work of a session enters once for 420ms, never per card. */
+function playFirstContentMotion(element: HTMLElement | null | undefined): void {
+  if (!element || firstContentMotionPlayed || !motionAllowsTransform() || scanProgress?.status === "running") return;
+  firstContentMotionPlayed = true;
+  element.classList.add("mo-first-content");
+  const cleanup = () => {
+    element.classList.remove("mo-first-content");
+    element.removeEventListener("animationend", cleanup);
+  };
+  element.addEventListener("animationend", cleanup);
+}
+
+/** B6b ② · a count rises 6px and fades in; the surrounding row never reflows. */
+function animateCount(element: HTMLElement | null | undefined): void {
+  if (!element || !motionAllowsTransform()) return;
+  element.classList.remove("mo-count-rise");
+  void element.offsetWidth;
+  element.classList.add("mo-count-rise");
+  const cleanup = () => {
+    element.classList.remove("mo-count-rise");
+    element.removeEventListener("animationend", cleanup);
+  };
+  element.addEventListener("animationend", cleanup);
 }
 
 type EmptyAction = "add-folder" | "add-video" | "rescan" | "view-all" | "clear-search" | "formats";
@@ -518,6 +565,7 @@ function renderSearchPage(page: { mode: "collection"; items: LocalCollectionSumm
     : page.items.map((item) => card(item, includeReleaseDate));
   searchGrid.replaceChildren(...cards);
   if (searchCount) searchCount.textContent = `${page.mode === "collection" ? `共 ${page.totalCount} 部作品` : `共 ${page.totalCount} 集`} · ${filterLabel(searchFilter)}`;
+  animateCount(searchCount);
   const empty = page.items.length === 0;
   if (searchEmpty) searchEmpty.hidden = !empty;
   if (empty) {
@@ -689,7 +737,13 @@ function showPlayer(visible: boolean): void {
   if (playerView) playerView.hidden = !visible;
   const nextTitle = visible ? activePlaybackTitle : "";
   if (playerCurrentTitle && playerCurrentTitle.textContent !== nextTitle) playerCurrentTitle.textContent = nextTitle;
-  if (visible && !wasVisible) playerSurface?.focus();
+  if (visible && !wasVisible) {
+    // Playback never waits for a transition: a click during the home → detail
+    // flight drops the flight and shows the player immediately.
+    skipFlight();
+    playerSurface?.focus();
+    fadeIn(document.querySelector<HTMLElement>(".player-shell"), motionDuration("--mo-2", 140));
+  }
   if (wasVisible !== visible) window.zVideo.overlay.visible(visible);
   updateScanUi();
 }
@@ -1422,6 +1476,7 @@ function renderPage(page: LibraryPageView): void {
   renderPagination(page);
   observeArtworkGrid(libraryGrid);
   restoreGridFocus(focusedMediaId);
+  playFirstContentMotion(libraryGrid.querySelector<HTMLElement>(".media-card"));
   updateScanUi();
 }
 
@@ -1513,6 +1568,7 @@ function renderPagination(page: { totalCount: number; page: number; pageSize: nu
   jumpError.hidden = true;
   form.append(label, input, submit);
   libraryPagination.append(status, form, jumpError);
+  animateCount(status);
 }
 
 function showPaginationJumpError(message: string | undefined): void {
@@ -1610,6 +1666,7 @@ async function loadHomeShelves(): Promise<void> {
       section.hidden = !homeVisible || searchActive || items.length === 0 || detail?.hidden === false;
     }
     renderHomeHero();
+    playFirstContentMotion(hero && !hero.hidden ? hero : document.querySelector<HTMLElement>("#recent-row .media-card"));
   } catch { if (epoch === homeEpoch) setMessage("首页片架加载失败，请重试。", true); }
 }
 
@@ -1854,7 +1911,7 @@ function captureDetailOrigin(focusTarget?: HTMLElement): DetailOrigin {
     focusContainerId: focused instanceof HTMLElement
       ? focused.closest("#library-grid") ? "#library-grid"
         : focused.closest("#search-grid") ? "#search-grid"
-          : focused.closest("#recent-row") ? "#recent-row" : focused.closest("#shows-row") ? "#shows-row" : undefined
+          : focused.closest("#recent-row") ? "#recent-row" : focused.closest("#shows-row") ? "#shows-row" : focused.closest("#continue-row") ? "#continue-row" : undefined
       : undefined,
     focusControlId: focused instanceof HTMLElement && focused.id ? `#${CSS.escape(focused.id)}` : undefined,
   };
@@ -1947,6 +2004,15 @@ async function openDetail(mediaId: string, returnFocusTarget?: HTMLElement, rest
   const entering = detail?.hidden !== false;
   const retrying = detail?.dataset.state === "error";
   if (entering) {
+    skipFlight();
+    detailFlightStarted = false;
+    detailRenderCount = 0;
+    previousWatchedIds = new Set();
+  }
+  // Measure and clone the source poster before the home view is hidden; the
+  // flight itself starts once the detail has real geometry.
+  const flightSource = entering ? captureFlightSource(detailFlightSource(returnFocusTarget)) : undefined;
+  if (entering) {
     detailOrigin = restoringOrigin ?? captureDetailOrigin(returnFocusTarget);
     applyDetailOriginChrome(detailOrigin);
     setDetailScroll(0);
@@ -1983,6 +2049,10 @@ async function openDetail(mediaId: string, returnFocusTarget?: HTMLElement, rest
     // real layout box instead of a hidden ancestor with no computed line height.
     setDetailViewState("ready");
     renderDetail(loaded);
+    if (entering) {
+      fadeIn(detailContent, motionDuration("--mo-3", 200));
+      if (flightSource) detailFlightStarted = startFlight(flightSource, detailPoster, motionDuration("--mo-3", 200));
+    }
     if (entering || retrying) detailTitle?.focus({ preventScroll: true });
     setMessage(loaded.item.available ? "" : "来源离线；播放和从头播放已禁用。", !loaded.item.available);
   } catch (error) {
@@ -1990,6 +2060,7 @@ async function openDetail(mediaId: string, returnFocusTarget?: HTMLElement, rest
       const message = error instanceof Error ? error.message : "详情加载失败。";
       activeDetail = undefined;
       activeDetailPlayback = undefined;
+      detailFlightStarted = false;
       showDetailError(message);
       setMessage(message, true);
     }
@@ -2100,6 +2171,27 @@ function renderDetail(detailValue: LocalMediaDetail): void {
     detailEpisodes.replaceChildren(...episodeRows(visibleEpisodes, selectedMediaId, playback, detailValue.episodePlayback ?? []));
     detailEpisodes.querySelectorAll<HTMLElement>("[data-artwork-media-id]").forEach((element) => enqueueArtwork(element, 1));
     detailSeasonTabs?.replaceChildren(...renderSeasonTabs(episodes, selectedSeason));
+    // B6b ② · crossfade only the mark that actually became watched; a re-render
+    // of the list never animates every watched row.
+    const playbackByMediaId = new Map((detailValue.episodePlayback ?? []).map((entry) => [entry.mediaId, entry]));
+    const watchedIds = new Set(visibleEpisodes.filter((episode) => {
+      const entry = playbackByMediaId.get(episode.mediaId) ?? (episode.mediaId === selectedMediaId ? playback : undefined);
+      return Boolean(entry?.watched);
+    }).map((episode) => episode.mediaId));
+    detailRenderCount += 1;
+    if (detailRenderCount > 1) {
+      const newlyWatched = [...watchedIds].find((mediaId) => !previousWatchedIds.has(mediaId));
+      const mark = newlyWatched ? detailEpisodes.querySelector<HTMLElement>(`[data-media-id="${cssEscape(newlyWatched)}"] .episode-watched-mark`) : null;
+      if (mark) {
+        mark.classList.add("mo-watched-in");
+        const cleanup = () => {
+          mark.classList.remove("mo-watched-in");
+          mark.removeEventListener("animationend", cleanup);
+        };
+        mark.addEventListener("animationend", cleanup);
+      }
+    }
+    previousWatchedIds = watchedIds;
   }
   if (detailFileSection) {
     const isMovie = item.kind === "movie" || detailValue.collectionKind === "movie";
@@ -2136,6 +2228,9 @@ function closeDetail(): void {
   activeDetailPlayback = undefined;
   selectedMediaId = undefined;
   detailSearchFormOpen = false;
+  if (detailFlightStarted) skipFlight();
+  const returnFlight = detailFlightStarted && detailPoster && origin?.kind === "home" ? captureFlightSource(detailPoster) : undefined;
+  detailFlightStarted = false;
   if (detail) {
     detail.hidden = true;
     delete detail.dataset.state;
@@ -2172,6 +2267,10 @@ function closeDetail(): void {
         : origin.focusMediaId ? document.querySelector<HTMLButtonElement>(`#library-grid [data-media-id="${cssEscape(origin.focusMediaId)}"]`) : null;
     target?.focus({ preventScroll: true });
     restoreDetailScroll(origin);
+    if (returnFlight) {
+      const returnTarget = detailReturnTarget(origin);
+      if (returnTarget) startFlight(returnFlight, returnTarget, motionDuration("--mo-return", 160));
+    }
   });
   void loadContinueWatching();
 }
@@ -2416,12 +2515,22 @@ function scanSourceLabel(progress: LocalScanProgress): string {
   return state?.sources.find((source) => source.sourceId === progress.sourceId)?.label || "所选文件夹";
 }
 
-function showAppNotice(title: string, body: string, tone: "info" | "warning" | "error" = "info"): void {
+function showAppNotice(title: string, body: string, tone: "info" | "warning" | "error" = "info", motionOnce = false): void {
   if (!appNotice) return;
+  const wasHidden = appNotice.hidden;
   if (appNoticeTitle) appNoticeTitle.textContent = title;
   if (appNoticeBody) appNoticeBody.textContent = body;
   appNotice.dataset.state = tone;
   appNotice.hidden = false;
+  // B6b ④ · a completed scan summary unfolds once, then stays still.
+  if (motionOnce && wasHidden && motionAllowsTransform()) {
+    appNotice.classList.add("mo-notice-in");
+    const cleanup = () => {
+      appNotice.classList.remove("mo-notice-in");
+      appNotice.removeEventListener("animationend", cleanup);
+    };
+    appNotice.addEventListener("animationend", cleanup);
+  }
 }
 
 function hideAppNotice(): void {
@@ -2508,7 +2617,7 @@ function renderScanProgress(progress: LocalScanProgress): void {
     stopScanElapsedTimer();
     if (!isDetailOrPlayerVisible()) requestEpoch += 1;
     const notice = scanNotice(progress);
-    if (notice) showAppNotice(notice.title, notice.body, notice.tone);
+    if (notice) showAppNotice(notice.title, notice.body, notice.tone, progress.status === "completed");
   }
   updateScanUi();
 }
@@ -2533,7 +2642,7 @@ function renderScanResult(result: LocalScanResult): void {
   const warnings = document.querySelector<HTMLElement>("#scan-warnings");
   if (warnings) warnings.replaceChildren(...result.warnings.map((warning) => { const item = document.createElement("li"); item.textContent = warning; return item; }));
   const notice = scanNotice(result);
-  if (notice) showAppNotice(notice.title, notice.body, notice.tone);
+  if (notice) showAppNotice(notice.title, notice.body, notice.tone, result.status === "completed");
   if (result.status === "completed") setMessage(`扫描完成：新增 ${result.importedFiles}，更新 ${result.updatedFiles}。`);
   else if (result.status === "cancelled") setMessage("扫描已取消，已保留此前索引和播放历史。", false);
   else if (result.status === "unavailable") setMessage("来源离线，已保留此前索引和播放历史。", true);

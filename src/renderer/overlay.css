@@ -1,9 +1,9 @@
 :root, body { background: transparent; min-width: 0; min-height: 0; overflow: hidden; }
-#overlay-heading, #overlay-controls { position: absolute; left: 0; right: 0; transition: opacity 180ms ease-out, transform 180ms ease-out; }
+#overlay-heading, #overlay-controls { position: absolute; left: 0; right: 0; transition: opacity 180ms var(--ease-out), transform 180ms var(--ease-out); }
 #overlay-heading { top: 36px; }
 body.fullscreen #overlay-heading { top: 0; }
 #overlay-controls { bottom: 0; }
-body.overlay-hidden #overlay-heading, body.overlay-hidden #overlay-controls { opacity: 0; pointer-events: none; transition-duration: 240ms; }
+body.overlay-hidden #overlay-heading, body.overlay-hidden #overlay-controls { opacity: 0; pointer-events: none; transition-duration: 160ms; }
 body.overlay-hidden #overlay-heading { transform: translateY(-10px); }
 body.overlay-hidden #overlay-controls { transform: translateY(10px); }
 .player-heading { background: linear-gradient(#000b, transparent); }
