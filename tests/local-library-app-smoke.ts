@@ -1158,6 +1158,7 @@ async function run(): Promise<void> {
     assert.match(removeFailure.removeError, /占用|重试/);
     assert.equal(removeFailure.removeConfirmText, "重试移除");
     assert.equal(removeFailure.cards.length, 1, "a failed removal leaves the folder record intact");
+    await waitFor("remove retry enabled", () => evaluate(window, "document.querySelector('#remove-source-confirm')?.disabled === false"), Boolean, 5_000);
     await evaluate(window, "document.querySelector('#remove-source-confirm')?.click()");
     const removed = await waitFor("remove retry succeeds", readFolders, (value) => value.removeOpen === false && value.cards.length === 0 && /还没有添加文件夹/.test(value.sourceText), 20_000);
     assert.equal(removed.libraryCards, 0, "removing the folder refreshes the library too");
