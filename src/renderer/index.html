@@ -136,19 +136,10 @@
                 <button type="button" data-filter="unclassified" aria-pressed="false">未分类</button>
               </div>
               <div id="library-source-filters" class="source-filters" role="group" aria-label="来源"></div>
-              <label class="sort-control">排序
-                <select id="library-sort" class="library-select">
-                  <option value="recent">最近观看</option>
-                  <option value="added_desc">最近加入</option>
-                  <option value="released_desc">最近发布</option>
-                  <option value="title">标题</option>
-                  <option value="year_desc">年份</option>
-                  <option value="score_desc">评分</option>
-                </select>
-              </label>
-              <select id="library-filter" class="sr-only" aria-hidden="true" tabindex="-1">
-                <option value="all">全部</option><option value="movie">电影</option><option value="show">剧集</option><option value="episode">单集</option><option value="unclassified">未分类</option>
-              </select>
+              <div id="library-sort-menu" class="app-menu sort-menu">
+                <button id="library-sort-trigger" class="app-menu-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="library-sort-options" aria-labelledby="library-sort-label library-sort-value" data-value="recent"><span id="library-sort-label" class="app-menu-label">排序</span><span id="library-sort-value" class="app-menu-value">最近观看</span><svg class="app-menu-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+                <div id="library-sort-options" class="app-menu-popover sort-menu-popover" role="listbox" aria-labelledby="library-sort-label" hidden></div>
+              </div>
             </div>
             <div id="library-offline-notice" class="library-offline" role="status" hidden>
               <span id="library-offline-text"></span>
@@ -270,8 +261,20 @@
             <button id="player-forward-10" class="secondary-button" type="button" aria-label="前进 10 秒">+10</button>
             <button id="player-next-button" class="secondary-button" type="button" hidden disabled>下一集</button>
             <span class="player-spacer"></span>
-            <label class="player-volume-control" for="player-volume"><span>音量</span><input id="player-volume" type="range" min="0" max="100" step="5" value="100" aria-keyshortcuts="ArrowUp ArrowDown" disabled /></label>
+            <label class="player-volume-control" for="player-volume"><span>音量</span><input id="player-volume" type="range" min="0" max="100" step="5" value="100" aria-label="音量" aria-keyshortcuts="ArrowUp ArrowDown" disabled /></label>
             <button id="player-mute-button" class="secondary-button" type="button" aria-keyshortcuts="M" aria-pressed="false" title="M" disabled>静音</button>
+            <div class="app-menu player-quick-menu" data-align="right" data-place="up">
+              <button id="player-audio-trigger" class="app-menu-trigger player-quick-trigger" type="button" aria-label="音轨" aria-haspopup="listbox" aria-expanded="false" aria-controls="player-audio-options" disabled><span id="player-audio-value" class="app-menu-value">自动</span><svg class="app-menu-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+              <div id="player-audio-options" class="app-menu-popover player-quick-popover" role="listbox" aria-label="音轨" hidden></div>
+            </div>
+            <div class="app-menu player-quick-menu" data-align="right" data-place="up">
+              <button id="player-subtitle-trigger" class="app-menu-trigger player-quick-trigger" type="button" aria-label="字幕" aria-haspopup="listbox" aria-expanded="false" aria-controls="player-subtitle-options" disabled><span id="player-subtitle-value" class="app-menu-value">关闭</span><svg class="app-menu-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+              <div id="player-subtitle-options" class="app-menu-popover player-quick-popover" role="listbox" aria-label="字幕" hidden></div>
+            </div>
+            <div class="app-menu player-quick-menu" data-align="right" data-place="up">
+              <button id="player-speed-trigger" class="app-menu-trigger player-quick-trigger" type="button" aria-label="播放速度" aria-haspopup="listbox" aria-expanded="false" aria-controls="player-speed-options" disabled><span id="player-speed-value" class="app-menu-value">1×</span><svg class="app-menu-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+              <div id="player-speed-options" class="app-menu-popover player-quick-popover" role="listbox" aria-label="播放速度" hidden></div>
+            </div>
             <button id="player-settings-button" class="secondary-button" type="button" aria-expanded="false" aria-controls="player-settings">设置</button>
             <button id="player-fullscreen-button" class="secondary-button" type="button" aria-keyshortcuts="F" title="F" disabled>全屏</button>
           </div>
@@ -282,24 +285,16 @@
             </div>
             <div class="player-setting-group">
               <h3 id="player-speed-label">播放速度</h3>
-              <div class="player-menu">
-                <button id="player-speed-trigger" class="player-menu-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="player-speed-options" aria-labelledby="player-speed-label player-speed-value"><span id="player-speed-value">1×</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
-                <div id="player-speed-options" class="player-menu-popover" role="listbox" aria-labelledby="player-speed-label" hidden></div>
-              </div>
+              <div id="player-speed-chips" class="player-chip-set" role="group" aria-label="播放速度"></div>
+              <p class="player-setting-note">点选即可生效，无需确认。</p>
             </div>
             <div class="player-setting-group">
               <h3 id="player-audio-label">音轨</h3>
-              <div class="player-menu">
-                <button id="player-audio-trigger" class="player-menu-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="player-audio-options" aria-labelledby="player-audio-label player-audio-value"><span id="player-audio-value">自动</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
-                <div id="player-audio-options" class="player-menu-popover" role="listbox" aria-labelledby="player-audio-label" hidden></div>
-              </div>
+              <div id="player-audio-chips" class="player-chip-set" role="group" aria-label="音轨"></div>
             </div>
             <div class="player-setting-group">
               <h3 id="player-subtitle-label">字幕</h3>
-              <div class="player-menu">
-                <button id="player-subtitle-trigger" class="player-menu-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="player-subtitle-options" aria-labelledby="player-subtitle-label player-subtitle-value"><span id="player-subtitle-value">关闭</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
-                <div id="player-subtitle-options" class="player-menu-popover" role="listbox" aria-labelledby="player-subtitle-label" hidden></div>
-              </div>
+              <div id="player-subtitle-chips" class="player-chip-set" role="group" aria-label="字幕"></div>
             </div>
             <div class="player-setting-group">
               <h3>外挂字幕</h3>

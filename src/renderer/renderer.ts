@@ -1,4 +1,5 @@
 import { coverData, generatedCover } from "./cover.js";
+import { AppListbox, type AppListboxOption } from "./menu.js";
 import { paginationModel, parseJumpTarget } from "./pagination.js";
 document.querySelectorAll<HTMLButtonElement>("[data-window-action]").forEach((button) => {
   button.addEventListener("click", () => {
@@ -87,8 +88,6 @@ const searchEmptyTitle = document.querySelector<HTMLElement>("#search-empty-titl
 const searchEmptyMessage = document.querySelector<HTMLElement>("#search-empty-message");
 const searchFilterButtons = document.querySelector<HTMLElement>("#search-filter-buttons");
 const searchEmptyClear = document.querySelector<HTMLButtonElement>("#search-empty-clear");
-const filterSelect = document.querySelector<HTMLSelectElement>("#library-filter");
-const sortSelect = document.querySelector<HTMLSelectElement>("#library-sort");
 const scanStatus = document.querySelector<HTMLElement>("#scan-status");
 const scanStatusText = document.querySelector<HTMLElement>("#scan-status-text");
 const homeScanCard = document.querySelector<HTMLElement>("#home-scan-card");
@@ -255,14 +254,60 @@ interface PlayerMenuTrack { id: string; label: string; selected?: boolean }
 const PLAYER_SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3];
 let playerAudioTracks: PlayerMenuTrack[] = [];
 let playerSubtitleTracks: PlayerMenuTrack[] = [];
-let openPlayerMenuKind: PlayerMenuKind | undefined;
-let playerMenuFocusIndex = 0;
 let activePlaybackTitle = "";
 let activeDetailPlayback: LocalPlaybackState | undefined;
 let selectedSeason: number | undefined;
 const continuePlaybackByMediaId = new Map<string, LocalPlaybackState>();
 
 let currentQuery: LocalLibraryQuery = { page: 1, pageSize: PAGE_SIZE, filter: "all", sort: "recent" };
+
+/**
+ * Desktop feel: the app is not a web page. Suppress the browser context menu,
+ * native drag and block text selection outside editable controls.
+ */
+function isTextEntry(target: EventTarget | null): boolean {
+  return target instanceof Element && Boolean(target.closest("input, textarea, [contenteditable='true']"));
+}
+document.addEventListener("contextmenu", (event) => event.preventDefault());
+document.addEventListener("dragstart", (event) => event.preventDefault());
+document.addEventListener("selectstart", (event) => {
+  if (!isTextEntry(event.target)) event.preventDefault();
+});
+
+const LIBRARY_SORT_OPTIONS: Array<{ value: LocalSort; label: string }> = [
+  { value: "recent", label: "最近观看" },
+  { value: "added_desc", label: "最近加入" },
+  { value: "released_desc", label: "最近发布" },
+  { value: "title", label: "标题" },
+  { value: "year_desc", label: "年份" },
+  { value: "score_desc", label: "评分" },
+];
+const sortMenuContainer = document.querySelector<HTMLElement>("#library-sort-menu");
+const sortMenuTrigger = document.querySelector<HTMLButtonElement>("#library-sort-trigger");
+const sortMenuPopover = document.querySelector<HTMLElement>("#library-sort-options");
+const sortMenuValue = document.querySelector<HTMLElement>("#library-sort-value");
+const sortListbox = sortMenuContainer && sortMenuTrigger && sortMenuPopover ? new AppListbox({
+  container: sortMenuContainer,
+  trigger: sortMenuTrigger,
+  popover: sortMenuPopover,
+  getOptions: (): AppListboxOption[] => {
+    const active = currentQuery.sort ?? "recent";
+    return LIBRARY_SORT_OPTIONS.map((option) => ({
+      id: `library-sort-option-${option.value}`,
+      label: option.label,
+      value: option.value,
+      selected: option.value === active,
+    }));
+  },
+  hooks: {
+    onSelect: (value) => {
+      const sort = value as LocalSort;
+      applyQuery({ sort, page: 1 });
+      void window.zVideo.appPreferences.setSort(sort).catch(() => setMessage("排序偏好保存失败，本次排序仍已应用。", true));
+    },
+  },
+}) : undefined;
+sortListbox?.render();
 
 interface ArtworkTask {
   element: HTMLElement;
@@ -688,7 +733,7 @@ function restorePlayerOriginScroll(): void {
   else window.scrollTo(0, playerOriginScroll);
 }
 
-const overlayIds = ["player-current-title", "player-close-button", "player-close-label", "player-elapsed", "player-time", "player-seek", "player-toggle-button", "player-next-button", "player-back-10", "player-forward-10", "player-volume", "player-mute-button", "player-settings-button", "player-fullscreen-button", "player-settings", "player-settings-close", "player-speed", "player-audio-track", "player-subtitle-track", "player-subtitle-file-button", "player-status", "player-ended", "player-ended-title", "player-next-title", "player-next-meta", "player-countdown", "player-countdown-ring", "player-countdown-announcement", "player-play-next", "player-cancel-next", "player-replay", "player-return-list", "player-error", "player-error-message", "player-error-retry", "player-error-back"];
+const overlayIds = ["player-current-title", "player-close-button", "player-close-label", "player-elapsed", "player-time", "player-seek", "player-toggle-button", "player-next-button", "player-back-10", "player-forward-10", "player-volume", "player-mute-button", "player-settings-button", "player-fullscreen-button", "player-settings", "player-settings-close", "player-speed-trigger", "player-audio-trigger", "player-subtitle-trigger", "player-speed-value", "player-audio-value", "player-subtitle-value", "player-subtitle-file-button", "player-status", "player-ended", "player-ended-title", "player-next-title", "player-next-meta", "player-countdown", "player-countdown-ring", "player-countdown-announcement", "player-play-next", "player-cancel-next", "player-replay", "player-return-list", "player-error", "player-error-message", "player-error-retry", "player-error-back"];
 const overlayActions = new Set(overlayIds);
 let overlayActivity = 0;
 function sendOverlayState(): void {
@@ -701,9 +746,12 @@ function sendOverlayState(): void {
     if (element instanceof HTMLButtonElement || element instanceof HTMLInputElement || element instanceof HTMLSelectElement) value.disabled = element.disabled;
     if (element instanceof HTMLInputElement || element instanceof HTMLSelectElement) value.value = element.value;
     if (element instanceof HTMLInputElement) { value.max = element.max; value.min = element.min; }
-    if (["player-current-title", "player-elapsed", "player-time", "player-toggle-button", "player-mute-button", "player-fullscreen-button", "player-status", "player-countdown", "player-audio-track", "player-subtitle-track", "player-close-label", "player-ended-title", "player-next-title", "player-next-meta", "player-replay", "player-return-list"].includes(id)) value.html = element.innerHTML;
+    if (["player-current-title", "player-elapsed", "player-time", "player-toggle-button", "player-mute-button", "player-fullscreen-button", "player-status", "player-countdown", "player-speed-value", "player-audio-value", "player-subtitle-value", "player-close-label", "player-ended-title", "player-next-title", "player-next-meta", "player-replay", "player-return-list"].includes(id)) value.html = element.innerHTML;
     for (const attribute of ["expanded", "pressed", "label"]) if (element.hasAttribute(`aria-${attribute}`)) value[attribute] = element.getAttribute(`aria-${attribute}`);
     elements[id] = value;
+  }
+  for (const chip of Array.from(document.querySelectorAll<HTMLButtonElement>("#player-settings .player-chip"))) {
+    elements[chip.id] = { pressed: chip.getAttribute("aria-pressed") ?? "false", disabled: chip.disabled };
   }
   window.zVideo.overlay.state({ heading: document.querySelector(".player-heading")?.outerHTML, controls: document.querySelector(".player-controls")?.outerHTML, stage: playerError && !playerError.hidden ? playerError.outerHTML : "", elements, progress: playerSeek?.parentElement?.getAttribute("style") ?? "", fullscreen: playerFullscreen, playing: playerState === "playing", error: Boolean(playerError && !playerError.hidden), activity: overlayActivity, revision: playerUiRevision, ...(playerOverlayFocusId ? { focusId: playerOverlayFocusId } : {}) });
 }
@@ -785,63 +833,41 @@ function playerMenuOptions(kind: PlayerMenuKind): Array<{ id: string; label: str
 }
 
 function renderPlayerMenu(kind: PlayerMenuKind): void {
-  const popover = document.getElementById(`player-${kind}-options`);
-  if (!popover) return;
-  const options = playerMenuOptions(kind);
-  popover.replaceChildren(...options.map((option) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.id = option.id;
-    button.setAttribute("role", "option");
-    button.setAttribute("aria-selected", String(option.selected));
-    button.dataset.value = option.value;
-    button.textContent = option.label;
-    return button;
-  }));
+  playerListboxes[kind]?.render();
   renderPlayerMenuValue(kind);
 }
 
-function menuTriggerId(kind: PlayerMenuKind): string {
-  return `player-${kind}-trigger`;
+/** Mirror the current option values as inline chips inside the settings panel. */
+function renderPlayerChips(kind: PlayerMenuKind): void {
+  const container = document.getElementById(`player-${kind}-chips`);
+  if (!container) return;
+  container.replaceChildren(...playerMenuOptions(kind).map((option, index) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.id = `player-${kind}-chip-${index}`;
+    chip.className = "chip player-chip";
+    chip.dataset.kind = kind;
+    chip.dataset.value = option.value;
+    chip.setAttribute("aria-pressed", String(option.selected));
+    chip.textContent = option.label;
+    chip.addEventListener("click", () => {
+      chip.focus();
+      applyPlayerMenuValue(kind, option.value);
+    });
+    return chip;
+  }));
 }
 
-function closePlayerMenu(kind: PlayerMenuKind = openPlayerMenuKind ?? "speed", returnFocus = true): void {
-  if (!openPlayerMenuKind && kind) return;
-  const popover = document.getElementById(`player-${kind}-options`);
-  const trigger = document.getElementById(menuTriggerId(kind));
-  if (popover) popover.hidden = true;
-  trigger?.setAttribute("aria-expanded", "false");
-  openPlayerMenuKind = undefined;
-  markPlayerUiStructureChanged();
-  if (returnFocus) {
-    trigger?.focus();
-    setPlayerOverlayFocus(trigger?.id);
-  } else {
-    setPlayerOverlayFocus(undefined);
-  }
-  sendOverlayState();
+function syncPlayerChipSelection(kind: PlayerMenuKind): void {
+  const options = playerMenuOptions(kind);
+  containerChips(kind).forEach((chip, index) => chip.setAttribute("aria-pressed", String(Boolean(options[index]?.selected))));
 }
 
-function openPlayerMenu(kind: PlayerMenuKind): void {
-  if (openPlayerMenuKind && openPlayerMenuKind !== kind) closePlayerMenu(openPlayerMenuKind, false);
-  const popover = document.getElementById(`player-${kind}-options`);
-  const trigger = document.getElementById(menuTriggerId(kind));
-  if (!popover || !trigger) return;
-  renderPlayerMenu(kind);
-  if (openPlayerMenuKind !== kind) markPlayerUiStructureChanged();
-  openPlayerMenuKind = kind;
-  popover.hidden = false;
-  trigger.setAttribute("aria-expanded", "true");
-  const options = Array.from(popover.querySelectorAll<HTMLButtonElement>('[role="option"]'));
-  const selectedIndex = Math.max(0, options.findIndex((option) => option.getAttribute("aria-selected") === "true"));
-  playerMenuFocusIndex = selectedIndex;
-  options[selectedIndex]?.focus();
-  setPlayerOverlayFocus(options[selectedIndex]?.id);
-  sendOverlayState();
+function containerChips(kind: PlayerMenuKind): HTMLButtonElement[] {
+  return Array.from(document.querySelectorAll<HTMLButtonElement>(`#player-${kind}-chips .player-chip`));
 }
 
-function selectPlayerMenuOption(kind: PlayerMenuKind, option: HTMLButtonElement): void {
-  const value = option.dataset.value ?? "";
+function applyPlayerMenuValue(kind: PlayerMenuKind, value: string): void {
   if (kind === "speed") {
     const speed = Number(value);
     if (Number.isFinite(speed) && speed > 0) {
@@ -855,31 +881,53 @@ function selectPlayerMenuOption(kind: PlayerMenuKind, option: HTMLButtonElement)
     playerSubtitleTracks = playerSubtitleTracks.map((track) => ({ ...track, selected: track.id === value }));
     void sendLocalPlaybackCommand({ type: "set-subtitle-track", trackId: value || null });
   }
-  markPlayerUiStructureChanged();
-  closePlayerMenu(kind, true);
   renderPlayerMenuValue(kind);
+  syncPlayerChipSelection(kind);
+  playerListboxes[kind]?.syncSelection();
   sendOverlayState();
 }
 
-function movePlayerMenuFocus(key: string): void {
-  const kind = openPlayerMenuKind;
-  if (!kind) return;
+function openPlayerMenuKind(): PlayerMenuKind | undefined {
+  return (["speed", "audio", "subtitle"] as const).find((kind) => playerListboxes[kind]?.isOpen);
+}
+
+function closeOpenPlayerMenu(returnFocus = true): void {
+  const kind = openPlayerMenuKind();
+  if (kind) playerListboxes[kind]?.close(returnFocus);
+}
+
+function createPlayerListbox(kind: PlayerMenuKind): AppListbox | undefined {
+  const trigger = document.getElementById(`player-${kind}-trigger`);
   const popover = document.getElementById(`player-${kind}-options`);
-  const options = Array.from(popover?.querySelectorAll<HTMLButtonElement>('[role="option"]') ?? []);
-  if (!options.length) return;
-  const current = Math.min(Math.max(0, playerMenuFocusIndex), options.length - 1);
-  let next = current;
-  if (key === "ArrowDown") next = (current + 1) % options.length;
-  else if (key === "ArrowUp") next = (current - 1 + options.length) % options.length;
-  else if (key === "Home") next = 0;
-  else if (key === "End") next = options.length - 1;
-  playerMenuFocusIndex = next;
-  options[next]?.focus();
-  setPlayerOverlayFocus(options[next]?.id);
+  const container = trigger?.closest<HTMLElement>(".app-menu");
+  if (!(trigger instanceof HTMLButtonElement) || !popover || !container) return undefined;
+  return new AppListbox({
+    container,
+    trigger,
+    popover,
+    getOptions: () => playerMenuOptions(kind),
+    hooks: {
+      onSelect: (value) => applyPlayerMenuValue(kind, value),
+      onOpen: () => { markPlayerUiStructureChanged(); sendOverlayState(); },
+      onClose: () => { markPlayerUiStructureChanged(); sendOverlayState(); },
+      onFocusChange: (id) => setPlayerOverlayFocus(id),
+    },
+  });
+}
+
+const playerListboxes: Record<PlayerMenuKind, AppListbox | undefined> = {
+  speed: createPlayerListbox("speed"),
+  audio: createPlayerListbox("audio"),
+  subtitle: createPlayerListbox("subtitle"),
+};
+for (const kind of ["speed", "audio", "subtitle"] as const) {
+  renderPlayerMenu(kind);
+  renderPlayerChips(kind);
 }
 
 function openPlayerSettings(): void {
   if (!playerSettings) return;
+  closeOpenPlayerMenu(false);
   playerSettings.hidden = false;
   playerSettingsButton?.setAttribute("aria-expanded", "true");
   const first = document.getElementById("player-settings-close");
@@ -890,7 +938,7 @@ function openPlayerSettings(): void {
 }
 
 function closePlayerSettings(returnFocus = true): void {
-  if (openPlayerMenuKind) closePlayerMenu(openPlayerMenuKind, false);
+  closeOpenPlayerMenu(false);
   if (playerSettings) playerSettings.hidden = true;
   playerSettingsButton?.setAttribute("aria-expanded", "false");
   markPlayerUiStructureChanged();
@@ -906,7 +954,10 @@ function closePlayerSettings(returnFocus = true): void {
 function renderPlayerSettings(force = false): void {
   if (playerVolume && (force || !playerVolumeDragging)) playerVolume.value = String(playerVolumeLevel);
   renderMuteButton();
-  for (const kind of ["speed", "audio", "subtitle"] as const) renderPlayerMenuValue(kind);
+  for (const kind of ["speed", "audio", "subtitle"] as const) {
+    renderPlayerMenuValue(kind);
+    syncPlayerChipSelection(kind);
+  }
 }
 
 function restorePlayerSettingsAfterFailure(): void {
@@ -945,21 +996,23 @@ function isPlayerButton(target: EventTarget | null): boolean {
 function handlePlayerShortcut(event: KeyboardEvent): void {
   if (playerView?.hidden || event.isComposing) return;
   if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+  if (event.defaultPrevented) return;
   if (isPlayerFormControl(event.target) || isPlayerFormControl(document.activeElement)) return;
-  if (openPlayerMenuKind) {
+  const menuKind = openPlayerMenuKind();
+  if (menuKind) {
     if (event.key === "Escape" || event.key === "Tab") {
       event.preventDefault();
-      closePlayerMenu(openPlayerMenuKind, true);
+      playerListboxes[menuKind]?.close(true);
       return;
     }
     if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Home" || event.key === "End") {
       event.preventDefault();
-      movePlayerMenuFocus(event.key);
+      playerListboxes[menuKind]?.moveFocus(event.key);
       return;
     }
-    if (event.key === " " && document.activeElement instanceof HTMLButtonElement && document.activeElement.getAttribute("role") === "option") {
+    if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      document.activeElement.click();
+      playerListboxes[menuKind]?.activateFocused();
       return;
     }
   }
@@ -968,7 +1021,7 @@ function handlePlayerShortcut(event: KeyboardEvent): void {
     closePlayerSettings(true);
     return;
   }
-  if (event.defaultPrevented || playerToggleButton?.disabled) return;
+  if (playerToggleButton?.disabled) return;
 
   const shortcut = event.key === " " ? "Space" : event.key && event.key !== "Unidentified" ? event.key : event.code;
   if (shortcut === "Escape" && playerFullscreen) {
@@ -1217,9 +1270,11 @@ function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
     case "tracks":
       playerAudioTracks = event.audio;
       playerSubtitleTracks = event.subtitles;
-      if (openPlayerMenuKind === "audio" || openPlayerMenuKind === "subtitle") renderPlayerMenu(openPlayerMenuKind);
-      renderPlayerMenuValue("audio");
-      renderPlayerMenuValue("subtitle");
+      for (const kind of ["audio", "subtitle"] as const) {
+        if (playerListboxes[kind]?.isOpen) renderPlayerMenu(kind);
+        renderPlayerChips(kind);
+        renderPlayerMenuValue(kind);
+      }
       markPlayerUiStructureChanged();
       sendOverlayState();
       break;
@@ -1743,8 +1798,11 @@ async function loadContinueWatching(): Promise<void> {
 }
 
 function syncQueryControls(): void {
-  if (filterSelect) filterSelect.value = currentQuery.filter ?? "all";
-  if (sortSelect) sortSelect.value = currentQuery.sort ?? "recent";
+  const sort = currentQuery.sort ?? "recent";
+  const sortLabel = LIBRARY_SORT_OPTIONS.find((option) => option.value === sort)?.label ?? "最近观看";
+  if (sortMenuValue) sortMenuValue.textContent = sortLabel;
+  if (sortMenuTrigger) sortMenuTrigger.dataset.value = sort;
+  sortListbox?.syncSelection();
   document.querySelectorAll<HTMLButtonElement>("#library-filter-buttons [data-filter]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.filter === (currentQuery.filter ?? "all"))));
   renderSourceFilters();
 }
@@ -2704,26 +2762,15 @@ playerSettingsButton?.addEventListener("click", () => {
   else closePlayerSettings(true);
 });
 document.querySelector<HTMLButtonElement>("#player-settings-close")?.addEventListener("click", () => closePlayerSettings(true));
-for (const kind of ["speed", "audio", "subtitle"] as const) {
-  document.getElementById(`player-${kind}-trigger`)?.addEventListener("click", () => {
-    if (openPlayerMenuKind === kind) closePlayerMenu(kind, true);
-    else openPlayerMenu(kind);
-  });
-  document.getElementById(`player-${kind}-options`)?.addEventListener("click", (event) => {
-    const option = (event.target as HTMLElement).closest<HTMLButtonElement>('[role="option"]');
-    if (option) selectPlayerMenuOption(kind, option);
-  });
-}
 document.addEventListener("pointerdown", (event) => {
   if (playerView?.hidden !== false) return;
   const target = event.target instanceof Node ? event.target : undefined;
+  const element = target instanceof Element ? target : undefined;
   if (playerSettings && !playerSettings.hidden) {
     const inside = Boolean(target && playerSettings.contains(target));
-    const onSettingsTrigger = target instanceof Element && Boolean(target.closest("#player-settings-button"));
+    const onSettingsTrigger = Boolean(element?.closest("#player-settings-button"));
     if (!inside && !onSettingsTrigger) closePlayerSettings(true);
-    return;
   }
-  if (openPlayerMenuKind) closePlayerMenu(openPlayerMenuKind, false);
 });
 playerNextButton?.addEventListener("click", () => { void playNextEpisode(); });
 playerPlayNext?.addEventListener("click", () => { void playNextEpisode(); });
@@ -2812,12 +2859,6 @@ searchAllTypesButton?.addEventListener("click", () => {
 searchGrid?.addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-media-id]");
   if (button?.dataset.mediaId) void openDetail(button.dataset.mediaId, button);
-});
-filterSelect?.addEventListener("change", () => applyQuery({ filter: filterSelect.value as LocalLibraryQuery["filter"], page: 1 }));
-sortSelect?.addEventListener("change", () => {
-  const sort = sortSelect.value as LocalSort;
-  applyQuery({ sort, page: 1 });
-  void window.zVideo.appPreferences.setSort(sort).catch(() => setMessage("排序偏好保存失败，本次排序仍已应用。", true));
 });
 libraryPagination?.addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-page]");
