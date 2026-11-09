@@ -773,6 +773,9 @@ async function run(): Promise<void> {
         offlineOpen: document.querySelector('#offline-source-dialog')?.open === true,
         offlineTitle: document.querySelector('#offline-source-title')?.textContent || '',
         offlineCopy: document.querySelector('#offline-source-copy')?.textContent || '',
+        offlineDeleteText: document.querySelector('#offline-source-delete')?.textContent || '',
+        offlineError: document.querySelector('#offline-source-error')?.textContent || '',
+        offlineErrorHidden: document.querySelector('#offline-source-error')?.hidden !== false,
         activeId: document.activeElement?.id || '',
         removeOpen: document.querySelector('#remove-source-dialog')?.open === true,
         removeCopy: document.querySelector('#remove-source-copy')?.textContent || '',
@@ -799,6 +802,23 @@ async function run(): Promise<void> {
     assert.match(offlinePrompt.offlineCopy, /观看进度/);
     assert.equal(offlinePrompt.activeId, "offline-source-keep", "the safe choice owns the default focus");
     assert.equal(await evaluate(window, "document.querySelector('#offline-source-delete')?.textContent"), "已删除（清理记录）");
+    // A native close event is delivered asynchronously; this dispatch models a
+    // queued close from a previous offline dialog arriving after the new dialog opened.
+    await evaluate(window, "document.querySelector('#offline-source-dialog')?.dispatchEvent(new Event('close'))");
+    const offlineAfterStaleClose = await evaluate(window, `(() => ({
+      open: document.querySelector('#offline-source-dialog')?.open === true,
+      deleteText: document.querySelector('#offline-source-delete')?.textContent || '',
+      errorHidden: document.querySelector('#offline-source-error')?.hidden !== false,
+    }))()`);
+    assert.equal(offlineAfterStaleClose.open, true, "a queued close never dismisses the reopened offline dialog");
+    assert.equal(offlineAfterStaleClose.deleteText, "已删除（清理记录）", "a queued close never resets the reopened offline dialog action");
+    assert.equal(offlineAfterStaleClose.errorHidden, true);
+    failNextSourceRemove = true;
+    await evaluate(window, "document.querySelector('#offline-source-delete')?.click()");
+    const offlineFailure = await waitFor("offline cleanup failure stays in the dialog", readFolders, (value) => value.offlineOpen === true && value.offlineErrorHidden === false);
+    assert.match(offlineFailure.offlineError, /占用|重试/);
+    assert.equal(offlineFailure.offlineDeleteText, "重试清理");
+    assert.equal(offlineFailure.cards.length, 1, "a failed cleanup keeps the folder record");
     await evaluate(window, "document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
     await waitFor("offline question dismissed as temporary", readFolders, (value) => value.offlineOpen === false);
     const keptOffline = await waitFor("offline folder keeps its record", readFolders, (value) => value.cards.length === 1 && value.cards[0].available === false && /离线/.test(value.cards[0].text));
@@ -859,11 +879,39 @@ async function run(): Promise<void> {
     await waitFor("remove dialog dismissed by Esc", readFolders, (value) => value.removeOpen === false);
     assert.equal((await readFolders()).cards.length, 1, "Esc cancels removal without changing the folder");
 
-    await evaluate(window, "document.querySelector('[data-remove-source-id]')?.click()");
-    await waitFor("remove dialog reopened", readFolders, (value) => value.removeOpen === true);
+    // Regression for the async native close race: Esc closes the dialog, the
+    // close event is queued, and the dialog is reopened before that event lands.
+    // Rapid cycles plus an explicit stale close dispatch make the ordering
+    // deterministic instead of relying on the machine's event timing.
+    const rapidReopen = await evaluate(window, `(() => {
+      const removeButton = document.querySelector('[data-remove-source-id]');
+      const dialog = document.querySelector('#remove-source-dialog');
+      for (let cycle = 0; cycle < 3; cycle += 1) {
+        removeButton?.click();
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      }
+      removeButton?.click();
+      return {
+        open: dialog?.open === true,
+        confirmText: document.querySelector('#remove-source-confirm')?.textContent || '',
+        errorHidden: document.querySelector('#remove-source-error')?.hidden !== false,
+      };
+    })()`);
+    assert.equal(rapidReopen.open, true, "the remove dialog reopens after rapid Esc close/reopen cycles");
+    assert.equal(rapidReopen.confirmText, "移除并删除进度");
+    assert.equal(rapidReopen.errorHidden, true);
+    await evaluate(window, "document.querySelector('#remove-source-dialog')?.dispatchEvent(new Event('close'))");
+    const removeAfterStaleClose = await evaluate(window, `(() => ({
+      open: document.querySelector('#remove-source-dialog')?.open === true,
+      confirmText: document.querySelector('#remove-source-confirm')?.textContent || '',
+      errorHidden: document.querySelector('#remove-source-error')?.hidden !== false,
+    }))()`);
+    assert.equal(removeAfterStaleClose.open, true, "a queued close never dismisses the reopened remove dialog");
+    assert.equal(removeAfterStaleClose.confirmText, "移除并删除进度", "a queued close never resets the reopened remove dialog action");
+    assert.equal(removeAfterStaleClose.errorHidden, true);
     failNextSourceRemove = true;
     await evaluate(window, "document.querySelector('#remove-source-confirm')?.click()");
-    const removeFailure = await waitFor("remove failure stays in the dialog", readFolders, (value) => value.removeOpen === true && value.removeErrorHidden === false);
+    const removeFailure = await waitFor("remove failure stays in the reopened dialog", readFolders, (value) => value.removeOpen === true && value.removeErrorHidden === false);
     assert.match(removeFailure.removeError, /占用|重试/);
     assert.equal(removeFailure.removeConfirmText, "重试移除");
     assert.equal(removeFailure.cards.length, 1, "a failed removal leaves the folder record intact");
