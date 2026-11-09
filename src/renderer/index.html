@@ -73,10 +73,14 @@
           <div id="library-message" class="status" role="status" aria-live="polite"></div>
 
           <section id="library-error" class="library-error" role="alert" hidden>
-            <h2>片库加载失败</h2>
+            <h2 id="library-error-title">片库加载失败</h2>
             <p id="library-error-message"></p>
-            <p id="library-error-code"></p>
-            <button id="library-error-retry" class="primary-button" type="button">重试</button>
+            <div class="state-actions">
+              <button id="library-error-retry" class="primary-button" type="button">重试</button>
+              <button id="library-error-copy" class="secondary-button" type="button">复制诊断信息</button>
+              <button id="library-error-folders" class="secondary-button" type="button">查看文件夹</button>
+            </div>
+            <details class="tech-details"><summary>技术详情</summary><p id="library-error-code"></p></details>
           </section>
 
             <div id="onboarding" class="onboarding" hidden><p class="eyebrow">WELCOME</p><h1>你的私人影院，从这里开始</h1><p>添加本地文件夹，或直接打开一个视频。</p><button type="button" class="primary-button" data-import="folder">添加文件夹</button> <button type="button" class="secondary-button" data-import="video">打开单个视频</button></div>
@@ -120,12 +124,32 @@
                 <option value="all">全部</option><option value="movie">电影</option><option value="show">剧集</option><option value="episode">单集</option><option value="unclassified">未分类</option>
               </select>
             </div>
+            <div id="library-offline-notice" class="library-offline" role="status" hidden>
+              <span id="library-offline-text"></span>
+              <button id="library-offline-folders" class="secondary-button" type="button">查看文件夹</button>
+            </div>
             <div id="library-grid" class="library-grid" role="list" aria-live="polite"></div>
+            <section id="library-page-error" class="library-error" role="alert" aria-labelledby="library-page-error-title" hidden>
+              <h2 id="library-page-error-title" tabindex="-1">这一页没有读取成功</h2>
+              <p id="library-page-error-message">这不是空片库。现有作品没有被删除，可以重试当前页，或返回首页稍后继续。</p>
+              <div class="state-actions">
+                <button id="library-page-error-retry" class="primary-button" type="button">重试当前页</button>
+                <button id="library-page-error-back" class="secondary-button" type="button">返回首页</button>
+              </div>
+              <details class="tech-details"><summary>技术详情</summary><p id="library-page-error-code"></p></details>
+            </section>
             <div id="library-empty" class="empty-state" hidden>
               <h2 id="library-empty-title">还没有本地影片</h2>
               <p id="library-empty-message">选择一个文件夹开始索引，或直接打开一个视频文件。</p>
-              <button id="search-all-types-button" class="primary-button" type="button" hidden>搜索全部类型</button>
-              <button id="library-retry-button" class="secondary-button" type="button" hidden>重试</button>
+              <div id="library-empty-actions" class="empty-actions">
+                <button id="empty-add-folder" class="primary-button" type="button" hidden>添加文件夹</button>
+                <button id="empty-add-video" class="secondary-button" type="button" hidden>添加单个视频</button>
+                <button id="empty-rescan" class="secondary-button" type="button" hidden>重新扫描</button>
+                <button id="empty-view-all" class="secondary-button" type="button" hidden>查看全部</button>
+                <button id="empty-clear-search" class="secondary-button" type="button" hidden>清除搜索</button>
+                <button id="search-all-types-button" class="primary-button" type="button" hidden>在全部类型中搜索</button>
+              </div>
+              <details id="empty-formats" class="tech-details" hidden><summary>查看支持的格式</summary><p>支持 MP4、MKV、AVI、MOV、WebM、M4V、TS、M2TS；同名 NFO、海报和背景图会一起读取，不会移动或改名文件。</p></details>
             </div>
             <nav id="library-pagination" class="library-pagination" aria-label="片库分页"></nav>
           </section>

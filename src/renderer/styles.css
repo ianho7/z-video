@@ -452,3 +452,42 @@ dialog::backdrop { background: #000b; }.dialog-actions { justify-content: flex-e
 .detail-error-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
 .detail-playback-note { margin: 0 0 14px; padding: 10px 14px; border-radius: var(--r-pill); color: var(--warning); background: var(--warning-on); font-size: 12px; font-weight: 800; }
 .detail-actions .secondary-button:disabled { cursor: not-allowed; opacity: .55; }
+
+/* Ticket 09 · B5b pagination, sticky header and empty/error/offline actions. */
+.window-bar { position: sticky; top: 0; z-index: 40; }
+.app-header { position: sticky; top: 36px; z-index: 30; background: var(--bg); }
+.library-pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; }
+.library-pagination button { min-width: 52px; font-size: 15px; }
+.library-pagination button[data-page-role="first"],
+.library-pagination button[data-page-role="previous"],
+.library-pagination button[data-page-role="next"],
+.library-pagination button[data-page-role="last"] { padding-inline: 14px; color: var(--text-muted); }
+.library-pagination button:disabled { cursor: default; }
+.page-status { margin-left: 6px; color: var(--text-muted); font: 800 13px Nunito, "Microsoft YaHei UI", sans-serif; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.jump-form { display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 12px; font-weight: 800; white-space: nowrap; }
+.jump-input { width: 68px; min-height: 44px; padding: 0 8px; border: 1px solid var(--surface-2); border-radius: 12px; color: var(--text); background: var(--surface); text-align: center; font: 800 14px Nunito, sans-serif; }
+.jump-input[aria-invalid="true"] { border-color: var(--error); }
+.jump-form .secondary-button { min-width: 58px; padding-inline: 12px; }
+.jump-error { flex-basis: 100%; color: var(--error); font-size: 12px; text-align: center; }
+.state-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+.library-error .state-actions button { margin-top: 0; }
+.tech-details { margin-top: 12px; color: var(--text-muted); font-size: 12px; }
+.tech-details summary { display: flex; min-height: 44px; align-items: center; width: fit-content; cursor: pointer; color: var(--lavender); font-weight: 800; }
+.tech-details p { margin: 4px 0 0; overflow-wrap: anywhere; line-height: 1.6; }
+.empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.library-offline { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 0 0 18px; padding: 12px 16px; border-radius: 20px; color: var(--warning); background: var(--warning-on); font-size: 13px; line-height: 1.6; }
+.library-offline .secondary-button { flex: none; background: var(--warning); color: var(--warning-on); }
+#library-page-error h2:focus { outline: none; }
+#library-page-error h2:focus-visible { outline: 3px solid var(--lavender); outline-offset: 4px; }
+@media (max-height: 700px) {
+  .library-pagination { margin: 12px 0 8px; gap: 6px; }
+  .library-pagination button { min-width: 44px; height: 44px; }
+  .page-status, .jump-form { font-size: 12px; }
+}
+@media (max-width: 980px) {
+  .library-pagination button { min-width: 44px; padding-inline: 10px; }
+  .library-pagination button[data-page-role="first"],
+  .library-pagination button[data-page-role="previous"],
+  .library-pagination button[data-page-role="next"],
+  .library-pagination button[data-page-role="last"] { padding-inline: 10px; }
+}
