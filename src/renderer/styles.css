@@ -492,3 +492,20 @@ dialog::backdrop { background: #000b; }.dialog-actions { justify-content: flex-e
 .player-setting-note { color: var(--text-muted); font-size: 11px; }
 .player-settings-foot { grid-column: 1 / -1; margin: 0; color: var(--text-muted); font-size: 11px; }
 .player-settings-foot .key { display: inline-block; padding: 1px 6px; border-radius: 6px; color: var(--text); background: var(--surface); font-weight: 800; }
+
+/* B5a · explicit search destination. The header input only submits on Enter or
+   the magnifier button; the search section owns title, count, type filter and
+   the return path instead of filtering the page behind the user. */
+.search-submit { display: grid; min-width: 28px; min-height: 28px; place-items: center; padding: 0; border: 0; color: var(--text-muted); background: transparent; font-size: 22px; line-height: 1; }
+.search-submit:hover { color: var(--text); }
+.detail-search-button { min-height: 44px; padding-inline: 16px; border-radius: var(--r-pill); }
+.search-section { display: block; padding-top: 4px; }
+.search-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; margin: 8px 0 20px; }
+.search-heading-copy { min-width: 0; }
+.search-heading h1 { margin: 6px 0 0; overflow-wrap: anywhere; font-size: clamp(30px, 4vw, 40px); font-weight: 900; letter-spacing: -.03em; }
+.search-count { min-height: 22px; margin: 8px 0 0; color: var(--text-muted); font: 800 15px Nunito, "Microsoft YaHei UI", sans-serif; }
+.search-back-path { margin: 4px 0 0; font-size: 12px; }
+.search-back-button { flex: 0 0 auto; }
+#search-filter-buttons { margin-bottom: 22px; }
+.match-chip { display: inline-flex; max-width: 100%; align-items: center; padding: 5px 10px; overflow: hidden; border-radius: var(--r-pill); color: var(--lavender); background: var(--surface-2); font: 700 11px Nunito, "Microsoft YaHei UI", sans-serif; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 980px) { .search-heading { align-items: flex-start; flex-wrap: wrap; } .search-back-button { min-height: 44px; } }

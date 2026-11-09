@@ -148,6 +148,35 @@ async function run(): Promise<void> {
     );
     assert.equal(initial.localApi, true);
     const capture = async (name: string): Promise<void> => { if (process.env.Z_VIDEO_CAPTURE_DIR) { await mkdir(process.env.Z_VIDEO_CAPTURE_DIR, { recursive: true }); await new Promise((resolve) => setTimeout(resolve, 150)); await writeFile(join(process.env.Z_VIDEO_CAPTURE_DIR, `${name}.png`), (await window.webContents.capturePage()).toPNG()); } };
+    const readSearch = () => evaluate(window, `(() => ({
+      hidden: document.querySelector('#search-section')?.hidden,
+      title: document.querySelector('#search-title')?.textContent || '',
+      count: document.querySelector('#search-count')?.textContent || '',
+      back: document.querySelector('#search-back')?.textContent || '',
+      backPath: document.querySelector('#search-back-path')?.textContent || '',
+      query: document.querySelector('#library-search-input')?.value || '',
+      formHidden: document.querySelector('#library-search-form')?.hidden,
+      filter: document.querySelector('#search-filter-buttons [aria-pressed="true"]')?.dataset.filter || '',
+      emptyHidden: document.querySelector('#search-empty')?.hidden,
+      emptyTitle: document.querySelector('#search-empty-title')?.textContent || '',
+      emptyMessage: document.querySelector('#search-empty-message')?.textContent || '',
+      allTypesHidden: document.querySelector('#search-all-types-button')?.hidden,
+      cards: [...document.querySelectorAll('#search-grid .media-card')].map((card) => ({
+        title: card.querySelector('.media-card-title')?.textContent || '',
+        meta: card.querySelector('.media-card-meta')?.textContent || '',
+        chips: [...card.querySelectorAll('.match-chip')].map((chip) => chip.textContent || ''),
+      })),
+      listTitles: [...document.querySelectorAll('#library-grid .media-card-title')].map((title) => title.textContent || ''),
+    }))()`);
+    const submitSearch = async (query: string): Promise<void> => {
+      await evaluate(window, `(() => {
+        const input = document.querySelector('#library-search-input');
+        input.value = ${JSON.stringify(query)};
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        document.querySelector('#library-search-form').requestSubmit();
+        return true;
+      })()`);
+    };
     await waitFor("onboarding visible", () => evaluate(window, "document.querySelector('#onboarding')?.hidden === false"), Boolean);
     await capture("onboarding");
 
@@ -457,6 +486,98 @@ async function run(): Promise<void> {
     await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
     await waitFor("back to show work list", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === true);
 
+    // B5a: search is its own view with an explicit submit, work-level dedupe,
+    // matched-episode chips, an in-place type filter and a real return path.
+    const beforeTyping = await readSearch();
+    await evaluate(window, "(() => { const input = document.querySelector('#library-search-input'); input.value = 'Next Episode'; input.dispatchEvent(new Event('input', { bubbles: true })); return true; })()");
+    await new Promise((resolve) => setTimeout(resolve, 320));
+    const typedOnly = await readSearch();
+    assert.equal(typedOnly.hidden, true, "typing alone never enters the search view");
+    assert.deepEqual(typedOnly.listTitles, beforeTyping.listTitles, "typing alone never filters the list behind the header");
+    await evaluate(window, "document.querySelector('#library-search-form').requestSubmit()");
+    const episodeSearch = await waitFor(
+      "explicit search view for an episode-name query",
+      readSearch,
+      (value) => value.hidden === false && value.cards.length === 1,
+    );
+    assert.equal(episodeSearch.title, "搜索「Next Episode」");
+    assert.match(episodeSearch.count, /共 1 部作品/);
+    assert.equal(episodeSearch.query, "Next Episode", "the submitted query stays in the search field");
+    assert.equal(episodeSearch.filter, "show", "search inherits the current work-type filter");
+    assert.match(episodeSearch.back, /清空搜索/, "the search view owns an explicit clear/return entry");
+    assert.match(episodeSearch.backPath, /剧集/, "the return path names the page search was entered from");
+    assert.equal(episodeSearch.emptyHidden, true);
+    assert.equal(episodeSearch.cards.length, 1, "three matching episodes of one show collapse into one work card");
+    assert.equal(episodeSearch.cards[0]?.title, "Owned Next Show");
+    assert.equal(episodeSearch.cards[0]?.chips.length, 1, "the matched episode is marked with one chip");
+    assert.match(episodeSearch.cards[0]?.chips[0] ?? "", /第 1 季 第 1 集 · Next Episode 1/, "the chip names the matched season, episode and title");
+    await capture("search-results");
+
+    await evaluate(window, "document.querySelector('#search-filter-buttons [data-filter=movie]')?.click()");
+    const filteredSearch = await waitFor(
+      "search filter keeps the query",
+      readSearch,
+      (value) => value.hidden === false && value.emptyHidden === false && value.filter === "movie",
+    );
+    assert.equal(filteredSearch.title, "搜索「Next Episode」", "switching type inside search keeps the query");
+    assert.equal(filteredSearch.query, "Next Episode");
+    assert.equal(filteredSearch.cards.length, 0);
+    assert.match(filteredSearch.emptyTitle, /没有找到/);
+    assert.equal(filteredSearch.allTypesHidden, false, "a filtered empty search offers searching all types");
+    await capture("search-empty");
+    await evaluate(window, "document.querySelector('#search-all-types-button')?.click()");
+    const allTypesSearch = await waitFor(
+      "search all types keeps the query",
+      readSearch,
+      (value) => value.cards.length === 1 && value.filter === "all" && value.query === "Next Episode",
+    );
+    assert.equal(allTypesSearch.cards[0]?.title, "Owned Next Show");
+    await evaluate(window, "document.querySelector('#search-filter-buttons [data-filter=episode]')?.click()");
+    const episodeFilesSearch = await waitFor(
+      "search single-episode filter keeps the query",
+      readSearch,
+      (value) => value.cards.length === 3 && value.filter === "episode" && value.query === "Next Episode",
+    );
+    assert.match(episodeFilesSearch.count, /共 3 集/, "the single-episode search filter keeps file-level counting");
+    assert.equal(episodeFilesSearch.cards.every((card: { chips: string[] }) => card.chips.length === 0), true, "file-level results do not fake a matched-episode chip");
+    await evaluate(window, "document.querySelector('#search-filter-buttons [data-filter=all]')?.click()");
+    await waitFor("search work filter restored", readSearch, (value) => value.cards.length === 1 && value.filter === "all");
+    await evaluate(window, "document.querySelector('#search-back')?.click()");
+    const returnedToShowList = await waitFor(
+      "clear search returns to the pre-search page",
+      () => evaluate(window, `(() => ({
+        searchHidden: document.querySelector('#search-section')?.hidden,
+        filter: document.querySelector('#library-grid .media-card') ? document.querySelector('#library-filter')?.value || '' : '',
+        query: document.querySelector('#library-search-input')?.value || '',
+        scope: document.querySelector('#page-scope')?.textContent || '',
+        titles: [...document.querySelectorAll('#library-grid .media-card-title')].map((title) => title.textContent || ''),
+        nav: document.querySelector('[data-nav][aria-current="page"]')?.dataset.nav || '',
+      }))()`),
+      (value) => value.searchHidden === true && value.filter === "show" && value.titles.length === 1,
+    );
+    assert.equal(returnedToShowList.query, "", "clearing search empties the search field");
+    assert.equal(returnedToShowList.titles[0], "Owned Next Show");
+    assert.match(returnedToShowList.scope, /部作品/, "the pre-search work list and count are restored");
+    assert.equal(returnedToShowList.nav, "all", "the page that owned search stays highlighted");
+
+    await submitSearch("Next Episode");
+    await waitFor("search view before navigation", readSearch, (value) => value.hidden === false && value.cards.length === 1);
+    await evaluate(window, "document.querySelector('[data-nav=home]')?.click()");
+    const navAfterHome = await waitFor(
+      "top navigation leaves the search view",
+      () => evaluate(window, "({ searchHidden: document.querySelector('#search-section')?.hidden, query: document.querySelector('#library-search-input')?.value || '', nav: document.querySelector('[data-nav][aria-current=\"page\"]')?.dataset.nav || '', home: document.querySelector('#home-hero')?.hidden === false, collection: document.querySelector('#collection-section')?.hidden })"),
+      (value) => value.searchHidden === true && value.nav === "home",
+    );
+    assert.equal(navAfterHome.query, "", "switching top navigation clears the old query");
+    await evaluate(window, "document.querySelector('[data-nav=show]')?.click()");
+    const navClearedSearch = await waitFor(
+      "old query does not silently apply under the next tab",
+      () => evaluate(window, "({ query: document.querySelector('#library-search-input')?.value || '', filter: document.querySelector('#library-filter')?.value || '', titles: [...document.querySelectorAll('#library-grid .media-card-title')].map((title) => title.textContent || ''), searchHidden: document.querySelector('#search-section')?.hidden })"),
+      (value) => value.searchHidden === true && value.filter === "show" && value.titles.length === 1,
+    );
+    assert.equal(navClearedSearch.query, "");
+    assert.equal(navClearedSearch.titles[0], "Owned Next Show");
+
     delayNextDetail = true;
     await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
     const loadingState = await evaluate(window, `(() => ({
@@ -555,18 +676,17 @@ async function run(): Promise<void> {
     assert.match(released.secondMeta, /2025-09-01/, "dated show ranks after the newer movie");
     const storedSort = await evaluate(window, "window.zVideo.appPreferences.get()");
     assert.equal(storedSort.sort, "released_desc", "the renderer persists the work-level sort preference through main");
-    await evaluate(window, "(() => { const input = document.querySelector('#library-search-input'); if (!(input instanceof HTMLInputElement)) throw new Error('search missing'); input.value = 'Index fixture index-00000'; input.dispatchEvent(new Event('input', { bubbles: true })); })()");
+    await evaluate(window, "(() => { const input = document.querySelector('#library-search-input'); if (!(input instanceof HTMLInputElement)) throw new Error('search missing'); input.value = 'Index fixture index-00000'; input.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#library-search-form').requestSubmit(); })()");
     const unknownDate = await waitFor(
-      "unknown premiere date label",
-      () => evaluate(window, "(() => ({ meta: document.querySelector('#library-grid .media-card-meta')?.textContent || '', cards: document.querySelectorAll('#library-grid .media-card').length, skeletons: document.querySelectorAll('#library-grid .media-skeleton').length, message: document.querySelector('#library-message')?.textContent || '', scope: document.querySelector('#page-scope')?.textContent || '', query: document.querySelector('#library-search-input')?.value || '', filter: document.querySelector('#library-filter')?.value || '', sort: document.querySelector('#library-sort')?.value || '', busy: document.querySelector('#library-grid')?.getAttribute('aria-busy') }))()"),
+      "unknown premiere date label in search results",
+      () => evaluate(window, "(() => ({ meta: document.querySelector('#search-grid .media-card-meta')?.textContent || '', cards: document.querySelectorAll('#search-grid .media-card').length, skeletons: document.querySelectorAll('#search-grid .media-skeleton').length, message: document.querySelector('#library-message')?.textContent || '', count: document.querySelector('#search-count')?.textContent || '', query: document.querySelector('#library-search-input')?.value || '', filter: document.querySelector('#search-filter-buttons [aria-pressed=\"true\"]')?.dataset.filter || '', sort: document.querySelector('#library-sort')?.value || '', busy: document.querySelector('#search-grid')?.getAttribute('aria-busy') }))()"),
       (value) => value.meta.includes("发布日期未知"),
     );
     assert.match(unknownDate.meta, /发布日期未知/);
     assert.doesNotMatch(unknownDate.meta, /发布日期 (19|20)\d{2}/, "a year is never shown as a premiere date");
+    assert.match(unknownDate.count, /共 1 部作品/);
     await evaluate(window, "document.querySelector('#library-search-clear')?.click()");
-    // The search input debounce outlives the clear click; let it settle before
-    // reloading, so the preference check observes a completed library request.
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await waitFor("search cleared before reload", () => evaluate(window, "document.querySelector('#search-section')?.hidden"), (hidden) => hidden === true);
     window.webContents.reload();
     const restoredSort = await waitFor(
       "saved work-level sort preference restored after reload",
@@ -614,10 +734,11 @@ async function run(): Promise<void> {
       () => evaluate(window, "document.scrollingElement ? document.scrollingElement.scrollTop : window.scrollY"),
       (top) => Math.abs(Number(top) - originScroll.top) <= 4,
     );
-    await evaluate(window, "(() => { const search = document.querySelector('#library-search-input'); if (!(search instanceof HTMLInputElement)) throw new Error('search missing'); search.value = 'Next Episode 1'; search.dispatchEvent(new Event('input', { bubbles: true })); })()");
-    await waitFor("episode search returns its show work card", () => evaluate(window, "document.querySelector('#library-grid .media-card-title')?.textContent || ''"), (title) => title === "Owned Next Show");
-    assert.equal(await evaluate(window, "document.querySelectorAll('#library-grid .media-card').length"), 1, "an episode-name search returns the show card once");
-    await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
+    await evaluate(window, "(() => { const search = document.querySelector('#library-search-input'); if (!(search instanceof HTMLInputElement)) throw new Error('search missing'); search.value = 'Next Episode 1'; search.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#library-search-form').requestSubmit(); })()");
+    const episodeSearchAgain = await waitFor("episode search returns its show work card", readSearch, (value) => value.hidden === false && value.cards.length === 1 && value.cards[0]?.title === "Owned Next Show");
+    assert.equal(episodeSearchAgain.cards.length, 1, "an episode-name search returns the show card once");
+    assert.match(episodeSearchAgain.cards[0]?.chips[0] ?? "", /第 1 季 第 1 集 · Next Episode 1/);
+    await evaluate(window, "document.querySelector('#search-grid [data-media-id]')?.click()");
     await waitFor("episode detail", () => evaluate(window, "document.querySelector('#media-detail-open')?.disabled === false"), Boolean);
     await waitFor("episode detail title", () => evaluate(window, "document.querySelector('#media-detail-title')?.textContent"), (title) => title === "Owned Next Show");
     const episodeSelection = await evaluate(window, `(() => {
@@ -812,15 +933,15 @@ async function run(): Promise<void> {
     await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
     await waitFor("back to library after episode playback", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === true);
 
-    await evaluate(window, "(() => { const search = document.querySelector('#library-search-input'); if (!(search instanceof HTMLInputElement)) throw new Error('search missing'); search.value = 'Owned UX Audit Feature Film 2026'; search.dispatchEvent(new Event('input', { bubbles: true })); })()");
-    await waitFor("long title card", () => evaluate(window, "document.querySelector('#library-grid .media-card-title')?.textContent || ''"), (value) => value === LONG_TITLE);
-    const openedMediaId = await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.dataset.mediaId || ''");
+    await evaluate(window, "(() => { const search = document.querySelector('#library-search-input'); if (!(search instanceof HTMLInputElement)) throw new Error('search missing'); search.value = 'Owned UX Audit Feature Film 2026'; search.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#library-search-form').requestSubmit(); })()");
+    await waitFor("long title card", () => evaluate(window, "document.querySelector('#search-grid .media-card-title')?.textContent || ''"), (value) => value === LONG_TITLE);
+    const openedMediaId = await evaluate(window, "document.querySelector('#search-grid [data-media-id]')?.dataset.mediaId || ''");
     assert.ok(openedMediaId, "search result exposes an openable movie card");
-    await evaluate(window, "document.querySelector('#library-filter-buttons [data-filter=show]')?.click()");
-    await waitFor("filtered search empty state", () => evaluate(window, "({ title: document.querySelector('#library-empty-title')?.textContent || '', actionHidden: document.querySelector('#search-all-types-button')?.hidden, filter: document.querySelector('#library-filter')?.value, query: document.querySelector('#library-search-input')?.value })"), (value) => value.title === "没有匹配结果" && value.actionHidden === false && value.filter === "show" && value.query === "Owned UX Audit Feature Film 2026");
+    await evaluate(window, "document.querySelector('#search-filter-buttons [data-filter=show]')?.click()");
+    await waitFor("filtered search empty state", () => evaluate(window, "({ title: document.querySelector('#search-empty-title')?.textContent || '', actionHidden: document.querySelector('#search-all-types-button')?.hidden, filter: document.querySelector('#search-filter-buttons [aria-pressed=\"true\"]')?.dataset.filter, query: document.querySelector('#library-search-input')?.value })"), (value) => value.title.includes("没有找到作品") && value.actionHidden === false && value.filter === "show" && value.query === "Owned UX Audit Feature Film 2026");
     await evaluate(window, "document.querySelector('#search-all-types-button')?.click()");
-    await waitFor("search all media keeps query", () => evaluate(window, "({ title: document.querySelector('#library-grid .media-card-title')?.textContent || '', filter: document.querySelector('#library-filter')?.value, query: document.querySelector('#library-search-input')?.value })"), (value) => value.title === LONG_TITLE && value.filter === "all" && value.query === "Owned UX Audit Feature Film 2026");
-    await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
+    await waitFor("search all media keeps query", () => evaluate(window, "({ title: document.querySelector('#search-grid .media-card-title')?.textContent || '', filter: document.querySelector('#search-filter-buttons [aria-pressed=\"true\"]')?.dataset.filter, query: document.querySelector('#library-search-input')?.value })"), (value) => value.title === LONG_TITLE && value.filter === "all" && value.query === "Owned UX Audit Feature Film 2026");
+    await evaluate(window, "document.querySelector('#search-grid [data-media-id]')?.click()");
 
     const detail = await waitFor(
       "long detail view",
@@ -855,7 +976,7 @@ async function run(): Promise<void> {
     await waitFor("detail back navigation", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === true);
     await waitFor("movie card focus restoration", () => evaluate(window, "document.activeElement?.dataset.mediaId || ''"), (mediaId) => mediaId === openedMediaId);
     assert.equal(await evaluate(window, "document.activeElement?.dataset.mediaId"), openedMediaId, "return restores focus to the opened movie card");
-    await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
+    await evaluate(window, "document.querySelector('#search-grid [data-media-id]')?.click()");
     const repeatedMovie = await waitFor(
       "movie detail ready after focus check",
       () => evaluate(window, "({ hidden: document.querySelector('#media-detail')?.hidden, contentHidden: document.querySelector('#detail-content')?.hidden, openDisabled: document.querySelector('#media-detail-open')?.disabled, title: document.querySelector('#media-detail-title')?.textContent || '', playText: document.querySelector('#media-detail-open')?.textContent || '', restartHidden: document.querySelector('#media-detail-restart')?.hidden, restartDisabled: document.querySelector('#media-detail-restart')?.disabled })"),
@@ -863,6 +984,34 @@ async function run(): Promise<void> {
     );
     assert.equal(repeatedMovie.playText, "播放", "a movie with no saved progress uses the plain play label");
     assert.equal(repeatedMovie.restartHidden, true, "the secondary restart action only appears once progress exists");
+
+    const detailSearchEntry = await evaluate(window, "({ formHidden: document.querySelector('#library-search-form')?.hidden, entryHidden: document.querySelector('#detail-search-entry')?.hidden, title: document.querySelector('#media-detail-title')?.textContent || '' })");
+    assert.equal(detailSearchEntry.formHidden, true, "detail never shows the global search input");
+    assert.equal(detailSearchEntry.entryHidden, false, "detail keeps one explicit search entry");
+    await evaluate(window, "document.querySelector('#detail-search-entry')?.click()");
+    await waitFor(
+      "detail search form",
+      () => evaluate(window, "({ formHidden: document.querySelector('#library-search-form')?.hidden, focused: document.activeElement?.id || '' })"),
+      (value) => value.formHidden === false && value.focused === "library-search-input",
+    );
+    await evaluate(window, "(() => { const input = document.querySelector('#library-search-input'); input.value = 'Owned Next Show'; input.dispatchEvent(new Event('input', { bubbles: true })); return true; })()");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const detailTyping = await evaluate(window, "({ detailHidden: document.querySelector('#media-detail')?.hidden, searchHidden: document.querySelector('#search-section')?.hidden, title: document.querySelector('#media-detail-title')?.textContent || '', listTitles: [...document.querySelectorAll('#library-grid .media-card-title')].map((title) => title.textContent || '') })");
+    assert.equal(detailTyping.detailHidden, false, "typing in the detail search entry never leaves the detail");
+    assert.equal(detailTyping.searchHidden, true, "typing in the detail search entry never opens results early");
+    assert.equal(detailTyping.title, LONG_TITLE);
+    await evaluate(window, "document.querySelector('#library-search-form').requestSubmit()");
+    const detailEnteredSearch = await waitFor("detail search entry opens search results", readSearch, (value) => value.hidden === false && value.title === "搜索「Owned Next Show」" && value.cards[0]?.title === "Owned Next Show");
+    assert.equal(detailEnteredSearch.cards.length, 1);
+    assert.match(detailEnteredSearch.back, /返回详情/, "search entered from detail names the detail return path");
+    await evaluate(window, "document.querySelector('#search-back')?.click()");
+    const backToDetail = await waitFor(
+      "clear search returns to the detail it came from",
+      () => evaluate(window, "({ detailHidden: document.querySelector('#media-detail')?.hidden, searchHidden: document.querySelector('#search-section')?.hidden, title: document.querySelector('#media-detail-title')?.textContent || '', query: document.querySelector('#library-search-input')?.value || '', entryHidden: document.querySelector('#detail-search-entry')?.hidden })"),
+      (value) => value.detailHidden === false && value.searchHidden === true && value.title === LONG_TITLE,
+    );
+    assert.equal(backToDetail.query, "", "clearing search empties the query");
+    assert.equal(backToDetail.entryHidden, false, "the detail search entry is shown again");
 
     window.setSize(900, 640);
     const minOuter = window.getSize();
@@ -873,15 +1022,15 @@ async function run(): Promise<void> {
     const minContent = minDetail.content;
     assert.ok(minOuter[0] >= 900 && minOuter[1] >= 640);
     assert.equal(minDetail.visible, true);
-    await evaluate(window, "document.querySelector('#library-search-clear')?.click()");
     await evaluate(window, "document.querySelector('#media-detail-open')?.click()");
     const player = await waitFor(
       "player title and controls",
-      () => evaluate(window, "(() => { const view = document.querySelector('[data-view=\"player\"]'); const surface = document.querySelector('.player-surface')?.getBoundingClientRect(); const controls = document.querySelector('.player-controls')?.getBoundingClientRect(); const title = document.querySelector('#player-current-title')?.getBoundingClientRect(); const toggle = document.querySelector('#player-toggle-button'); return { visible: view?.hidden === false, currentTitle: document.querySelector('#player-current-title')?.textContent || '', ready: toggle?.disabled === false, controlsHeight: controls?.height || 0, titleInControls: Boolean(title && controls && title.top >= controls.top && title.bottom <= controls.bottom), titleOutsideSurface: Boolean(title && surface && title.bottom <= surface.top) }; })()"),
+      () => evaluate(window, "(() => { const view = document.querySelector('[data-view=\"player\"]'); const surface = document.querySelector('.player-surface')?.getBoundingClientRect(); const controls = document.querySelector('.player-controls')?.getBoundingClientRect(); const title = document.querySelector('#player-current-title')?.getBoundingClientRect(); const toggle = document.querySelector('#player-toggle-button'); const searchRect = document.querySelector('#library-search-form')?.getBoundingClientRect(); return { visible: view?.hidden === false, currentTitle: document.querySelector('#player-current-title')?.textContent || '', ready: toggle?.disabled === false, controlsHeight: controls?.height || 0, titleInControls: Boolean(title && controls && title.top >= controls.top && title.bottom <= controls.bottom), titleOutsideSurface: Boolean(title && surface && title.bottom <= surface.top), searchWidth: searchRect?.width || 0 }; })()"),
       (value) => value.visible && value.currentTitle === LONG_TITLE && Math.abs(value.controlsHeight - 152) < 1 && !value.titleInControls && value.titleOutsideSurface && value.ready,
       15_000,
     );
     assert.equal(player.currentTitle, LONG_TITLE);
+    assert.equal(player.searchWidth, 0, "the player never exposes the global search input");
 
     window.webContents.send("local-playback:event", { type: "state", state: "ended" });
     const movieEnded = await waitFor(
@@ -1120,13 +1269,13 @@ async function run(): Promise<void> {
     assert.equal((await readFolders()).cards.length, 1, "temporarily disconnected folders stay registered");
 
     await evaluate(window, "document.querySelector('[data-nav=all]')?.click()");
-    await evaluate(window, "(() => { const search = document.querySelector('#library-search-input'); search.value = 'Owned UX Audit Feature Film 2026'; search.dispatchEvent(new Event('input', { bubbles: true })); })()");
+    await evaluate(window, "(() => { const search = document.querySelector('#library-search-input'); search.value = 'Owned UX Audit Feature Film 2026'; search.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#library-search-form').requestSubmit(); })()");
     await waitFor(
       "offline movie card",
-      () => evaluate(window, "({ title: document.querySelector('#library-grid .media-card-title')?.textContent || '', count: document.querySelectorAll('#library-grid .media-card').length })"),
+      () => evaluate(window, "({ title: document.querySelector('#search-grid .media-card-title')?.textContent || '', count: document.querySelectorAll('#search-grid .media-card').length })"),
       (value) => value.title === LONG_TITLE && value.count === 1,
     );
-    await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
+    await evaluate(window, "document.querySelector('#search-grid [data-media-id]')?.click()");
     const offlineDetail = await waitFor(
       "offline movie detail",
       () => evaluate(window, `(() => ({
@@ -1154,7 +1303,7 @@ async function run(): Promise<void> {
     assert.equal(offlineDetail.navCurrent, "all");
     await capture("movie-offline");
     await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
-    await waitFor("offline detail back to search", () => evaluate(window, "({ hidden: document.querySelector('#media-detail')?.hidden, query: document.querySelector('#library-search-input')?.value || '', title: document.querySelector('#library-grid .media-card-title')?.textContent || '' })"), (value) => value.hidden === true && value.query === "Owned UX Audit Feature Film 2026" && value.title === LONG_TITLE);
+    await waitFor("offline detail back to search", () => evaluate(window, "({ hidden: document.querySelector('#media-detail')?.hidden, query: document.querySelector('#library-search-input')?.value || '', title: document.querySelector('#search-grid .media-card-title')?.textContent || '' })"), (value) => value.hidden === true && value.query === "Owned UX Audit Feature Film 2026" && value.title === LONG_TITLE);
 
     await evaluate(window, "document.querySelector('[data-nav=folder]')?.click()");
     await waitFor("folder page before removal", readFolders, (value) => value.visible && value.cards.length === 1);
@@ -1233,6 +1382,16 @@ async function run(): Promise<void> {
         movieScope: movieWorks.scope,
       },
       releaseSort: { menu: sortMenu.options, firstTitle: released.firstTitle, firstMeta: released.firstMeta, secondMeta: released.secondMeta, unknownLabel: unknownDate, restored: restoredSort },
+      search: {
+        typedOnlyHidden: typedOnly.hidden,
+        episodeQuery: { title: episodeSearch.title, count: episodeSearch.count, filter: episodeSearch.filter, chips: episodeSearch.cards[0]?.chips, back: episodeSearch.back, backPath: episodeSearch.backPath },
+        filtered: { title: filteredSearch.title, query: filteredSearch.query, emptyTitle: filteredSearch.emptyTitle, allTypesHidden: filteredSearch.allTypesHidden },
+        allTypes: { filter: allTypesSearch.filter, cards: allTypesSearch.cards.length },
+        episodeFilter: { filter: episodeFilesSearch.filter, count: episodeFilesSearch.count, cards: episodeFilesSearch.cards.length, chips: episodeFilesSearch.cards.flatMap((card: { chips: string[] }) => card.chips) },
+        clearReturn: { query: returnedToShowList.query, filter: returnedToShowList.filter, scope: returnedToShowList.scope, nav: returnedToShowList.nav },
+        detailOrigin: { title: detailEnteredSearch.title, back: detailEnteredSearch.back, chips: detailEnteredSearch.cards[0]?.chips, typingStayedInDetail: detailTyping.detailHidden === false, returnsToDetail: backToDetail.detailHidden === false },
+        navClear: { homeNav: navAfterHome.nav, query: navAfterHome.query, clearedFilter: navClearedSearch.filter, clearedTitles: navClearedSearch.titles },
+      },
       defaultWindow: { outer: defaultOuter },
       detail: { default: { title: detail.title, plotLength: detail.plot.length, play: detail.button, viewport: detail.viewport }, minimum: { outer: minOuter, content: minContent, playVisible: minDetail.visible, viewport: minDetail.viewport } },
       player: { currentTitle: player.currentTitle, controlsHeight: player.controlsHeight, titleInControls: player.titleInControls, titleOutsideSurface: player.titleOutsideSurface },
@@ -1259,7 +1418,7 @@ async function run(): Promise<void> {
       removeFailure: { prompt: removePrompt.removeCopy, title: removePrompt.removeTitle, destructive: /destructive-button/.test(removePrompt.removeConfirmClass), defaultFocus: removePrompt.activeId, error: removeFailure.removeError, retryLabel: removeFailure.removeConfirmText },
       folders: { page: folderPage.cards.map((card: { text: string }) => card.text.slice(0, 160)), notice: folderPage.sourceText.includes(fixtureRoot) ? "root-leaked" : "safe", offline: { title: offlinePrompt.offlineTitle, copy: offlinePrompt.offlineCopy, kept: keptOffline.cards[0]?.text.slice(0, 120) }, rescanAllPrompt: offlinePromptAll.offlineCopy },
     }, null, 2) + "\n", "utf8");
-    process.stdout.write("PASS: production local-library UX smoke (home work shelves, continue row, all/movie/work counts, single-episode fallback, saved sort)\n");
+    process.stdout.write("PASS: production local-library UX smoke (home work shelves, continue row, all/movie/work counts, single-episode fallback, saved sort, explicit search view)\n");
     await quitProductionApp();
   } finally {
     dialog.showOpenDialog = originalShowOpenDialog;

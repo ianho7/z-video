@@ -23,6 +23,7 @@ import type {
   LocalCollectionQuery,
   LocalCollectionSummary,
   LocalContinueWatchingItem,
+  LocalLibraryFilter,
   LocalLibraryQuery,
   LocalLibrarySort,
   LocalLibraryState,
@@ -56,6 +57,18 @@ const pageScope = document.querySelector<HTMLElement>("#page-scope");
 const searchForm = document.querySelector<HTMLFormElement>("#library-search-form");
 const searchInput = document.querySelector<HTMLInputElement>("#library-search-input");
 const searchClear = document.querySelector<HTMLButtonElement>("#library-search-clear");
+const detailSearchEntry = document.querySelector<HTMLButtonElement>("#detail-search-entry");
+const searchSection = document.querySelector<HTMLElement>("#search-section");
+const searchTitle = document.querySelector<HTMLElement>("#search-title");
+const searchCount = document.querySelector<HTMLElement>("#search-count");
+const searchBackPath = document.querySelector<HTMLElement>("#search-back-path");
+const searchBackButton = document.querySelector<HTMLButtonElement>("#search-back");
+const searchGrid = document.querySelector<HTMLElement>("#search-grid");
+const searchEmpty = document.querySelector<HTMLElement>("#search-empty");
+const searchEmptyTitle = document.querySelector<HTMLElement>("#search-empty-title");
+const searchEmptyMessage = document.querySelector<HTMLElement>("#search-empty-message");
+const searchFilterButtons = document.querySelector<HTMLElement>("#search-filter-buttons");
+const searchEmptyClear = document.querySelector<HTMLButtonElement>("#search-empty-clear");
 const filterSelect = document.querySelector<HTMLSelectElement>("#library-filter");
 const sortSelect = document.querySelector<HTMLSelectElement>("#library-sort");
 const scanStatus = document.querySelector<HTMLElement>("#scan-status");
@@ -159,14 +172,31 @@ interface DetailOrigin {
   scrollTop: number;
   windowScrollY: number;
   focusMediaId: string | undefined;
-  focusContainerId: "#library-grid" | "#recent-row" | "#shows-row" | undefined;
+  focusContainerId: "#library-grid" | "#recent-row" | "#shows-row" | "#search-grid" | undefined;
   focusControlId: string | undefined;
 }
 let detailOrigin: DetailOrigin | undefined;
+let detailSearchFormOpen = false;
 let detailRequestMediaId: string | undefined;
+type SearchOriginKind = "home" | "library" | "episodes" | "sources" | "detail";
+interface SearchOrigin {
+  kind: SearchOriginKind;
+  nav: string | undefined;
+  libraryQuery: LocalLibraryQuery;
+  homeVisible: boolean;
+  scrollTop: number;
+  windowScrollY: number;
+  focusMediaId: string | undefined;
+  focusControlId: string | undefined;
+  detail: { mediaId: string; episodeId: string | undefined; origin: DetailOrigin | undefined } | undefined;
+}
+let searchActive = false;
+let searchQuery: string | undefined;
+let searchFilter: LocalLibraryFilter = "all";
+let searchPage = 1;
+let searchOrigin: SearchOrigin | undefined;
 let requestEpoch = 0;
 let continueEpoch = 0;
-let searchTimer: number | undefined;
 let scanId: string | undefined;
 let scanProgress: LocalScanProgress | undefined;
 let scanStartedAtMs: number | undefined;
@@ -288,6 +318,248 @@ function updateEmptyCopy(totalCount: number): void {
   const copy = currentEmptyCopy(totalCount);
   if (libraryEmptyTitle) libraryEmptyTitle.textContent = copy.title;
   if (libraryEmptyMessage) libraryEmptyMessage.textContent = copy.message;
+}
+
+/** B5a: one explicit search destination instead of filtering the current page. */
+function setNavCurrent(nav: string | undefined): void {
+  document.querySelectorAll<HTMLButtonElement>("[data-nav]").forEach((button) => {
+    if (nav && button.dataset.nav === nav) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+}
+
+function searchOriginLabel(kind: SearchOriginKind | undefined): string {
+  return kind === "home" ? "首页" : kind === "episodes" ? "单集列表" : kind === "sources" ? "文件夹" : kind === "detail" ? "详情" : "片库";
+}
+
+function updateHeaderSearch(): void {
+  const detailVisible = detail?.hidden === false;
+  const showForm = !detailVisible || detailSearchFormOpen;
+  if (searchForm) searchForm.hidden = !showForm;
+  if (detailSearchEntry) detailSearchEntry.hidden = !detailVisible || detailSearchFormOpen;
+}
+
+function updateSearchFilterPressed(): void {
+  searchFilterButtons?.querySelectorAll<HTMLButtonElement>("[data-filter]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.filter === searchFilter));
+  });
+}
+
+function updateSearchChrome(): void {
+  if (searchTitle) searchTitle.textContent = `搜索「${searchQuery ?? ""}」`;
+  if (searchBackButton) searchBackButton.textContent = `返回${searchOriginLabel(searchOrigin?.kind)} · 清空搜索`;
+  if (searchBackPath) {
+    const originQuery = searchOrigin?.libraryQuery;
+    const filter = originQuery?.filter ?? "all";
+    const page = originQuery?.page ?? 1;
+    const parts = [searchOriginLabel(searchOrigin?.kind), filter !== "all" ? filterLabel(filter) : "", page > 1 ? `第 ${page} 页` : ""].filter(Boolean);
+    searchBackPath.textContent = `搜索前：${parts.join(" · ")}`;
+  }
+  updateSearchFilterPressed();
+}
+
+function captureSearchOrigin(): SearchOrigin {
+  const focused = document.activeElement;
+  const detailVisible = detail?.hidden === false;
+  const kind: SearchOriginKind = detailVisible
+    ? "detail"
+    : sidebar?.hidden === false
+      ? "sources"
+      : homeVisible
+        ? "home"
+        : (currentQuery.filter ?? "all") === "episode"
+          ? "episodes"
+          : "library";
+  return {
+    kind,
+    nav: document.querySelector<HTMLButtonElement>("[data-nav][aria-current='page']")?.dataset.nav,
+    libraryQuery: { ...currentQuery },
+    homeVisible,
+    scrollTop: libraryContent?.scrollTop ?? 0,
+    windowScrollY: document.scrollingElement?.scrollTop ?? window.scrollY,
+    focusMediaId: focused instanceof HTMLElement && focused.dataset.mediaId ? focused.dataset.mediaId : undefined,
+    focusControlId: focused instanceof HTMLElement && focused.id ? `#${CSS.escape(focused.id)}` : undefined,
+    detail: detailVisible
+      ? { mediaId: activeDetail?.item.mediaId ?? selectedMediaId ?? "", episodeId: selectedMediaId, origin: detailOrigin }
+      : undefined,
+  };
+}
+
+function showSearchView(): void {
+  if (detail) detail.hidden = true;
+  if (sidebar) sidebar.hidden = true;
+  if (hero) hero.hidden = true;
+  if (continueSection) continueSection.hidden = true;
+  if (recentSection) recentSection.hidden = true;
+  if (showsSection) showsSection.hidden = true;
+  if (collectionSection) collectionSection.hidden = true;
+  if (onboarding) onboarding.hidden = true;
+  if (libraryContent) libraryContent.hidden = false;
+  if (searchSection) searchSection.hidden = false;
+  detailSearchFormOpen = false;
+  updateHeaderSearch();
+  updateScanUi();
+}
+
+function showSearchFailure(message: string): void {
+  if (searchGrid) searchGrid.replaceChildren();
+  if (searchEmpty) searchEmpty.hidden = false;
+  if (searchEmptyTitle) searchEmptyTitle.textContent = "搜索暂时不可用";
+  if (searchEmptyMessage) searchEmptyMessage.textContent = message;
+  if (searchAllTypesButton) searchAllTypesButton.hidden = true;
+  if (searchCount) searchCount.textContent = `${searchFilter === "episode" ? "共 0 集" : "共 0 部作品"} · ${filterLabel(searchFilter)}`;
+  setMessage(message, true);
+}
+
+function renderSearchPage(page: { mode: "collection"; items: LocalCollectionSummary[]; totalCount: number } | { mode: "media"; items: LocalMediaItem[]; totalCount: number }): void {
+  if (!searchGrid) return;
+  artworkObserver?.disconnect();
+  const includeReleaseDate = currentQuery.sort === "released_desc";
+  const cards = page.mode === "collection"
+    ? page.items.map((collection) => collectionCard(collection, includeReleaseDate, { showMatchedEpisode: true }))
+    : page.items.map((item) => card(item, includeReleaseDate));
+  searchGrid.replaceChildren(...cards);
+  if (searchCount) searchCount.textContent = `${page.mode === "collection" ? `共 ${page.totalCount} 部作品` : `共 ${page.totalCount} 集`} · ${filterLabel(searchFilter)}`;
+  const empty = page.items.length === 0;
+  if (searchEmpty) searchEmpty.hidden = !empty;
+  if (empty) {
+    if (searchEmptyTitle) searchEmptyTitle.textContent = `搜索「${searchQuery ?? ""}」没有找到作品`;
+    if (searchEmptyMessage) {
+      searchEmptyMessage.textContent = searchFilter !== "all"
+        ? `当前只在「${filterLabel(searchFilter)}」里搜索。可以扩大到全部类型，或清空搜索回到${searchOriginLabel(searchOrigin?.kind)}。`
+        : `试试更短的关键词，或清空搜索回到${searchOriginLabel(searchOrigin?.kind)}。`;
+    }
+  }
+  if (searchAllTypesButton) searchAllTypesButton.hidden = !(empty && searchFilter !== "all");
+  observeArtworkGrid(searchGrid);
+}
+
+async function loadSearch(): Promise<void> {
+  if (!searchActive || !searchQuery) return;
+  const epoch = ++requestEpoch;
+  const filter = searchFilter;
+  if (searchGrid) {
+    searchGrid.replaceChildren();
+    searchGrid.setAttribute("aria-busy", "true");
+  }
+  if (searchEmpty) searchEmpty.hidden = true;
+  if (searchCount) searchCount.textContent = `正在搜索「${searchQuery}」…`;
+  try {
+    if (filter === "episode") {
+      const result = await window.zVideo.localLibrary.list({ page: searchPage, pageSize: PAGE_SIZE, query: searchQuery, filter, sort: currentQuery.sort ?? "recent" });
+      if (epoch !== requestEpoch) return;
+      renderState(result.state);
+      if (!result.page) {
+        showSearchFailure("搜索暂时不可用，请稍后重试。");
+        return;
+      }
+      renderSearchPage({ mode: "media", ...result.page });
+      return;
+    }
+    const result = await window.zVideo.localLibrary.listCollections({ page: searchPage, pageSize: PAGE_SIZE, query: searchQuery, ...(filter !== "all" ? { filter } : {}), sort: currentQuery.sort ?? "recent" });
+    if (epoch !== requestEpoch) return;
+    renderState(result.state);
+    if (!result.page) {
+      showSearchFailure("搜索暂时不可用，请稍后重试。");
+      return;
+    }
+    renderSearchPage({ mode: "collection", ...result.page });
+  } catch (error) {
+    if (epoch === requestEpoch) showSearchFailure(error instanceof Error ? error.message : "搜索暂时不可用，请稍后重试。");
+  } finally {
+    if (epoch === requestEpoch) searchGrid?.removeAttribute("aria-busy");
+  }
+}
+
+async function enterSearch(query: string): Promise<void> {
+  const text = query.trim();
+  if (!text) return;
+  const detailVisible = detail?.hidden === false;
+  if (!searchActive || detailVisible) {
+    searchOrigin = captureSearchOrigin();
+    searchFilter = searchOrigin.libraryQuery.filter ?? "all";
+    searchPage = 1;
+  }
+  searchQuery = text;
+  searchActive = true;
+  if (searchInput) searchInput.value = text;
+  if (searchClear) searchClear.hidden = false;
+  showSearchView();
+  updateSearchChrome();
+  if (libraryContent) libraryContent.scrollTop = 0;
+  const scroller = document.scrollingElement;
+  if (scroller) scroller.scrollTop = 0;
+  else window.scrollTo(0, 0);
+  await loadSearch();
+}
+
+function exitSearchState(): void {
+  searchActive = false;
+  searchQuery = undefined;
+  searchOrigin = undefined;
+  searchPage = 1;
+  if (searchSection) searchSection.hidden = true;
+  if (searchGrid) searchGrid.replaceChildren();
+  if (searchEmpty) searchEmpty.hidden = true;
+  if (searchInput) searchInput.value = "";
+  if (searchClear) searchClear.hidden = true;
+  detailSearchFormOpen = false;
+  updateHeaderSearch();
+}
+
+async function clearSearch(): Promise<void> {
+  if (!searchActive) {
+    if (searchInput) searchInput.value = "";
+    if (searchClear) searchClear.hidden = true;
+    return;
+  }
+  const origin = searchOrigin;
+  exitSearchState();
+  if (!origin) {
+    navigateHomeOrLibrary("all");
+    return;
+  }
+  currentQuery = { ...origin.libraryQuery };
+  syncQueryControls();
+  if (origin.kind === "detail" && origin.detail?.mediaId) {
+    await openDetail(origin.detail.mediaId, undefined, origin.detail.origin);
+    if (origin.detail.episodeId && activeDetail?.episodes.some((episode) => episode.mediaId === origin.detail?.episodeId)) {
+      selectedMediaId = origin.detail.episodeId;
+      renderDetail(activeDetail);
+    }
+    return;
+  }
+  if (origin.kind === "sources") {
+    showSources();
+    currentQuery = { ...origin.libraryQuery };
+    syncQueryControls();
+  } else if (origin.kind === "home") {
+    homeVisible = true;
+    if (sidebar) sidebar.hidden = true;
+    if (libraryContent) libraryContent.hidden = false;
+    if (onboarding) onboarding.hidden = true;
+    if (collectionSection) collectionSection.hidden = true;
+    setNavCurrent(origin.nav ?? "home");
+    await Promise.all([loadContinueWatching(), loadHomeShelves()]);
+  } else {
+    homeVisible = false;
+    if (sidebar) sidebar.hidden = true;
+    if (libraryContent) libraryContent.hidden = false;
+    if (onboarding) onboarding.hidden = true;
+    if (collectionSection) collectionSection.hidden = false;
+    setNavCurrent(origin.nav ?? "all");
+    await loadLibrary();
+  }
+  if (libraryContent) libraryContent.scrollTop = origin.scrollTop;
+  const scroller = document.scrollingElement;
+  if (scroller) scroller.scrollTop = origin.windowScrollY;
+  else window.scrollTo(0, origin.windowScrollY);
+  const focusTarget = origin.focusControlId
+    ? document.querySelector<HTMLElement>(origin.focusControlId)
+    : origin.focusMediaId
+      ? document.querySelector<HTMLElement>(`#library-grid [data-media-id="${cssEscape(origin.focusMediaId)}"]`)
+      : undefined;
+  focusTarget?.focus({ preventScroll: true });
 }
 
 function preserveGridFocus(): string | undefined {
@@ -944,7 +1216,7 @@ function renderState(next: LocalLibraryState): void {
     if (recentSection) recentSection.hidden = true;
     if (showsSection) showsSection.hidden = true;
   }
-  if (collectionSection && !isDetailOrPlayerVisible()) collectionSection.hidden = next.status === "error" || homeVisible;
+  if (collectionSection && !isDetailOrPlayerVisible()) collectionSection.hidden = next.status === "error" || homeVisible || searchActive;
   renderSources(next, scanProgress, sourceList, { singleVideoSourceIds });
   renderSourceFilters();
   if (next.status === "error") setMessage(next.error?.message ?? "本地片库不可用。", true);
@@ -956,7 +1228,7 @@ function collectionCardSignature(item: LocalCollectionSummary): string {
 
 function renderPage(page: LibraryPageView): void {
   activePage = page;
-  if (onboarding) onboarding.hidden = !(state?.status !== "error" && homeVisible && page.totalCount === 0 && !currentQuery.query);
+  if (onboarding) onboarding.hidden = !(state?.status !== "error" && homeVisible && page.totalCount === 0);
   const focusedMediaId = preserveGridFocus();
   if (!libraryGrid || !libraryEmpty) return;
   artworkObserver?.disconnect();
@@ -1000,14 +1272,19 @@ function renderPage(page: LibraryPageView): void {
   });
   libraryEmpty.hidden = page.items.length > 0;
   updateEmptyCopy(page.totalCount);
-  if (searchAllTypesButton) searchAllTypesButton.hidden = !(page.items.length === 0 && Boolean(currentQuery.query) && currentQuery.filter !== "all");
   if (libraryRetryButton) libraryRetryButton.hidden = true;
   if (pageScope) {
-    if (currentQuery.query) pageScope.textContent = page.mode === "collection" ? `“${currentQuery.query}” · ${page.totalCount} 部作品` : `“${currentQuery.query}” · ${page.totalCount} 集`;
-    else if (page.totalCount) pageScope.textContent = page.mode === "collection" ? `共 ${page.totalCount} 部作品 · 第 ${page.page} 页` : `共 ${page.totalCount} 集 · 第 ${page.page} 页`;
+    if (page.totalCount) pageScope.textContent = page.mode === "collection" ? `共 ${page.totalCount} 部作品 · 第 ${page.page} 页` : `共 ${page.totalCount} 集 · 第 ${page.page} 页`;
     else pageScope.textContent = "";
   }
   renderPagination(page);
+  observeArtworkGrid(libraryGrid);
+  restoreGridFocus(focusedMediaId);
+  updateScanUi();
+}
+
+function observeArtworkGrid(container: HTMLElement): void {
+  artworkObserver?.disconnect();
   artworkObserver = new IntersectionObserver((entries) => {
     for (const entry of entries) {
       if (entry.isIntersecting) {
@@ -1017,9 +1294,7 @@ function renderPage(page: LibraryPageView): void {
       }
     }
   }, { rootMargin: "320px" });
-  libraryGrid.querySelectorAll<HTMLElement>("[data-artwork-media-id]").forEach((element) => artworkObserver?.observe(element));
-  restoreGridFocus(focusedMediaId);
-  updateScanUi();
+  container.querySelectorAll<HTMLElement>("[data-artwork-media-id]").forEach((element) => artworkObserver?.observe(element));
 }
 
 function renderSourceFilters(): void {
@@ -1064,7 +1339,7 @@ function renderHomeHero(): void {
   if (!hero) return;
   const entry = homeItems[0];
   const item = entry?.item ?? recentItems[0];
-  hero.hidden = !homeVisible || !item || detail?.hidden === false;
+  hero.hidden = !homeVisible || searchActive || !item || detail?.hidden === false;
   if (!item) return;
   // The poster, tone and title follow the work, never the episode file name.
   const heroItem: LocalMediaItem = entry
@@ -1121,7 +1396,7 @@ async function loadHomeShelves(): Promise<void> {
       if (!row || !section) continue;
       row.replaceChildren(...items.map((item) => collectionCard(item)));
       row.querySelectorAll<HTMLElement>("[data-artwork-media-id]").forEach((element) => enqueueArtwork(element, 1));
-      section.hidden = !homeVisible || items.length === 0 || detail?.hidden === false;
+      section.hidden = !homeVisible || searchActive || items.length === 0 || detail?.hidden === false;
     }
     renderHomeHero();
   } catch { if (epoch === homeEpoch) setMessage("首页片架加载失败，请重试。", true); }
@@ -1134,7 +1409,7 @@ function renderContinue(items: LocalContinueWatchingItem[]): void {
   continueRow.replaceChildren();
   continuePlaybackByMediaId.clear();
   for (const entry of items) continuePlaybackByMediaId.set(entry.item.mediaId, entry.playback);
-  if (!homeVisible || items.length === 0 || currentQuery.query || currentQuery.sourceId || detail?.hidden === false || playerView?.hidden === false) {
+  if (!homeVisible || searchActive || items.length === 0 || currentQuery.sourceId || detail?.hidden === false || playerView?.hidden === false) {
     continueSection.hidden = true;
     return;
   }
@@ -1227,7 +1502,7 @@ function scheduleScanRefresh(): void {
 }
 
 async function loadLibrary(): Promise<boolean> {
-  if (isDetailOrPlayerVisible()) {
+  if (isDetailOrPlayerVisible() || searchActive) {
     scanRefreshQueued = true;
     return false;
   }
@@ -1290,7 +1565,6 @@ async function loadLibrary(): Promise<boolean> {
       if (libraryEmptyTitle) libraryEmptyTitle.textContent = "片库加载失败";
       if (libraryEmptyMessage) libraryEmptyMessage.textContent = error instanceof Error ? error.message : "本地片库加载失败。";
       if (libraryRetryButton) libraryRetryButton.hidden = false;
-      if (searchAllTypesButton) searchAllTypesButton.hidden = true;
     }
     return false;
   }
@@ -1307,18 +1581,20 @@ async function loadContinueWatching(): Promise<void> {
   }
 }
 
-function setQuery(patch: Partial<LocalLibraryQuery>): void {
-  currentQuery = { ...currentQuery, ...patch, page: patch.page ?? 1 };
-  if (searchInput) searchInput.value = currentQuery.query ?? "";
-  if (searchClear) searchClear.hidden = !Boolean(currentQuery.query);
+function syncQueryControls(): void {
   if (filterSelect) filterSelect.value = currentQuery.filter ?? "all";
   if (sortSelect) sortSelect.value = currentQuery.sort ?? "recent";
   document.querySelectorAll<HTMLButtonElement>("#library-filter-buttons [data-filter]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.filter === (currentQuery.filter ?? "all"))));
   renderSourceFilters();
 }
 
+function setQuery(patch: Partial<LocalLibraryQuery>): void {
+  currentQuery = { ...currentQuery, ...patch, page: patch.page ?? 1 };
+  syncQueryControls();
+}
+
 function currentDetailOriginKind(): DetailOriginKind {
-  if (currentQuery.query) return "search";
+  if (searchActive) return "search";
   if ((currentQuery.filter ?? "all") === "episode") return "episodes";
   return homeVisible ? "home" : "library";
 }
@@ -1344,7 +1620,8 @@ function captureDetailOrigin(focusTarget?: HTMLElement): DetailOrigin {
     focusMediaId: focused instanceof HTMLElement && focused.dataset.mediaId ? focused.dataset.mediaId : undefined,
     focusContainerId: focused instanceof HTMLElement
       ? focused.closest("#library-grid") ? "#library-grid"
-        : focused.closest("#recent-row") ? "#recent-row" : focused.closest("#shows-row") ? "#shows-row" : undefined
+        : focused.closest("#search-grid") ? "#search-grid"
+          : focused.closest("#recent-row") ? "#recent-row" : focused.closest("#shows-row") ? "#shows-row" : undefined
       : undefined,
     focusControlId: focused instanceof HTMLElement && focused.id ? `#${CSS.escape(focused.id)}` : undefined,
   };
@@ -1433,11 +1710,11 @@ function showDetailError(message: string): void {
   detailErrorTitle?.focus({ preventScroll: true });
 }
 
-async function openDetail(mediaId: string, returnFocusTarget?: HTMLElement): Promise<void> {
+async function openDetail(mediaId: string, returnFocusTarget?: HTMLElement, restoringOrigin?: DetailOrigin): Promise<void> {
   const entering = detail?.hidden !== false;
   const retrying = detail?.dataset.state === "error";
   if (entering) {
-    detailOrigin = captureDetailOrigin(returnFocusTarget);
+    detailOrigin = restoringOrigin ?? captureDetailOrigin(returnFocusTarget);
     applyDetailOriginChrome(detailOrigin);
     setDetailScroll(0);
   } else if (retrying && detailOrigin) {
@@ -1452,12 +1729,15 @@ async function openDetail(mediaId: string, returnFocusTarget?: HTMLElement): Pro
   activeDetailPlayback = undefined;
   selectedMediaId = mediaId;
   detailRequestMediaId = mediaId;
+  detailSearchFormOpen = false;
   if (detail) detail.hidden = false;
+  if (searchSection) searchSection.hidden = true;
   if (collectionSection) collectionSection.hidden = true;
   if (hero) hero.hidden = true;
   if (recentSection) recentSection.hidden = true;
   if (showsSection) showsSection.hidden = true;
   if (continueSection) continueSection.hidden = true;
+  updateHeaderSearch();
   updateScanUi();
   setMessage("正在打开详情…");
   try {
@@ -1622,12 +1902,29 @@ function closeDetail(): void {
   activeDetail = undefined;
   activeDetailPlayback = undefined;
   selectedMediaId = undefined;
+  detailSearchFormOpen = false;
   if (detail) {
     detail.hidden = true;
     delete detail.dataset.state;
     detail.removeAttribute("aria-busy");
   }
+  updateHeaderSearch();
   updateScanUi();
+  if (origin?.kind === "search" && searchActive) {
+    if (searchSection) searchSection.hidden = false;
+    if (collectionSection) collectionSection.hidden = true;
+    if (libraryContent) libraryContent.hidden = false;
+    if (origin) applyDetailNav(origin.nav);
+    void loadSearch().then(() => {
+      if (!origin) return;
+      const target = origin.focusMediaId && origin.focusContainerId
+        ? document.querySelector<HTMLButtonElement>(`${origin.focusContainerId} [data-media-id="${cssEscape(origin.focusMediaId)}"]`)
+        : origin.focusMediaId ? document.querySelector<HTMLButtonElement>(`#search-grid [data-media-id="${cssEscape(origin.focusMediaId)}"]`) : null;
+      target?.focus({ preventScroll: true });
+      restoreDetailScroll(origin);
+    });
+    return;
+  }
   if (collectionSection) collectionSection.hidden = homeVisible;
   if (origin) applyDetailNav(origin.nav);
   void Promise.all([loadLibrary(), homeVisible ? loadHomeShelves() : Promise.resolve()]).then(([applied]) => {
@@ -1926,7 +2223,7 @@ function updateScanUi(): void {
       if (scanStatusText.textContent !== text) scanStatusText.textContent = text;
     }
   }
-  const showCard = Boolean(running && homeVisible && !isDetailOrPlayerVisible());
+  const showCard = Boolean(running && homeVisible && !searchActive && !isDetailOrPlayerVisible());
   if (homeScanCard) homeScanCard.hidden = !showCard;
   onboarding?.classList.toggle("is-compact", showCard);
   if (showCard && scanProgress) {
@@ -2009,18 +2306,22 @@ function renderScanResult(result: LocalScanResult): void {
 }
 
 function navigateHomeOrLibrary(target: string): void {
+  if (searchActive) exitSearchState();
   requestEpoch += 1;
   homeVisible = target === "home";
   if (detail) detail.hidden = true;
   if (sidebar) sidebar.hidden = true;
   if (onboarding && target !== "home") onboarding.hidden = true;
   if (libraryContent) libraryContent.hidden = false;
+  if (searchSection) searchSection.hidden = true;
   if (collectionSection) collectionSection.hidden = homeVisible;
+  detailSearchFormOpen = false;
+  updateHeaderSearch();
   document.querySelectorAll<HTMLButtonElement>("[data-nav]").forEach((button) => {
     if (button.dataset.nav === target) button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current");
   });
   if (homeVisible) { setQuery({ query: undefined, sourceId: undefined, filter: "all" }); void loadContinueWatching(); void loadHomeShelves(); }
-  else { if (hero) hero.hidden = true; if (continueSection) continueSection.hidden = true; if (recentSection) recentSection.hidden = true; if (showsSection) showsSection.hidden = true; setQuery({ sourceId: undefined, filter: target === "movie" || target === "show" ? target : "all", sort: target === "recent" ? "added_desc" : currentQuery.sort }); void loadLibrary(); }
+  else { if (hero) hero.hidden = true; if (continueSection) continueSection.hidden = true; if (recentSection) recentSection.hidden = true; if (showsSection) showsSection.hidden = true; setQuery({ sourceId: undefined, query: undefined, filter: target === "movie" || target === "show" ? target : "all", sort: target === "recent" ? "added_desc" : currentQuery.sort }); void loadLibrary(); }
   updateScanUi();
 }
 document.querySelectorAll<HTMLButtonElement>("[data-nav]").forEach((button) => button.addEventListener("click", () => {
@@ -2029,6 +2330,7 @@ document.querySelectorAll<HTMLButtonElement>("[data-nav]").forEach((button) => b
 }));
 document.querySelectorAll<HTMLButtonElement>("[data-shelf]").forEach((button) => button.addEventListener("click", () => navigateHomeOrLibrary(button.dataset.shelf ?? "all")));
 function showSources(): void {
+  if (searchActive) exitSearchState();
   requestEpoch += 1;
   homeVisible = false;
   if (detail) detail.hidden = true;
@@ -2039,7 +2341,10 @@ function showSources(): void {
   if (continueSection) continueSection.hidden = true;
   if (recentSection) recentSection.hidden = true;
   if (showsSection) showsSection.hidden = true;
+  if (searchSection) searchSection.hidden = true;
   if (collectionSection) collectionSection.hidden = true;
+  detailSearchFormOpen = false;
+  updateHeaderSearch();
   document.querySelectorAll<HTMLButtonElement>("[data-nav]").forEach((button) => {
     if (button.dataset.nav === "folder") button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current");
   });
@@ -2071,10 +2376,6 @@ sourceFilters?.addEventListener("click", (event) => {
     return;
   }
   setQuery({ sourceId: button.dataset.sourceFilterId, page: 1 });
-  void loadLibrary();
-});
-searchAllTypesButton?.addEventListener("click", () => {
-  setQuery({ filter: "all", page: 1 });
   void loadLibrary();
 });
 libraryRetryButton?.addEventListener("click", () => void loadLibrary());
@@ -2246,27 +2547,48 @@ playerMuteButton?.addEventListener("click", () => {
 window.addEventListener("keydown", handlePlayerShortcut);
 searchForm?.addEventListener("submit", (event) => {
   event.preventDefault();
-  const query = searchInput?.value.trim() || undefined;
-  if (homeVisible) navigateHomeOrLibrary("all");
-  setQuery({ query, page: 1 });
-  void loadLibrary();
+  const text = searchInput?.value.trim() ?? "";
+  if (!text) {
+    if (searchActive) void clearSearch();
+    else if (detailSearchFormOpen) {
+      detailSearchFormOpen = false;
+      updateHeaderSearch();
+    }
+    return;
+  }
+  void enterSearch(text);
 });
 searchInput?.addEventListener("input", () => {
   if (searchClear) searchClear.hidden = !Boolean(searchInput.value);
-  if (searchTimer !== undefined) window.clearTimeout(searchTimer);
-  searchTimer = window.setTimeout(() => {
-    searchTimer = undefined;
-    const query = searchInput.value.trim() || undefined;
-    if (homeVisible) navigateHomeOrLibrary("all");
-    setQuery({ query, page: 1 });
-    void loadLibrary();
-  }, 220);
 });
-searchClear?.addEventListener("click", () => {
-  if (searchInput) searchInput.value = "";
-  setQuery({ query: undefined, page: 1 });
-  void loadLibrary();
+searchClear?.addEventListener("click", () => { void clearSearch(); });
+detailSearchEntry?.addEventListener("click", () => {
+  detailSearchFormOpen = true;
+  updateHeaderSearch();
   searchInput?.focus();
+  searchInput?.select();
+});
+searchFilterButtons?.addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-filter]");
+  const filter = button?.dataset.filter as LocalLibraryFilter | undefined;
+  if (!filter || !searchActive || filter === searchFilter) return;
+  searchFilter = filter;
+  searchPage = 1;
+  updateSearchFilterPressed();
+  void loadSearch();
+});
+searchBackButton?.addEventListener("click", () => { void clearSearch(); });
+searchEmptyClear?.addEventListener("click", () => { void clearSearch(); });
+searchAllTypesButton?.addEventListener("click", () => {
+  if (!searchActive) return;
+  searchFilter = "all";
+  searchPage = 1;
+  updateSearchChrome();
+  void loadSearch();
+});
+searchGrid?.addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-media-id]");
+  if (button?.dataset.mediaId) void openDetail(button.dataset.mediaId, button);
 });
 filterSelect?.addEventListener("change", () => { setQuery({ filter: filterSelect.value as LocalLibraryQuery["filter"], page: 1 }); void loadLibrary(); });
 sortSelect?.addEventListener("change", () => {
@@ -2291,6 +2613,7 @@ void (async () => {
     const next = await window.zVideo.localLibrary.getState();
     await restoreSortPreference();
     renderState(next);
+    updateHeaderSearch();
     if (collectionSection) collectionSection.hidden = true;
     await Promise.all([loadLibrary(), loadContinueWatching(), loadHomeShelves()]);
   } catch (error: unknown) {
