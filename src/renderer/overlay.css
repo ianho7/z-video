@@ -8,3 +8,6 @@ body.overlay-hidden #overlay-heading { transform: translateY(-10px); }
 body.overlay-hidden #overlay-controls { transform: translateY(10px); }
 .player-heading { background: linear-gradient(#000b, transparent); }
 .player-controls { background: #101014db; }
+#overlay-stage { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
+#overlay-stage:empty { display: none; }
+#overlay-stage .player-error { margin: 0 28px; pointer-events: auto; }

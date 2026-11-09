@@ -16,7 +16,6 @@ import { escapeHtml, formatTime, kindLabel, formatBytes, artworkKind } from "./v
 import { card, collectionCard } from "./views/all.js";
 import { renderSources } from "./views/sources.js";
 import { episodeRows, renderMovieFileInfo, renderSeasonTabs } from "./views/detail.js";
-import { renderTrackOptions } from "./views/player.js";
 import { renderContinueCards } from "./views/home.js";
 import { biscuitPath, wavePath } from "./shapes.js";
 import type {
@@ -109,13 +108,14 @@ const playerToggleButton = document.querySelector<HTMLButtonElement>("#player-to
 const playerSeek = document.querySelector<HTMLInputElement>("#player-seek");
 const playerTime = document.querySelector<HTMLElement>("#player-time");
 const playerFullscreenButton = document.querySelector<HTMLButtonElement>("#player-fullscreen-button");
-const playerAudioTrack = document.querySelector<HTMLSelectElement>("#player-audio-track");
-const playerSubtitleTrack = document.querySelector<HTMLSelectElement>("#player-subtitle-track");
 const playerSubtitleFileButton = document.querySelector<HTMLButtonElement>("#player-subtitle-file-button");
 const playerVolume = document.querySelector<HTMLInputElement>("#player-volume");
 const playerMuteButton = document.querySelector<HTMLButtonElement>("#player-mute-button");
-const playerSpeed = document.querySelector<HTMLSelectElement>("#player-speed");
 const playerStatus = document.querySelector<HTMLElement>("#player-status");
+const playerError = document.querySelector<HTMLElement>("#player-error");
+const playerErrorMessage = document.querySelector<HTMLElement>("#player-error-message");
+const playerErrorRetry = document.querySelector<HTMLButtonElement>("#player-error-retry");
+const playerErrorBack = document.querySelector<HTMLButtonElement>("#player-error-back");
 
 let homeVisible = true;
 let homeItems: LocalContinueWatchingItem[] = [];
@@ -180,13 +180,19 @@ let scanRenderedCommit = -1;
 let sourceBusy = false;
 const playerNextButton = document.querySelector<HTMLButtonElement>("#player-next-button");
 const playerEnded = document.querySelector<HTMLElement>("#player-ended");
+const playerEndedTitle = document.querySelector<HTMLElement>("#player-ended-title");
+const playerNextTitle = document.querySelector<HTMLElement>("#player-next-title");
+const playerNextMeta = document.querySelector<HTMLElement>("#player-next-meta");
 const playerCountdown = document.querySelector<HTMLElement>("#player-countdown");
+const playerCountdownRing = document.querySelector<HTMLElement>("#player-countdown-ring");
+const playerCountdownAnnouncement = document.querySelector<HTMLElement>("#player-countdown-announcement");
 const playerPlayNext = document.querySelector<HTMLButtonElement>("#player-play-next");
 const playerCancelNext = document.querySelector<HTMLButtonElement>("#player-cancel-next");
+const playerReplay = document.querySelector<HTMLButtonElement>("#player-replay");
+const playerReturnList = document.querySelector<HTMLButtonElement>("#player-return-list");
 const playerSettings = document.querySelector<HTMLElement>("#player-settings");
 const playerSettingsButton = document.querySelector<HTMLButtonElement>("#player-settings-button");
 let nextTimer: number | undefined;
-let returnToEpisodes = false;
 let playerState: "playing" | "paused" | "buffering" | "ended" = "paused";
 let playerDurationSec = 0;
 let playerFullscreen = false;
@@ -196,6 +202,13 @@ let playerVolumeLevel = 100;
 let playerVolumeDragging = false;
 let playerVolumeRestoreAfterDrag = false;
 let playerSpeedValue = 1;
+type PlayerMenuKind = "speed" | "audio" | "subtitle";
+interface PlayerMenuTrack { id: string; label: string; selected?: boolean }
+const PLAYER_SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3];
+let playerAudioTracks: PlayerMenuTrack[] = [];
+let playerSubtitleTracks: PlayerMenuTrack[] = [];
+let openPlayerMenuKind: PlayerMenuKind | undefined;
+let playerMenuFocusIndex = 0;
 let activePlaybackTitle = "";
 let activeDetailPlayback: LocalPlaybackState | undefined;
 let selectedSeason: number | undefined;
@@ -311,7 +324,46 @@ function showPlayer(visible: boolean): void {
   updateScanUi();
 }
 
-const overlayIds = ["player-current-title", "player-close-button", "player-elapsed", "player-time", "player-seek", "player-toggle-button", "player-next-button", "player-back-10", "player-forward-10", "player-volume", "player-mute-button", "player-settings-button", "player-fullscreen-button", "player-settings", "player-settings-close", "player-speed", "player-audio-track", "player-subtitle-track", "player-subtitle-file-button", "player-status", "player-ended", "player-countdown", "player-play-next", "player-cancel-next", "player-return-list"];
+type PlayerOrigin = "detail" | "home";
+let playerOrigin: PlayerOrigin = "detail";
+let playerOriginScroll = 0;
+let playerReturnToDetail = false;
+let playerUiRevision = 0;
+let playerOverlayFocusId: string | undefined;
+
+function playerOriginLabel(origin: PlayerOrigin = playerOrigin): string {
+  return origin === "detail" ? "返回详情" : "返回首页";
+}
+
+function markPlayerUiStructureChanged(): void {
+  playerUiRevision += 1;
+}
+
+function setPlayerOverlayFocus(id: string | undefined): void {
+  playerOverlayFocusId = id;
+  sendOverlayState();
+}
+
+/** Remember whether playback started from the detail view or straight from home. */
+function recordPlayerOrigin(): void {
+  playerOrigin = detail?.hidden === false ? "detail" : "home";
+  playerOriginScroll = document.scrollingElement?.scrollTop ?? window.scrollY;
+  const label = playerOriginLabel();
+  const closeLabel = document.getElementById("player-close-label");
+  if (closeLabel) closeLabel.textContent = label;
+  playerCloseButton?.setAttribute("aria-label", label);
+  const errorBackLabel = document.getElementById("player-error-back-label");
+  if (errorBackLabel) errorBackLabel.textContent = label;
+  markPlayerUiStructureChanged();
+}
+
+function restorePlayerOriginScroll(): void {
+  const scroller = document.scrollingElement;
+  if (scroller) scroller.scrollTop = playerOriginScroll;
+  else window.scrollTo(0, playerOriginScroll);
+}
+
+const overlayIds = ["player-current-title", "player-close-button", "player-close-label", "player-elapsed", "player-time", "player-seek", "player-toggle-button", "player-next-button", "player-back-10", "player-forward-10", "player-volume", "player-mute-button", "player-settings-button", "player-fullscreen-button", "player-settings", "player-settings-close", "player-speed", "player-audio-track", "player-subtitle-track", "player-subtitle-file-button", "player-status", "player-ended", "player-ended-title", "player-next-title", "player-next-meta", "player-countdown", "player-countdown-ring", "player-countdown-announcement", "player-play-next", "player-cancel-next", "player-replay", "player-return-list", "player-error", "player-error-message", "player-error-retry", "player-error-back"];
 const overlayActions = new Set(overlayIds);
 let overlayActivity = 0;
 function sendOverlayState(): void {
@@ -324,11 +376,11 @@ function sendOverlayState(): void {
     if (element instanceof HTMLButtonElement || element instanceof HTMLInputElement || element instanceof HTMLSelectElement) value.disabled = element.disabled;
     if (element instanceof HTMLInputElement || element instanceof HTMLSelectElement) value.value = element.value;
     if (element instanceof HTMLInputElement) { value.max = element.max; value.min = element.min; }
-    if (["player-current-title", "player-elapsed", "player-time", "player-toggle-button", "player-mute-button", "player-fullscreen-button", "player-status", "player-countdown", "player-audio-track", "player-subtitle-track"].includes(id)) value.html = element.innerHTML;
+    if (["player-current-title", "player-elapsed", "player-time", "player-toggle-button", "player-mute-button", "player-fullscreen-button", "player-status", "player-countdown", "player-audio-track", "player-subtitle-track", "player-close-label", "player-ended-title", "player-next-title", "player-next-meta", "player-replay", "player-return-list"].includes(id)) value.html = element.innerHTML;
     for (const attribute of ["expanded", "pressed", "label"]) if (element.hasAttribute(`aria-${attribute}`)) value[attribute] = element.getAttribute(`aria-${attribute}`);
     elements[id] = value;
   }
-  window.zVideo.overlay.state({ heading: document.querySelector(".player-heading")?.outerHTML, controls: document.querySelector(".player-controls")?.outerHTML, elements, progress: playerSeek?.parentElement?.getAttribute("style") ?? "", fullscreen: playerFullscreen, playing: playerState === "playing", activity: overlayActivity });
+  window.zVideo.overlay.state({ heading: document.querySelector(".player-heading")?.outerHTML, controls: document.querySelector(".player-controls")?.outerHTML, stage: playerError && !playerError.hidden ? playerError.outerHTML : "", elements, progress: playerSeek?.parentElement?.getAttribute("style") ?? "", fullscreen: playerFullscreen, playing: playerState === "playing", error: Boolean(playerError && !playerError.hidden), activity: overlayActivity, revision: playerUiRevision, ...(playerOverlayFocusId ? { focusId: playerOverlayFocusId } : {}) });
 }
 window.zVideo.overlay.onReady(sendOverlayState);
 window.addEventListener("keydown", () => { if (playerView?.hidden === false) { overlayActivity += 1; sendOverlayState(); } });
@@ -339,7 +391,7 @@ window.zVideo.overlay.onAction((action) => {
     handlePlayerShortcut(new KeyboardEvent("keydown", { key: action.key, code: action.code }));
     return;
   }
-  if (!overlayActions.has(action.id) || !["click", "input", "change"].includes(action.type)) return;
+  if ((typeof action.id !== "string" || !(overlayActions.has(action.id) || action.id.startsWith("player-"))) || !["click", "input", "change"].includes(action.type)) return;
   const element = document.getElementById(action.id);
   if (!element) return;
   if ((element instanceof HTMLButtonElement || element instanceof HTMLInputElement || element instanceof HTMLSelectElement) && element.disabled) return;
@@ -361,12 +413,14 @@ function setPlayerControlsEnabled(enabled: boolean): void {
   if (playerToggleButton) playerToggleButton.disabled = !enabled;
   if (playerSeek) playerSeek.disabled = !enabled;
   if (playerFullscreenButton) playerFullscreenButton.disabled = !enabled;
-  if (playerAudioTrack) playerAudioTrack.disabled = !enabled;
-  if (playerSubtitleTrack) playerSubtitleTrack.disabled = !enabled;
+  for (const kind of ["speed", "audio", "subtitle"] as const) {
+    const trigger = document.getElementById(`player-${kind}-trigger`);
+    if (trigger instanceof HTMLButtonElement) trigger.disabled = !enabled;
+  }
   if (playerSubtitleFileButton) playerSubtitleFileButton.disabled = !enabled;
   if (playerVolume) playerVolume.disabled = !enabled;
   if (playerMuteButton) playerMuteButton.disabled = !enabled;
-  if (playerSpeed) playerSpeed.disabled = !enabled;
+  if (playerReplay) playerReplay.disabled = !enabled;
   if (playerNextButton) { playerNextButton.hidden = !nextEpisode(); playerNextButton.disabled = !enabled || playerNextButton.hidden; }
 }
 
@@ -376,10 +430,158 @@ function renderMuteButton(): void {
   playerMuteButton.setAttribute("aria-pressed", String(playerMuted));
 }
 
+function speedLabel(speed: number): string {
+  return `${Number.isInteger(speed) ? speed : String(speed)}×`;
+}
+
+function renderPlayerMenuValue(kind: PlayerMenuKind): void {
+  const value = document.getElementById(`player-${kind}-value`);
+  if (!value) return;
+  if (kind === "speed") {
+    value.textContent = speedLabel(playerSpeedValue);
+    return;
+  }
+  const tracks = kind === "audio" ? playerAudioTracks : playerSubtitleTracks;
+  const selected = tracks.find((track) => track.selected);
+  value.textContent = selected?.label ?? (kind === "audio" ? "自动" : "关闭");
+}
+
+function playerMenuOptions(kind: PlayerMenuKind): Array<{ id: string; label: string; value: string; selected: boolean }> {
+  if (kind === "speed") {
+    return PLAYER_SPEEDS.map((speed, index) => ({ id: `player-speed-option-${index}`, label: speedLabel(speed), value: String(speed), selected: Math.abs(playerSpeedValue - speed) < 0.001 }));
+  }
+  const tracks = kind === "audio" ? playerAudioTracks : playerSubtitleTracks;
+  const emptyValue = kind === "audio" ? "自动" : "关闭";
+  const options = [{ id: `player-${kind}-option-0`, label: emptyValue, value: "", selected: !tracks.some((track) => track.selected) }];
+  tracks.forEach((track, index) => {
+    options.push({ id: `player-${kind}-option-${index + 1}`, label: track.label, value: track.id, selected: Boolean(track.selected) });
+  });
+  return options;
+}
+
+function renderPlayerMenu(kind: PlayerMenuKind): void {
+  const popover = document.getElementById(`player-${kind}-options`);
+  if (!popover) return;
+  const options = playerMenuOptions(kind);
+  popover.replaceChildren(...options.map((option) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.id = option.id;
+    button.setAttribute("role", "option");
+    button.setAttribute("aria-selected", String(option.selected));
+    button.dataset.value = option.value;
+    button.textContent = option.label;
+    return button;
+  }));
+  renderPlayerMenuValue(kind);
+}
+
+function menuTriggerId(kind: PlayerMenuKind): string {
+  return `player-${kind}-trigger`;
+}
+
+function closePlayerMenu(kind: PlayerMenuKind = openPlayerMenuKind ?? "speed", returnFocus = true): void {
+  if (!openPlayerMenuKind && kind) return;
+  const popover = document.getElementById(`player-${kind}-options`);
+  const trigger = document.getElementById(menuTriggerId(kind));
+  if (popover) popover.hidden = true;
+  trigger?.setAttribute("aria-expanded", "false");
+  openPlayerMenuKind = undefined;
+  markPlayerUiStructureChanged();
+  if (returnFocus) {
+    trigger?.focus();
+    setPlayerOverlayFocus(trigger?.id);
+  } else {
+    setPlayerOverlayFocus(undefined);
+  }
+  sendOverlayState();
+}
+
+function openPlayerMenu(kind: PlayerMenuKind): void {
+  if (openPlayerMenuKind && openPlayerMenuKind !== kind) closePlayerMenu(openPlayerMenuKind, false);
+  const popover = document.getElementById(`player-${kind}-options`);
+  const trigger = document.getElementById(menuTriggerId(kind));
+  if (!popover || !trigger) return;
+  renderPlayerMenu(kind);
+  if (openPlayerMenuKind !== kind) markPlayerUiStructureChanged();
+  openPlayerMenuKind = kind;
+  popover.hidden = false;
+  trigger.setAttribute("aria-expanded", "true");
+  const options = Array.from(popover.querySelectorAll<HTMLButtonElement>('[role="option"]'));
+  const selectedIndex = Math.max(0, options.findIndex((option) => option.getAttribute("aria-selected") === "true"));
+  playerMenuFocusIndex = selectedIndex;
+  options[selectedIndex]?.focus();
+  setPlayerOverlayFocus(options[selectedIndex]?.id);
+  sendOverlayState();
+}
+
+function selectPlayerMenuOption(kind: PlayerMenuKind, option: HTMLButtonElement): void {
+  const value = option.dataset.value ?? "";
+  if (kind === "speed") {
+    const speed = Number(value);
+    if (Number.isFinite(speed) && speed > 0) {
+      playerSpeedValue = speed;
+      void sendLocalPlaybackCommand({ type: "set-speed", speed });
+    }
+  } else if (kind === "audio") {
+    playerAudioTracks = playerAudioTracks.map((track) => ({ ...track, selected: track.id === value }));
+    if (value) void sendLocalPlaybackCommand({ type: "set-audio-track", trackId: value });
+  } else {
+    playerSubtitleTracks = playerSubtitleTracks.map((track) => ({ ...track, selected: track.id === value }));
+    void sendLocalPlaybackCommand({ type: "set-subtitle-track", trackId: value || null });
+  }
+  markPlayerUiStructureChanged();
+  closePlayerMenu(kind, true);
+  renderPlayerMenuValue(kind);
+  sendOverlayState();
+}
+
+function movePlayerMenuFocus(key: string): void {
+  const kind = openPlayerMenuKind;
+  if (!kind) return;
+  const popover = document.getElementById(`player-${kind}-options`);
+  const options = Array.from(popover?.querySelectorAll<HTMLButtonElement>('[role="option"]') ?? []);
+  if (!options.length) return;
+  const current = Math.min(Math.max(0, playerMenuFocusIndex), options.length - 1);
+  let next = current;
+  if (key === "ArrowDown") next = (current + 1) % options.length;
+  else if (key === "ArrowUp") next = (current - 1 + options.length) % options.length;
+  else if (key === "Home") next = 0;
+  else if (key === "End") next = options.length - 1;
+  playerMenuFocusIndex = next;
+  options[next]?.focus();
+  setPlayerOverlayFocus(options[next]?.id);
+}
+
+function openPlayerSettings(): void {
+  if (!playerSettings) return;
+  playerSettings.hidden = false;
+  playerSettingsButton?.setAttribute("aria-expanded", "true");
+  const first = document.getElementById("player-settings-close");
+  first?.focus();
+  setPlayerOverlayFocus(first?.id);
+  markPlayerUiStructureChanged();
+  sendOverlayState();
+}
+
+function closePlayerSettings(returnFocus = true): void {
+  if (openPlayerMenuKind) closePlayerMenu(openPlayerMenuKind, false);
+  if (playerSettings) playerSettings.hidden = true;
+  playerSettingsButton?.setAttribute("aria-expanded", "false");
+  markPlayerUiStructureChanged();
+  if (returnFocus) {
+    playerSettingsButton?.focus();
+    setPlayerOverlayFocus("player-settings-button");
+  } else {
+    setPlayerOverlayFocus(undefined);
+  }
+  sendOverlayState();
+}
+
 function renderPlayerSettings(force = false): void {
   if (playerVolume && (force || !playerVolumeDragging)) playerVolume.value = String(playerVolumeLevel);
   renderMuteButton();
-  if (playerSpeed && (force || document.activeElement !== playerSpeed)) playerSpeed.value = String(playerSpeedValue);
+  for (const kind of ["speed", "audio", "subtitle"] as const) renderPlayerMenuValue(kind);
 }
 
 function restorePlayerSettingsAfterFailure(): void {
@@ -416,9 +618,32 @@ function isPlayerButton(target: EventTarget | null): boolean {
 }
 
 function handlePlayerShortcut(event: KeyboardEvent): void {
-  if (playerView?.hidden || playerToggleButton?.disabled || event.defaultPrevented || event.isComposing) return;
+  if (playerView?.hidden || event.isComposing) return;
   if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
   if (isPlayerFormControl(event.target) || isPlayerFormControl(document.activeElement)) return;
+  if (openPlayerMenuKind) {
+    if (event.key === "Escape" || event.key === "Tab") {
+      event.preventDefault();
+      closePlayerMenu(openPlayerMenuKind, true);
+      return;
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      movePlayerMenuFocus(event.key);
+      return;
+    }
+    if (event.key === " " && document.activeElement instanceof HTMLButtonElement && document.activeElement.getAttribute("role") === "option") {
+      event.preventDefault();
+      document.activeElement.click();
+      return;
+    }
+  }
+  if (playerSettings && !playerSettings.hidden && event.key === "Escape") {
+    event.preventDefault();
+    closePlayerSettings(true);
+    return;
+  }
+  if (event.defaultPrevented || playerToggleButton?.disabled) return;
 
   const shortcut = event.key === " " ? "Space" : event.key && event.key !== "Unidentified" ? event.key : event.code;
   if (shortcut === "Escape" && playerFullscreen) {
@@ -494,41 +719,126 @@ async function playNextEpisode(): Promise<void> {
   selectedMediaId = next.mediaId;
   activeDetail = { ...activeDetail, item: next };
   if (playerEnded) playerEnded.hidden = true;
+  if (playerReplay) playerReplay.hidden = true;
   await openSelectedLocalMedia();
+}
+
+function currentItemIsMovie(): boolean {
+  return activeDetail?.collectionKind === "movie" || activeDetail?.item.kind === "movie";
+}
+
+function episodeWithTitle(item: LocalMediaItem): string {
+  const episode = episodeLabel(item);
+  return episode ? `${episode} · ${item.title}` : item.title;
+}
+
+function formatDurationLabel(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "时长未知";
+  if (seconds >= 3600) {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.round((seconds % 3600) / 60);
+    return minutes > 0 ? `${hours} 小时 ${minutes} 分` : `${hours} 小时`;
+  }
+  if (seconds >= 60) return `${Math.max(1, Math.round(seconds / 60))} 分钟`;
+  return `${Math.round(seconds)} 秒`;
+}
+
+function nextEpisodeMeta(item: LocalMediaItem): string {
+  const playback = activeDetail?.episodePlayback?.find((state) => state.mediaId === item.mediaId)
+    ?? (activeDetail?.playback?.mediaId === item.mediaId ? activeDetail.playback : undefined);
+  const duration = formatDurationLabel(playback?.durationSec ?? 0);
+  const state = playback?.watched ? "已看完" : playback && playback.positionSec > 0 ? `已看 ${formatTime(playback.positionSec)}` : "未看";
+  return `${duration} · ${state}`;
+}
+
+function showPlayerError(message: string): void {
+  if (playerErrorMessage) playerErrorMessage.textContent = message;
+  if (playerError) playerError.hidden = false;
+  if (playerSurfaceMessage) playerSurfaceMessage.hidden = true;
+  markPlayerUiStructureChanged();
+  sendOverlayState();
+}
+
+function hidePlayerError(): void {
+  if (playerSurfaceMessage) playerSurfaceMessage.hidden = false;
+  if (!playerError || playerError.hidden) return;
+  playerError.hidden = true;
+  markPlayerUiStructureChanged();
+  sendOverlayState();
+}
+
+function resetPlaybackEndedPanel(): void {
+  clearNextTimer();
+  if (playerEnded) playerEnded.hidden = true;
+  if (playerCountdownAnnouncement) playerCountdownAnnouncement.textContent = "";
 }
 
 function showPlaybackEnded(): void {
   clearNextTimer();
   const next = nextEpisode();
+  const movie = currentItemIsMovie();
   if (playerEnded) { playerEnded.hidden = false; playerEnded.style.setProperty("--remaining", "1"); }
+  if (playerEndedTitle) playerEndedTitle.textContent = movie ? "电影已看完" : "本集已看完";
+  if (playerNextTitle) {
+    playerNextTitle.hidden = !next;
+    playerNextTitle.textContent = next ? `下一集：${episodeWithTitle(next)}` : "";
+  }
+  if (playerNextMeta) {
+    playerNextMeta.hidden = !next;
+    playerNextMeta.textContent = next ? nextEpisodeMeta(next) : "";
+  }
+  if (playerCountdownRing) playerCountdownRing.hidden = !next;
   if (playerPlayNext) playerPlayNext.hidden = !next;
   if (playerCancelNext) playerCancelNext.hidden = !next;
-  if (playerCountdown) playerCountdown.textContent = next ? "10 秒后播放下一集" : "";
+  if (playerReplay) playerReplay.hidden = Boolean(next);
+  if (playerReturnList) playerReturnList.textContent = movie ? playerOriginLabel() : "返回详情";
+  if (playerCountdown) playerCountdown.textContent = next ? "10 秒后自动播放下一集" : "";
+  if (playerCountdownAnnouncement) playerCountdownAnnouncement.textContent = next ? `10 秒后播放下一集：${episodeWithTitle(next)}。` : "";
+  markPlayerUiStructureChanged();
   if (!next) return;
   let seconds = 10;
   nextTimer = window.setInterval(() => {
     seconds -= 1;
-    if (playerCountdown) playerCountdown.textContent = `${seconds} 秒后播放下一集`;
+    if (playerCountdown) playerCountdown.textContent = `${seconds} 秒后自动播放下一集`;
     playerEnded?.style.setProperty("--remaining", String(seconds / 10));
     if (seconds <= 0) void playNextEpisode();
   }, 1000);
 }
 
+function handlePlayerClosed(): void {
+  clearNextTimer();
+  if (playerEnded) playerEnded.hidden = true;
+  if (playerCountdownAnnouncement) playerCountdownAnnouncement.textContent = "";
+  playerFullscreen = false;
+  if (playerFullscreenButton) playerFullscreenButton.textContent = "全屏";
+  showPlayer(false);
+  hidePlayerError();
+  setPlayerControlsEnabled(false);
+  setPlayerStatus("");
+  if (playerSurfaceMessage) playerSurfaceMessage.textContent = "正在准备原生播放器…";
+  activePlaybackTitle = "";
+  if (playerCurrentTitle) playerCurrentTitle.textContent = "";
+  const returnKind: PlayerOrigin = playerReturnToDetail ? "detail" : playerOrigin;
+  const mediaId = selectedMediaId;
+  playerReturnToDetail = false;
+  if (returnKind === "detail" && mediaId) {
+    // Refresh the detail in place: it stays open behind the player, so the
+    // selected episode, season and scroll position survive playback.
+    void openDetail(mediaId);
+    return;
+  }
+  activeDetail = undefined;
+  activeDetailPlayback = undefined;
+  selectedMediaId = undefined;
+  selectedSeason = undefined;
+  if (detail) detail.hidden = true;
+  restorePlayerOriginScroll();
+  void Promise.all([loadContinueWatching(), loadHomeShelves()]).then(() => restorePlayerOriginScroll());
+}
+
 function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
   if (event.type === "closed") {
-    clearNextTimer();
-    if (playerEnded) playerEnded.hidden = true;
-    playerFullscreen = false;
-    if (playerFullscreenButton) playerFullscreenButton.textContent = "全屏";
-    showPlayer(false);
-    setPlayerControlsEnabled(false);
-    setPlayerStatus("");
-    if (playerSurfaceMessage) playerSurfaceMessage.textContent = "正在准备原生播放器…";
-    activePlaybackTitle = "";
-    if (playerCurrentTitle) playerCurrentTitle.textContent = "";
-    if (returnToEpisodes && activeDetail) { returnToEpisodes = false; renderDetail(activeDetail); }
-    else closeDetail();
-    setMessage("本地播放已关闭。");
+    handlePlayerClosed();
     return;
   }
   showPlayer(true);
@@ -536,12 +846,15 @@ function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
     case "loading":
       clearNextTimer();
       if (playerEnded) playerEnded.hidden = true;
+      if (playerCountdownAnnouncement) playerCountdownAnnouncement.textContent = "";
+      hidePlayerError();
       playerState = "buffering";
       setPlayerControlsEnabled(false);
       setPlayerStatus("正在加载本地媒体…");
       if (playerSurfaceMessage) playerSurfaceMessage.textContent = "正在加载原生媒体…";
       break;
     case "ready":
+      hidePlayerError();
       playerDurationSec = event.durationSec ?? 0;
       setPlayerControlsEnabled(true);
       setPlayerStatus("视频区域快捷键：Space 暂停 · ←/→ ±5秒 · ↑/↓ 音量±5 · M 静音 · F 全屏 · Esc 退出");
@@ -577,8 +890,13 @@ function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
       if (playerTime) playerTime.textContent = formatTime(playerDurationSec);
       break;
     case "tracks":
-      renderTrackOptions(playerAudioTrack, event.audio, "自动");
-      renderTrackOptions(playerSubtitleTrack, event.subtitles, "关闭");
+      playerAudioTracks = event.audio;
+      playerSubtitleTracks = event.subtitles;
+      if (openPlayerMenuKind === "audio" || openPlayerMenuKind === "subtitle") renderPlayerMenu(openPlayerMenuKind);
+      renderPlayerMenuValue("audio");
+      renderPlayerMenuValue("subtitle");
+      markPlayerUiStructureChanged();
+      sendOverlayState();
       break;
     case "settings":
       if (Number.isFinite(event.volume)) playerVolumeLevel = Math.max(0, Math.min(100, event.volume));
@@ -586,6 +904,7 @@ function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
       playerMuteCommandValue = undefined;
       if (Number.isFinite(event.speed)) playerSpeedValue = event.speed;
       renderPlayerSettings();
+      sendOverlayState();
       break;
     case "control-error":
       playerMuteCommandValue = undefined;
@@ -595,7 +914,7 @@ function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
     case "error":
       setPlayerControlsEnabled(false);
       setPlayerStatus(event.message, true);
-      if (playerSurfaceMessage) playerSurfaceMessage.textContent = event.message;
+      showPlayerError(event.message);
       break;
   }
 }
@@ -1316,6 +1635,7 @@ function closeDetail(): void {
 
 async function openSelectedLocalMedia(restart = false): Promise<void> {
   if (!selectedMediaId) return;
+  if (playerView?.hidden !== false) recordPlayerOrigin();
   activePlaybackTitle = activeDetail?.item.title ?? "本地媒体";
   showPlayer(true);
   setPlayerStatus(restart ? "正在从头打开本地媒体…" : "正在打开本地媒体…");
@@ -1835,22 +2155,44 @@ playerSeek?.addEventListener("change", () => {
 playerFullscreenButton?.addEventListener("click", () => {
   togglePlayerFullscreen();
 });
-playerAudioTrack?.addEventListener("change", () => {
-  if (playerAudioTrack.value) void sendLocalPlaybackCommand({ type: "set-audio-track", trackId: playerAudioTrack.value });
-});
-playerSubtitleTrack?.addEventListener("change", () => {
-  void sendLocalPlaybackCommand({ type: "set-subtitle-track", trackId: playerSubtitleTrack.value || null });
-});
 playerSettingsButton?.addEventListener("click", () => {
   if (!playerSettings) return;
-  playerSettings.hidden = !playerSettings.hidden;
-  playerSettingsButton.setAttribute("aria-expanded", String(!playerSettings.hidden));
+  if (playerSettings.hidden) openPlayerSettings();
+  else closePlayerSettings(true);
 });
-document.querySelector<HTMLButtonElement>("#player-settings-close")?.addEventListener("click", () => { if (playerSettings) playerSettings.hidden = true; playerSettingsButton?.setAttribute("aria-expanded", "false"); playerSettingsButton?.focus(); });
+document.querySelector<HTMLButtonElement>("#player-settings-close")?.addEventListener("click", () => closePlayerSettings(true));
+for (const kind of ["speed", "audio", "subtitle"] as const) {
+  document.getElementById(`player-${kind}-trigger`)?.addEventListener("click", () => {
+    if (openPlayerMenuKind === kind) closePlayerMenu(kind, true);
+    else openPlayerMenu(kind);
+  });
+  document.getElementById(`player-${kind}-options`)?.addEventListener("click", (event) => {
+    const option = (event.target as HTMLElement).closest<HTMLButtonElement>('[role="option"]');
+    if (option) selectPlayerMenuOption(kind, option);
+  });
+}
+document.addEventListener("pointerdown", (event) => {
+  if (playerView?.hidden !== false) return;
+  const target = event.target instanceof Node ? event.target : undefined;
+  if (playerSettings && !playerSettings.hidden) {
+    const inside = Boolean(target && playerSettings.contains(target));
+    const onSettingsTrigger = target instanceof Element && Boolean(target.closest("#player-settings-button"));
+    if (!inside && !onSettingsTrigger) closePlayerSettings(true);
+    return;
+  }
+  if (openPlayerMenuKind) closePlayerMenu(openPlayerMenuKind, false);
+});
 playerNextButton?.addEventListener("click", () => { void playNextEpisode(); });
 playerPlayNext?.addEventListener("click", () => { void playNextEpisode(); });
-playerCancelNext?.addEventListener("click", () => { clearNextTimer(); if (playerCountdown) playerCountdown.textContent = "已取消自动播放"; });
-document.querySelector<HTMLButtonElement>("#player-return-list")?.addEventListener("click", () => { clearNextTimer(); returnToEpisodes = true; void sendLocalPlaybackCommand({ type: "close" }); });
+playerCancelNext?.addEventListener("click", () => { clearNextTimer(); if (playerCountdown) playerCountdown.textContent = "已取消自动播放"; if (playerCountdownAnnouncement) playerCountdownAnnouncement.textContent = "已取消自动播放下一集。"; });
+playerReplay?.addEventListener("click", () => { resetPlaybackEndedPanel(); void openSelectedLocalMedia(true); });
+playerReturnList?.addEventListener("click", () => {
+  clearNextTimer();
+  playerReturnToDetail = !currentItemIsMovie();
+  void sendLocalPlaybackCommand({ type: "close" });
+});
+playerErrorRetry?.addEventListener("click", () => { hidePlayerError(); void openSelectedLocalMedia(); });
+playerErrorBack?.addEventListener("click", () => { clearNextTimer(); void sendLocalPlaybackCommand({ type: "close" }); });
 for (const [selector, offset] of [["#player-back-10", -10], ["#player-forward-10", 10]] as const) {
   document.querySelector<HTMLButtonElement>(selector)?.addEventListener("click", () => {
     const positionSec = Math.max(0, Math.min(playerDurationSec, Number(playerSeek?.value ?? 0) + offset));
@@ -1880,11 +2222,6 @@ playerMuteButton?.addEventListener("click", () => {
       playerMuteCommandValue = undefined;
       renderPlayerSettings();
     }
-  });
-});
-playerSpeed?.addEventListener("change", () => {
-  void sendLocalPlaybackCommand({ type: "set-speed", speed: Number(playerSpeed.value) }).then((sent) => {
-    if (!sent) restorePlayerSettingsAfterFailure();
   });
 });
 window.addEventListener("keydown", handlePlayerShortcut);

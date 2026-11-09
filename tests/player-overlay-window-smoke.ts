@@ -38,6 +38,34 @@ async function run(): Promise<void> {
     assert.equal(await read("document.querySelector('#player-next-button').hidden"), true, "no next episode hides the entire button");
     assert.equal(await read("document.querySelector('#player-toggle-button').getAttribute('aria-label')"), "暂停");
     assert.equal(await read("!!document.querySelector('#player-toggle-button svg') && !!document.querySelector('#player-close-button svg')"), true);
+    assert.match(await read("document.querySelector('#player-close-button').textContent"), /返回详情/, "the overlay close control names the detail origin");
+    await read("document.querySelector('#player-settings-button').click()");
+    await waitFor("overlay settings panel", () => read("document.querySelector('#player-settings')?.hidden === false"));
+    const overlaySettings = await read(`(() => ({
+      groups: [...document.querySelectorAll('#player-settings .player-setting-group h3')].map((heading) => heading.textContent),
+      nativeSelects: document.querySelectorAll('#player-settings select').length,
+      focusedId: document.activeElement instanceof HTMLElement ? document.activeElement.id : '',
+      expanded: document.querySelector('#player-settings-button')?.getAttribute('aria-expanded'),
+    }))()`);
+    assert.deepEqual(overlaySettings.groups, ["播放速度", "音轨", "字幕", "外挂字幕"], "the overlay mirrors the grouped settings panel");
+    assert.equal(overlaySettings.nativeSelects, 0, "the overlay settings panel has no native select");
+    assert.equal(overlaySettings.expanded, "true");
+    await read("document.querySelector('#player-speed-trigger').click()");
+    await waitFor("overlay speed menu", () => read("document.querySelector('#player-speed-options')?.hidden === false"));
+    const overlayMenu = await read(`(() => ({
+      count: document.querySelectorAll('#player-speed-options [role="option"]').length,
+      focusedId: document.activeElement instanceof HTMLElement ? document.activeElement.id : '',
+      focusedRole: document.activeElement?.getAttribute('role') || '',
+    }))()`);
+    assert.equal(overlayMenu.count, 8, "the overlay mirrors every speed option");
+    assert.equal(overlayMenu.focusedRole, "option", "opening the mirrored menu focuses its selected option");
+    await read("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape' }))");
+    await waitFor("overlay speed menu closed", () => read("document.querySelector('#player-speed-options')?.hidden === true"));
+    assert.equal(await read("document.activeElement?.id"), "player-speed-trigger", "Escape in the overlay returns focus to the menu trigger");
+    await read("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape' }))");
+    await waitFor("overlay settings closed", () => read("document.querySelector('#player-settings')?.hidden === true"));
+    assert.equal(await read("document.activeElement?.id"), "player-settings-button", "Escape in the overlay returns focus to the settings button");
+    await read("document.activeElement?.blur()");
     await read("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', code: 'KeyF', ctrlKey: true }))");
     await delay(300);
     assert.equal(window.isFullScreen(), false, "Ctrl+F does not trigger the player shortcut");
