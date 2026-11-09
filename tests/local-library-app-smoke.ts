@@ -354,7 +354,7 @@ async function run(): Promise<void> {
           recent: read('#recent-row'),
           shows: read('#shows-row'),
           continueScope: document.querySelector('#continue-scope')?.textContent || '',
-          sortLabels: [...document.querySelectorAll('#library-sort option')].map((option) => option.textContent || ''),
+          sortLabels: [...document.querySelectorAll('#library-sort-options [role="option"]')].map((option) => option.textContent || ''),
         };
       })()`),
       (value) => value.recentHidden === false && value.showsHidden === false && value.shows.length === 1 && value.shows[0]?.title === "Owned Next Show",
@@ -583,7 +583,7 @@ async function run(): Promise<void> {
       "clear search returns to the pre-search page",
       () => evaluate(window, `(() => ({
         searchHidden: document.querySelector('#search-section')?.hidden,
-        filter: document.querySelector('#library-grid .media-card') ? document.querySelector('#library-filter')?.value || '' : '',
+        filter: document.querySelector('#library-grid .media-card') ? document.querySelector('#library-filter-buttons [data-filter][aria-pressed="true"]')?.dataset.filter || '' : '',
         query: document.querySelector('#library-search-input')?.value || '',
         scope: document.querySelector('#page-scope')?.textContent || '',
         titles: [...document.querySelectorAll('#library-grid .media-card-title')].map((title) => title.textContent || ''),
@@ -608,7 +608,7 @@ async function run(): Promise<void> {
     await evaluate(window, "document.querySelector('[data-nav=show]')?.click()");
     const navClearedSearch = await waitFor(
       "old query does not silently apply under the next tab",
-      () => evaluate(window, "({ query: document.querySelector('#library-search-input')?.value || '', filter: document.querySelector('#library-filter')?.value || '', titles: [...document.querySelectorAll('#library-grid .media-card-title')].map((title) => title.textContent || ''), searchHidden: document.querySelector('#search-section')?.hidden })"),
+      () => evaluate(window, `({ query: document.querySelector('#library-search-input')?.value || '', filter: document.querySelector('#library-filter-buttons [data-filter][aria-pressed="true"]')?.dataset.filter || '', titles: [...document.querySelectorAll('#library-grid .media-card-title')].map((title) => title.textContent || ''), searchHidden: document.querySelector('#search-section')?.hidden })`),
       (value) => value.searchHidden === true && value.filter === "show" && value.titles.length === 1,
     );
     assert.equal(navClearedSearch.query, "");
@@ -696,18 +696,22 @@ async function run(): Promise<void> {
     assert.match(episodeOrigin.backLabel, /返回单集列表/, "detail opened from the file-level episode list names that origin");
     await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
     await waitFor("back to episode list", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === true);
-    assert.equal(await evaluate(window, "document.querySelector('#library-filter')?.value"), "episode", "returning from a single-episode detail keeps the file-level filter");
+    assert.equal(await evaluate(window, `document.querySelector('#library-filter-buttons [data-filter][aria-pressed="true"]')?.dataset.filter`), "episode", "returning from a single-episode detail keeps the file-level filter");
     await evaluate(window, "document.querySelector('#library-filter-buttons [data-filter=all]')?.click()");
     await waitFor("all works after single-episode check", () => evaluate(window, "document.querySelector('#library-grid')?.getAttribute('aria-busy') || ''"), (value) => value === "");
 
-    const sortMenu = await evaluate(window, "(() => { const select = document.querySelector('#library-sort'); return { options: [...select.options].map((option) => ({ value: option.value, label: option.textContent })), value: select.value }; })()");
+    const sortMenu = await evaluate(window, "(() => { const popover = document.querySelector('#library-sort-options'); return { options: [...popover.querySelectorAll('[role=option]')].map((option) => ({ value: option.dataset.value, label: option.textContent })), value: document.querySelector('#library-sort-trigger')?.dataset.value || '', selected: [...popover.querySelectorAll('[aria-selected=\"true\"]')].map((option) => option.textContent || '') }; })()");
     assert.ok(sortMenu.options.some((option: { value: string; label: string }) => option.value === "released_desc" && option.label === "最近发布"), "sort menu exposes 最近发布");
-    await evaluate(window, "(() => { const select = document.querySelector('#library-sort'); select.value = 'released_desc'; select.dispatchEvent(new Event('change', { bubbles: true })); })()");
+    assert.deepEqual(sortMenu.selected, ["最近观看"], "the sort listbox marks the active order");
+    await evaluate(window, "document.querySelector('#library-sort-trigger')?.click()");
+    await evaluate(window, "document.querySelector('#library-sort-options [data-value=released_desc]')?.click()");
     const released = await waitFor(
       "released_desc ordering",
-      () => evaluate(window, "(() => { const cards = [...document.querySelectorAll('#library-grid .media-card')]; return { value: document.querySelector('#library-sort')?.value, firstTitle: cards[0]?.querySelector('.media-card-title')?.textContent || '', firstMeta: cards[0]?.querySelector('.media-card-meta')?.textContent || '', secondMeta: cards[1]?.querySelector('.media-card-meta')?.textContent || '' }; })()"),
+      () => evaluate(window, "(() => { const cards = [...document.querySelectorAll('#library-grid .media-card')]; return { value: document.querySelector('#library-sort-trigger')?.dataset.value, expanded: document.querySelector('#library-sort-trigger')?.getAttribute('aria-expanded'), focused: document.activeElement?.id || '', firstTitle: cards[0]?.querySelector('.media-card-title')?.textContent || '', firstMeta: cards[0]?.querySelector('.media-card-meta')?.textContent || '', secondMeta: cards[1]?.querySelector('.media-card-meta')?.textContent || '' }; })()"),
       (value) => value.value === "released_desc" && value.firstTitle === LONG_TITLE,
     );
+    assert.equal(released.expanded, "false", "choosing a sort collapses the listbox");
+    assert.equal(released.focused, "library-sort-trigger", "choosing a sort returns focus to its trigger");
     assert.match(released.firstMeta, /2026-02-14/, "dated work shows its real NFO premiere date");
     assert.match(released.secondMeta, /2025-09-01/, "dated show ranks after the newer movie");
     const storedSort = await evaluate(window, "window.zVideo.appPreferences.get()");
@@ -715,7 +719,7 @@ async function run(): Promise<void> {
     await evaluate(window, "(() => { const input = document.querySelector('#library-search-input'); if (!(input instanceof HTMLInputElement)) throw new Error('search missing'); input.value = 'Index fixture index-00000'; input.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#library-search-form').requestSubmit(); })()");
     const unknownDate = await waitFor(
       "unknown premiere date label in search results",
-      () => evaluate(window, "(() => ({ meta: document.querySelector('#search-grid .media-card-meta')?.textContent || '', cards: document.querySelectorAll('#search-grid .media-card').length, skeletons: document.querySelectorAll('#search-grid .media-skeleton').length, message: document.querySelector('#library-message')?.textContent || '', count: document.querySelector('#search-count')?.textContent || '', query: document.querySelector('#library-search-input')?.value || '', filter: document.querySelector('#search-filter-buttons [aria-pressed=\"true\"]')?.dataset.filter || '', sort: document.querySelector('#library-sort')?.value || '', busy: document.querySelector('#search-grid')?.getAttribute('aria-busy') }))()"),
+      () => evaluate(window, "(() => ({ meta: document.querySelector('#search-grid .media-card-meta')?.textContent || '', cards: document.querySelectorAll('#search-grid .media-card').length, skeletons: document.querySelectorAll('#search-grid .media-skeleton').length, message: document.querySelector('#library-message')?.textContent || '', count: document.querySelector('#search-count')?.textContent || '', query: document.querySelector('#library-search-input')?.value || '', filter: document.querySelector('#search-filter-buttons [aria-pressed=\"true\"]')?.dataset.filter || '', sort: document.querySelector('#library-sort-trigger')?.dataset.value || '', busy: document.querySelector('#search-grid')?.getAttribute('aria-busy') }))()"),
       (value) => value.meta.includes("发布日期未知"),
     );
     assert.match(unknownDate.meta, /发布日期未知/);
@@ -726,13 +730,14 @@ async function run(): Promise<void> {
     window.webContents.reload();
     const restoredSort = await waitFor(
       "saved work-level sort preference restored after reload",
-      () => evaluate(window, "({ sort: document.querySelector('#library-sort')?.value || '', busy: document.querySelector('#library-grid')?.getAttribute('aria-busy') })"),
+      () => evaluate(window, "({ sort: document.querySelector('#library-sort-trigger')?.dataset.value || '', busy: document.querySelector('#library-grid')?.getAttribute('aria-busy') })"),
       (value) => value.sort === "released_desc" && value.busy === null,
       20_000,
     );
     assert.equal(restoredSort.sort, "released_desc", "a saved sort preference still wins after a fresh renderer load");
-    await evaluate(window, "(() => { const select = document.querySelector('#library-sort'); select.value = 'recent'; select.dispatchEvent(new Event('change', { bubbles: true })); })()");
-    await waitFor("sort restored", () => evaluate(window, "document.querySelector('#library-sort')?.value"), (value) => value === "recent");
+    await evaluate(window, "document.querySelector('#library-sort-trigger')?.click()");
+    await evaluate(window, "document.querySelector('#library-sort-options [data-value=recent]')?.click()");
+    await waitFor("sort restored", () => evaluate(window, "document.querySelector('#library-sort-trigger')?.dataset.value"), (value) => value === "recent");
     await waitFor("library settled after sort restore", () => evaluate(window, "document.querySelector('#library-grid')?.getAttribute('aria-busy')"), (value) => value === null);
     await evaluate(window, "document.querySelector('[data-nav=folder]')?.click()");
     await waitFor("sources visible", () => evaluate(window, "document.querySelector('#source-list')?.getBoundingClientRect().width > 0"), Boolean);
@@ -748,7 +753,7 @@ async function run(): Promise<void> {
     assert.equal(filterEmpty.viewAllHidden, false, "a filter with no results offers 查看全部");
     assert.equal(filterEmpty.paginationHidden, true, "an empty filter result has no pages");
     await evaluate(window, "document.querySelector('#empty-view-all')?.click()");
-    await waitFor("view all recovers from the empty filter", () => evaluate(window, "({ hidden: document.querySelector('#library-empty')?.hidden, count: document.querySelectorAll('#library-grid .media-card').length, filter: document.querySelector('#library-filter')?.value })"), (value) => value.hidden === true && Number(value.count) > 0 && value.filter === "all");
+    await waitFor("view all recovers from the empty filter", () => evaluate(window, `({ hidden: document.querySelector('#library-empty')?.hidden, count: document.querySelectorAll('#library-grid .media-card').length, filter: document.querySelector('#library-filter-buttons [data-filter][aria-pressed="true"]')?.dataset.filter })`), (value) => value.hidden === true && Number(value.count) > 0 && value.filter === "all");
     const readPagination = () => evaluate(window, `(() => {
       const nav = document.querySelector('#library-pagination');
       const status = document.querySelector('#pagination-status')?.textContent || '';
@@ -909,15 +914,22 @@ async function run(): Promise<void> {
       "player settings visible",
       () => evaluate(window, `(() => {
         const panel = document.querySelector('#player-settings');
+        const box = panel?.getBoundingClientRect();
         return {
           visible: panel?.hidden === false,
           role: panel?.getAttribute('role') || '',
           groups: [...(panel?.querySelectorAll('.player-setting-group h3') ?? [])].map((heading) => heading.textContent || ''),
-          nativeSelects: document.querySelectorAll('[data-view="player"] select').length,
-          haspops: [...(panel?.querySelectorAll('[aria-haspopup="listbox"]') ?? [])].map((trigger) => trigger.id),
+          nativeSelects: document.querySelectorAll('select').length,
+          panelHaspops: panel?.querySelectorAll('[aria-haspopup="listbox"]').length ?? 0,
+          chipSets: [...(panel?.querySelectorAll('.player-chip-set') ?? [])].map((set) => ({
+            label: set.getAttribute('aria-label') || '',
+            chips: [...set.querySelectorAll('.player-chip')].map((chip) => ({ text: chip.textContent || '', pressed: chip.getAttribute('aria-pressed') })),
+          })),
           focusedId: document.activeElement instanceof HTMLElement ? document.activeElement.id : '',
           focusInside: Boolean(panel && document.activeElement instanceof Node && panel.contains(document.activeElement)),
           settingsExpanded: document.querySelector('#player-settings-button')?.getAttribute('aria-expanded') || '',
+          panelRect: box ? { left: box.left, right: box.right, top: box.top, bottom: box.bottom } : null,
+          viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight },
         };
       })()`),
       (value) => value.visible === true,
@@ -925,71 +937,29 @@ async function run(): Promise<void> {
     assert.equal(settingsOpen.role, "dialog", "the settings panel exposes its region role");
     assert.deepEqual(settingsOpen.groups, ["播放速度", "音轨", "字幕", "外挂字幕"], "settings group playback speed, audio, subtitles and external subtitles");
     assert.equal(settingsOpen.nativeSelects, 0, "the player never falls back to native select controls");
-    assert.deepEqual(settingsOpen.haspops, ["player-speed-trigger", "player-audio-trigger", "player-subtitle-trigger"], "speed, audio and subtitle choices use app menus");
+    assert.equal(settingsOpen.panelHaspops, 0, "the space-constrained settings panel uses inline chips instead of clipped popovers");
+    assert.deepEqual(settingsOpen.chipSets.map((set: { label: string }) => set.label), ["播放速度", "音轨", "字幕"], "each settings choice is an inline chip group");
+    assert.equal(settingsOpen.chipSets[0].chips.length, 8, "speed chips list every supported rate");
+    assert.ok(settingsOpen.chipSets[0].chips.some((chip: { text: string; pressed: string }) => chip.text === "1×" && chip.pressed === "true"), "the active speed chip is pressed");
+    assert.ok(settingsOpen.chipSets[1].chips.some((chip: { text: string }) => chip.text === "自动"), "audio chips include the automatic choice");
+    assert.ok(settingsOpen.chipSets[2].chips.some((chip: { text: string }) => chip.text === "关闭"), "subtitle chips include the off choice");
     assert.equal(settingsOpen.settingsExpanded, "true", "the settings trigger reports the open panel");
     assert.equal(settingsOpen.focusInside, true, `opening settings moves focus into the panel: ${settingsOpen.focusedId}`);
+    assert.ok(settingsOpen.panelRect!.left >= 0 && settingsOpen.panelRect!.right <= settingsOpen.viewport.width + 1 && settingsOpen.panelRect!.top >= 0 && settingsOpen.panelRect!.bottom <= settingsOpen.viewport.height + 1, `the settings panel stays inside 1040x720: ${JSON.stringify(settingsOpen.panelRect)}`);
 
-    await evaluate(window, "document.querySelector('#player-speed-trigger')?.click()");
-    const speedMenu = await waitFor(
-      "speed menu open",
-      () => evaluate(window, `(() => {
-        const popover = document.querySelector('#player-speed-options');
-        return {
-          visible: popover?.hidden === false,
-          expanded: document.querySelector('#player-speed-trigger')?.getAttribute('aria-expanded') || '',
-          options: [...(popover?.querySelectorAll('[role="option"]') ?? [])].map((option) => ({ id: option.id, text: option.textContent || '', selected: option.getAttribute('aria-selected') })),
-          focusedId: document.activeElement instanceof HTMLElement ? document.activeElement.id : '',
-        };
-      })()`),
-      (value) => value.visible === true,
-    );
-    assert.equal(speedMenu.expanded, "true", "the speed trigger reports its listbox");
-    assert.equal(speedMenu.options.length, 8, "speed menu lists every supported rate");
-    assert.ok(speedMenu.options.some((option: { text: string; selected: string }) => option.text === "1×" && option.selected === "true"), "the current speed is marked selected");
-    assert.match(speedMenu.focusedId, /^player-speed-option-/, "opening a menu focuses the selected option");
-    await evaluate(window, "document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))");
-    const speedMoved = await waitFor(
-      "speed menu keyboard focus",
-      () => evaluate(window, "document.activeElement instanceof HTMLElement ? document.activeElement.id : ''"),
-      (id) => /^player-speed-option-/.test(String(id)) && id !== speedMenu.focusedId,
-    );
-    assert.ok(Boolean(speedMoved), "arrow keys move through the app menu");
-    await evaluate(window, "document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
-    const speedClosed = await waitFor(
-      "speed menu closed by Escape",
-      () => evaluate(window, "(() => ({ hidden: document.querySelector('#player-speed-options')?.hidden, expanded: document.querySelector('#player-speed-trigger')?.getAttribute('aria-expanded'), focusedId: document.activeElement instanceof HTMLElement ? document.activeElement.id : '' }))()"),
-      (value) => value.hidden === true,
-    );
-    assert.equal(speedClosed.expanded, "false", "Escape collapses the speed menu");
-    assert.equal(speedClosed.focusedId, "player-speed-trigger", "Escape returns focus to the speed trigger");
-    await evaluate(window, "document.querySelector('#player-speed-trigger')?.click()");
-    await waitFor("speed menu reopened", () => evaluate(window, "document.querySelector('#player-speed-options')?.hidden === false"), Boolean);
-    await evaluate(window, `(() => { const option = [...document.querySelectorAll('#player-speed-options [role="option"]')].find((candidate) => candidate.textContent === '1.25×'); if (option instanceof HTMLElement) option.click(); return Boolean(option); })()`);
-    const speedSelected = await waitFor(
-      "speed menu selection",
-      () => evaluate(window, "(() => ({ value: document.querySelector('#player-speed-value')?.textContent || '', hidden: document.querySelector('#player-speed-options')?.hidden, focusedId: document.activeElement instanceof HTMLElement ? document.activeElement.id : '' }))()"),
-      (value) => value.hidden === true && value.value === "1.25×",
-    );
-    assert.equal(speedSelected.focusedId, "player-speed-trigger", "choosing a speed returns focus to its trigger");
-    await evaluate(window, "document.querySelector('#player-audio-trigger')?.click()");
-    const audioMenu = await waitFor(
-      "audio menu open",
-      () => evaluate(window, "(() => ({ hidden: document.querySelector('#player-audio-options')?.hidden, options: [...(document.querySelectorAll('#player-audio-options [role=\\\"option\\\"]'))].map((option) => option.textContent || '') }))()"),
-      (value) => value.hidden === false,
-    );
-    assert.ok(audioMenu.options.includes("自动"), "the audio menu starts with the automatic choice");
-    await evaluate(window, "document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
-    await waitFor("audio menu closed", () => evaluate(window, "document.querySelector('#player-audio-options')?.hidden === true"), Boolean);
-    await evaluate(window, "document.querySelector('#player-subtitle-trigger')?.click()");
-    const subtitleMenu = await waitFor(
-      "subtitle menu open",
-      () => evaluate(window, "(() => ({ hidden: document.querySelector('#player-subtitle-options')?.hidden, options: [...(document.querySelectorAll('#player-subtitle-options [role=\\\"option\\\"]'))].map((option) => option.textContent || '') }))()"),
-      (value) => value.hidden === false,
-    );
-    assert.ok(subtitleMenu.options.includes("关闭"), "the subtitle menu includes the off choice");
-    await evaluate(window, "document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
-    await waitFor("subtitle menu closed", () => evaluate(window, "document.querySelector('#player-subtitle-options')?.hidden === true"), Boolean);
-    await capture("player-menu");
+    const chipSelection = await evaluate(window, `(() => {
+      const chip = [...document.querySelectorAll('#player-speed-chips .player-chip')].find((candidate) => candidate.textContent === '1.25×');
+      if (!(chip instanceof HTMLElement)) return null;
+      chip.click();
+      return {
+        pressed: chip.getAttribute('aria-pressed'),
+        value: document.querySelector('#player-speed-value')?.textContent || '',
+        focused: document.activeElement instanceof HTMLElement ? document.activeElement.id : '',
+      };
+    })()`);
+    assert.equal(chipSelection?.pressed, "true", "choosing a speed chip marks it pressed");
+    assert.equal(chipSelection?.value, "1.25×", "the speed trigger follows the inline chip");
+    assert.match(String(chipSelection?.focused), /^player-speed-chip-/, "chip selection keeps focus on the chip");
     await evaluate(window, "document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }))");
     const settingsOutside = await waitFor(
       "settings closed by outside pointer",
@@ -1016,6 +986,70 @@ async function run(): Promise<void> {
       (value) => value.hidden === true,
     );
     assert.equal(settingsClosed.focusedId, "player-settings-button", "the close button returns focus to the settings button");
+
+    await evaluate(window, "document.querySelector('#player-speed-trigger')?.click()");
+    const speedMenu = await waitFor(
+      "speed menu open",
+      () => evaluate(window, `(() => {
+        const popover = document.querySelector('#player-speed-options');
+        return {
+          visible: popover?.hidden === false,
+          expanded: document.querySelector('#player-speed-trigger')?.getAttribute('aria-expanded') || '',
+          haspopup: document.querySelector('#player-speed-trigger')?.getAttribute('aria-haspopup') || '',
+          options: [...(popover?.querySelectorAll('[role="option"]') ?? [])].map((option) => ({ id: option.id, text: option.textContent || '', selected: option.getAttribute('aria-selected') })),
+          focusedId: document.activeElement instanceof HTMLElement ? document.activeElement.id : '',
+        };
+      })()`),
+      (value) => value.visible === true,
+    );
+    assert.equal(speedMenu.expanded, "true", "the speed trigger reports its listbox");
+    assert.equal(speedMenu.haspopup, "listbox", "the control-bar speed trigger is an app listbox");
+    assert.equal(speedMenu.options.length, 8, "speed menu lists every supported rate");
+    assert.ok(speedMenu.options.some((option: { text: string; selected: string }) => option.text === "1.25×" && option.selected === "true"), "the current speed is marked selected");
+    assert.match(speedMenu.focusedId, /^player-speed-option-/, "opening a menu focuses the selected option");
+    await evaluate(window, "document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))");
+    const speedMoved = await waitFor(
+      "speed menu keyboard focus",
+      () => evaluate(window, "document.activeElement instanceof HTMLElement ? document.activeElement.id : ''"),
+      (id) => /^player-speed-option-/.test(String(id)) && id !== speedMenu.focusedId,
+    );
+    assert.ok(Boolean(speedMoved), "arrow keys move through the app menu");
+    await evaluate(window, "document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
+    const speedClosed = await waitFor(
+      "speed menu closed by Escape",
+      () => evaluate(window, "(() => ({ hidden: document.querySelector('#player-speed-options')?.hidden, expanded: document.querySelector('#player-speed-trigger')?.getAttribute('aria-expanded'), focusedId: document.activeElement instanceof HTMLElement ? document.activeElement.id : '' }))()"),
+      (value) => value.hidden === true,
+    );
+    assert.equal(speedClosed.expanded, "false", "Escape collapses the speed menu");
+    assert.equal(speedClosed.focusedId, "player-speed-trigger", "Escape returns focus to the speed trigger");
+    await evaluate(window, "document.querySelector('#player-speed-trigger')?.click()");
+    await waitFor("speed menu reopened", () => evaluate(window, "document.querySelector('#player-speed-options')?.hidden === false"), Boolean);
+    await evaluate(window, `(() => { const option = [...document.querySelectorAll('#player-speed-options [role="option"]')].find((candidate) => candidate.textContent === '1×'); if (option instanceof HTMLElement) option.click(); return Boolean(option); })()`);
+    const speedSelected = await waitFor(
+      "speed menu selection",
+      () => evaluate(window, "(() => ({ value: document.querySelector('#player-speed-value')?.textContent || '', hidden: document.querySelector('#player-speed-options')?.hidden, focusedId: document.activeElement instanceof HTMLElement ? document.activeElement.id : '' }))()"),
+      (value) => value.hidden === true && value.value === "1×",
+    );
+    assert.equal(speedSelected.focusedId, "player-speed-trigger", "choosing a speed returns focus to its trigger");
+    await evaluate(window, "document.querySelector('#player-audio-trigger')?.click()");
+    const audioMenu = await waitFor(
+      "audio menu open",
+      () => evaluate(window, "(() => ({ hidden: document.querySelector('#player-audio-options')?.hidden, options: [...(document.querySelectorAll('#player-audio-options [role=\\\"option\\\"]'))].map((option) => option.textContent || '') }))()"),
+      (value) => value.hidden === false,
+    );
+    assert.ok(audioMenu.options.includes("自动"), "the audio menu starts with the automatic choice");
+    await evaluate(window, "document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
+    await waitFor("audio menu closed", () => evaluate(window, "document.querySelector('#player-audio-options')?.hidden === true"), Boolean);
+    await evaluate(window, "document.querySelector('#player-subtitle-trigger')?.click()");
+    const subtitleMenu = await waitFor(
+      "subtitle menu open",
+      () => evaluate(window, "(() => ({ hidden: document.querySelector('#player-subtitle-options')?.hidden, options: [...(document.querySelectorAll('#player-subtitle-options [role=\\\"option\\\"]'))].map((option) => option.textContent || '') }))()"),
+      (value) => value.hidden === false,
+    );
+    assert.ok(subtitleMenu.options.includes("关闭"), "the subtitle menu includes the off choice");
+    await capture("player-menu");
+    await evaluate(window, "document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
+    await waitFor("subtitle menu closed", () => evaluate(window, "document.querySelector('#player-subtitle-options')?.hidden === true"), Boolean);
     await evaluate(window, "window.zVideo.localPlayback.command({ type: 'seek', positionSec: 1 })");
     await new Promise((resolve) => setTimeout(resolve, 400));
     await evaluate(window, "window.zVideo.localPlayback.command({ type: 'pause' })");
@@ -1603,7 +1637,7 @@ async function run(): Promise<void> {
         nextEpisode: { title: nextPrompt.nextTitle, meta: nextPrompt.nextMeta, countdown: nextPrompt.countdown, returnLabel: nextPrompt.returnLabel, replayHidden: nextPrompt.replayHidden },
         movieEnding: { title: movieEnded.endedTitle, replay: movieEnded.replayText, returnLabel: movieEnded.returnLabel, playNextHidden: movieEnded.playNextHidden },
         error: { message: playbackError.message, buttons: playbackError.buttons, inSurface: playbackError.errorInsideSurface },
-        settings: { groups: settingsOpen.groups, nativeSelects: settingsOpen.nativeSelects, haspops: settingsOpen.haspops, focusInside: settingsOpen.focusInside, speedOptions: speedMenu.options.map((option: { text: string }) => option.text), speedSelected: speedSelected.value, outsideFocus: settingsOutside.focusedId, escapeFocus: settingsEscape.focusedId, closeFocus: settingsClosed.focusedId },
+        settings: { groups: settingsOpen.groups, nativeSelects: settingsOpen.nativeSelects, panelHaspops: settingsOpen.panelHaspops, chips: settingsOpen.chipSets, focusInside: settingsOpen.focusInside, speedOptions: speedMenu.options.map((option: { text: string }) => option.text), speedSelected: speedSelected.value, outsideFocus: settingsOutside.focusedId, escapeFocus: settingsEscape.focusedId, closeFocus: settingsClosed.focusedId },
       },
 
       detailStates: {

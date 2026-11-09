@@ -8,6 +8,13 @@ let state = {};
 let timer;
 let dragging = false;
 
+function isTextEntry(target) {
+  return target instanceof Element && Boolean(target.closest("input, textarea, [contenteditable='true']"));
+}
+document.addEventListener("contextmenu", (event) => event.preventDefault());
+document.addEventListener("dragstart", (event) => event.preventDefault());
+document.addEventListener("selectstart", (event) => { if (!isTextEntry(event.target)) event.preventDefault(); });
+
 window.zVideo.overlay.onReset(() => {
   clearTimeout(timer);
   timer = undefined;
@@ -37,14 +44,15 @@ window.zVideo.overlay.onState((next) => {
   const changed = state.fullscreen !== next.fullscreen || state.playing !== next.playing || state.activity !== next.activity;
   state = next;
   document.body.classList.toggle("fullscreen", !!next.fullscreen);
-  if (typeof next.revision === "number" && (next.revision !== revision || !initialized)) {
+  const structureChanged = typeof next.revision === "number" && (next.revision !== revision || !initialized);
+  if (structureChanged) {
     revision = next.revision;
     if (typeof next.heading === "string") heading.innerHTML = next.heading;
     if (typeof next.controls === "string") controls.innerHTML = next.controls;
     if (typeof next.stage === "string") stage.innerHTML = next.stage;
     initialized = true;
   }
-  if (typeof next.focusId === "string" && next.focusId && next.focusId !== lastFocusId) {
+  if (typeof next.focusId === "string" && next.focusId && (next.focusId !== lastFocusId || structureChanged)) {
     lastFocusId = next.focusId;
     document.getElementById(next.focusId)?.focus({ preventScroll: true });
   } else if (!next.focusId) {
@@ -87,7 +95,7 @@ window.addEventListener("focusout", () => setTimeout(showControls, 0));
 window.addEventListener("keydown", (event) => {
   showControls();
   if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.isComposing) return;
-  if (document.activeElement?.closest('[role="listbox"]') && ["ArrowDown", "ArrowUp", "Home", "End", "Escape"].includes(event.key)) event.preventDefault();
+  if (document.activeElement?.closest('[role="listbox"]') && ["ArrowDown", "ArrowUp", "Home", "End", "Escape", "Tab"].includes(event.key)) event.preventDefault();
   const target = event.target instanceof Element ? event.target : null;
   if (target?.closest("input, select") || (event.code === "Space" && target?.closest("button"))) return;
   window.zVideo.overlay.action({ type: "key", key: event.key, code: event.code });

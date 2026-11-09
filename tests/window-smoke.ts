@@ -176,6 +176,8 @@ async function run(): Promise<void> {
     },
   });
   await window.loadFile(join(__dirname, "..", "src", "renderer", "index.html"));
+  window.show();
+  window.focus();
 
   async function waitFor<T>(label: string, read: () => Promise<T>, predicate: (value: T) => boolean, timeoutMs = 5_000): Promise<T> {
     const deadline = Date.now() + timeoutMs;
@@ -208,6 +210,176 @@ async function run(): Promise<void> {
   assert.equal(initial.folderButton, true);
   assert.equal(initial.openButton, true);
   assert.match(initial.card, /窗口测试影片/);
+
+  // B6a: app-native controls, font and desktop feel.
+  const readFeel = () => window.webContents.executeJavaScript(`(async () => {
+    await document.fonts.ready;
+    const searchBox = document.querySelector('#library-search-form');
+    const searchInput = document.querySelector('#library-search-input');
+    const sortTrigger = document.querySelector('#library-sort-trigger');
+    const textTarget = document.querySelector('#library-title');
+    const prevented = (element, type) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      element.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    return {
+      nativeSelects: document.querySelectorAll('select').length,
+      sortTrigger: Boolean(sortTrigger),
+      sortValue: document.querySelector('#library-sort-value')?.textContent || '',
+      fontFamily: getComputedStyle(document.body).fontFamily,
+      fontLoaded: document.fonts.check('400 16px Nunito') && document.fonts.check('900 16px Nunito'),
+      cardMetaFont: document.querySelector('.media-card-meta') ? getComputedStyle(document.querySelector('.media-card-meta')).fontFamily : '',
+      cardMetaSize: document.querySelector('.media-card-meta') ? getComputedStyle(document.querySelector('.media-card-meta')).fontSize : '',
+      bodySelect: getComputedStyle(document.body).userSelect,
+      textSelect: getComputedStyle(textTarget).userSelect,
+      inputSelect: getComputedStyle(searchInput).userSelect,
+      searchBoxBorder: getComputedStyle(searchBox).borderTopWidth,
+      searchInputBorder: getComputedStyle(searchInput).borderTopWidth,
+      searchInputOutline: getComputedStyle(searchInput).outlineStyle,
+      contextPrevented: prevented(textTarget, 'contextmenu'),
+      dragPrevented: prevented(textTarget, 'dragstart'),
+      selectTextPrevented: prevented(textTarget, 'selectstart'),
+      selectInputAllowed: !prevented(searchInput, 'selectstart'),
+    };
+  })()`, true) as Promise<Record<string, unknown>>;
+  const feel = await readFeel();
+  assert.equal(feel.nativeSelects, 0, "the app window exposes zero native select controls");
+  assert.equal(feel.sortTrigger, true, "sorting is an app menu trigger");
+  assert.equal(feel.sortValue, "最近观看", "the sort trigger names the active order");
+  assert.match(String(feel.fontFamily), /^Nunito,/, "Nunito leads the app font stack");
+  assert.match(String(feel.fontFamily), /Microsoft YaHei UI/, "Chinese falls back to the system UI face");
+  assert.equal(feel.fontLoaded, true, "the embedded Nunito woff2 covers body and heavy weights");
+  assert.match(String(feel.cardMetaFont), /^Nunito,/, "font shorthands keep the same Nunito-first stack");
+  assert.equal(feel.cardMetaSize, "12px", "font shorthands with the shared family stay valid");
+  assert.equal(feel.bodySelect, "none", "app text is not selectable");
+  assert.equal(feel.textSelect, "none", "body copy is not selectable");
+  assert.equal(feel.inputSelect, "text", "inputs keep native text selection");
+  assert.equal(feel.searchBoxBorder, "0px", "the search shell has no rectangular border");
+  assert.equal(feel.searchInputBorder, "0px", "the search input has no rectangular border");
+  assert.equal(feel.searchInputOutline, "none", "the search input never paints its own focus box");
+  assert.equal(feel.contextPrevented, true, "text context menus are suppressed");
+  assert.equal(feel.dragPrevented, true, "text dragging is suppressed");
+  assert.equal(feel.selectTextPrevented, true, "non-input text selection is suppressed");
+  assert.equal(feel.selectInputAllowed, true, "input selection stays native");
+
+  const focusFeel = await window.webContents.executeJavaScript(`(() => {
+    const trigger = document.querySelector('#library-sort-trigger');
+    trigger.focus();
+    const programmatic = { visible: trigger.matches(':focus-visible'), outline: getComputedStyle(trigger).outlineStyle };
+    trigger.blur();
+    const input = document.querySelector('#library-search-input');
+    input.focus();
+    const box = document.querySelector('#library-search-form');
+    const search = { outline: getComputedStyle(input).outlineStyle, shadow: getComputedStyle(box).boxShadow, visible: input.matches(':focus-visible') };
+    input.blur();
+    return { programmatic, search };
+  })()`, true) as { programmatic: { visible: boolean; outline: string }; search: { outline: string; shadow: string; visible: boolean } };
+  assert.equal(focusFeel.programmatic.visible, false, "pointer/programmatic focus does not match :focus-visible");
+  assert.equal(focusFeel.programmatic.outline, "none", "a mouse-focused control never paints a rectangle");
+  assert.equal(focusFeel.search.outline, "none", "the search input itself never paints a focus rectangle");
+  assert.match(focusFeel.search.shadow, /inset/, "search focus is expressed by the outer pill");
+  assert.match(focusFeel.search.shadow, /rgb\(201, 184, 255\) 0px 0px 0px 2px/, "the outer pill inset ring uses the lavender token");
+
+  await window.webContents.executeJavaScript("document.querySelector('[data-nav=all]').click()", true);
+  await waitFor(
+    "all-media toolbar for the sort menu",
+    () => window.webContents.executeJavaScript("(() => { const toolbar = document.querySelector('.all-media-toolbar'); return toolbar ? getComputedStyle(toolbar).display : ''; })()", true) as Promise<string>,
+    (display) => display === "flex",
+  );
+
+  const openSortMenu = () => window.webContents.executeJavaScript(`(() => {
+    const trigger = document.querySelector('#library-sort-trigger');
+    const popover = document.querySelector('#library-sort-options');
+    if (popover?.hidden !== false) trigger?.click();
+    const options = [...(popover?.querySelectorAll('[role="option"]') ?? [])];
+    return {
+      hidden: popover?.hidden,
+      expanded: trigger?.getAttribute('aria-expanded') || '',
+      haspopup: trigger?.getAttribute('aria-haspopup') || '',
+      count: options.length,
+      labels: options.map((option) => option.textContent || ''),
+      selected: options.filter((option) => option.getAttribute('aria-selected') === 'true').map((option) => option.textContent || ''),
+      focusedRole: document.activeElement?.getAttribute('role') || '',
+      focusedId: document.activeElement?.id || '',
+      triggerId: trigger?.id || '',
+    };
+  })()`, true) as Promise<{ hidden: boolean; expanded: string; haspopup: string; count: number; labels: string[]; selected: string[]; focusedRole: string; focusedId: string; triggerId: string }>;
+  const sortMenu = await openSortMenu();
+  assert.equal(sortMenu.hidden, false, "the sort trigger opens the app listbox");
+  assert.equal(sortMenu.expanded, "true");
+  assert.equal(sortMenu.haspopup, "listbox");
+  assert.equal(sortMenu.count, 6, "the sort listbox exposes every supported order");
+  assert.deepEqual(sortMenu.labels.slice(0, 3), ["最近观看", "最近加入", "最近发布"]);
+  assert.deepEqual(sortMenu.selected, ["最近观看"], "the active order is aria-selected");
+  assert.equal(sortMenu.focusedRole, "option", `opening the menu focuses the current option: ${JSON.stringify(sortMenu)}`);
+  const pressMenuKey = (key: string) => window.webContents.executeJavaScript(`(() => {
+    const target = document.activeElement;
+    target?.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true, cancelable: true }));
+    return {
+      focusedId: document.activeElement?.id || '',
+      focusedText: document.activeElement?.textContent || '',
+      hidden: document.querySelector('#library-sort-options')?.hidden,
+      expanded: document.querySelector('#library-sort-trigger')?.getAttribute('aria-expanded') || '',
+      value: document.querySelector('#library-sort-value')?.textContent || '',
+    };
+  })()`, true) as Promise<{ focusedId: string; focusedText: string; hidden: boolean; expanded: string; value: string }>;
+  const moved = await pressMenuKey("ArrowDown");
+  assert.notEqual(moved.focusedId, sortMenu.focusedId, "arrow keys move between sort options");
+  const last = await pressMenuKey("End");
+  assert.equal(last.focusedText, "评分", "End moves to the last sort option");
+  const first = await pressMenuKey("Home");
+  assert.equal(first.focusedText, "最近观看", "Home moves to the first sort option");
+  const chosen = await pressMenuKey("Enter");
+  assert.equal(chosen.hidden, true, "Enter selects and closes the listbox");
+  assert.equal(chosen.expanded, "false");
+  assert.equal(chosen.focusedId, "library-sort-trigger", "selection returns focus to the trigger");
+  assert.equal(chosen.value, "最近观看");
+  await window.webContents.executeJavaScript("document.querySelector('#library-sort-trigger').click()", true);
+  const escaped = await pressMenuKey("Escape");
+  assert.equal(escaped.hidden, true, "Escape closes the listbox");
+  assert.equal(escaped.focusedId, "library-sort-trigger", "Escape returns focus to the trigger");
+  await window.webContents.executeJavaScript("document.querySelector('#library-sort-trigger').click()", true);
+  const tabbed = await pressMenuKey("Tab");
+  assert.equal(tabbed.hidden, true, "Tab closes the listbox");
+  assert.equal(tabbed.focusedId, "library-sort-trigger", "Tab returns focus to the trigger");
+  await window.webContents.executeJavaScript("document.querySelector('#library-sort-trigger').click()", true);
+  const spaced = await pressMenuKey(" ");
+  assert.equal(spaced.hidden, true, "Space selects the focused option");
+  assert.equal(spaced.focusedId, "library-sort-trigger");
+  await window.webContents.executeJavaScript("document.querySelector('#library-sort-trigger').click()", true);
+  await window.webContents.executeJavaScript("document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }))", true);
+  assert.equal(await window.webContents.executeJavaScript("document.querySelector('#library-sort-options')?.hidden", true), true, "clicking outside closes the listbox");
+
+  window.setSize(900, 640);
+  await waitFor("900x640 sort menu layout", async () => window.webContents.executeJavaScript("document.documentElement.clientWidth", true) as Promise<number>, (width) => width <= 905);
+  const compactFeel = await window.webContents.executeJavaScript(`(() => {
+    const trigger = document.querySelector('#library-sort-trigger');
+    trigger?.click();
+    const popover = document.querySelector('#library-sort-options');
+    const menu = popover?.getBoundingClientRect();
+    const triggerBox = trigger?.getBoundingClientRect();
+    const viewport = { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight };
+    const result = {
+      viewport,
+      overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      hidden: popover?.hidden,
+      menu: menu ? { left: menu.left, right: menu.right, top: menu.top, bottom: menu.bottom } : null,
+      trigger: triggerBox ? { left: triggerBox.left, right: triggerBox.right, top: triggerBox.top, bottom: triggerBox.bottom } : null,
+    };
+    popover && (popover.hidden = true);
+    trigger?.setAttribute('aria-expanded', 'false');
+    return result;
+  })()`, true) as { viewport: { width: number; height: number }; overflowX: number; hidden: boolean; menu: { left: number; right: number; top: number; bottom: number } | null; trigger: { left: number; right: number; top: number; bottom: number } | null };
+  assert.ok(compactFeel.trigger, "the sort trigger keeps a layout box at 900x640");
+  assert.ok(compactFeel.trigger!.left >= 0 && compactFeel.trigger!.right <= compactFeel.viewport.width + 1, "the sort trigger stays inside 900x640");
+  assert.ok(compactFeel.menu, "the sort listbox opens at 900x640");
+  assert.ok(compactFeel.menu!.left >= 0 && compactFeel.menu!.right <= compactFeel.viewport.width + 1 && compactFeel.menu!.top >= 0 && compactFeel.menu!.bottom <= compactFeel.viewport.height + 1, `the sort listbox is not clipped at 900x640: ${JSON.stringify(compactFeel.menu)}`);
+  assert.ok(compactFeel.overflowX <= 1, "900x640 never overflows horizontally");
+  window.setSize(1040, 720);
+  await waitFor("default size restored after B6a checks", async () => window.webContents.executeJavaScript("document.documentElement.clientWidth", true) as Promise<number>, (width) => width > 1000);
+  await window.webContents.executeJavaScript("document.querySelector('[data-nav=home]').click()", true);
+  await waitFor("home view restored after B6a checks", () => window.webContents.executeJavaScript("document.querySelector('#collection-section')?.hidden", true) as Promise<boolean>, (hidden) => hidden === true);
 
   // A fanart-only item must render a generated cover without requesting fanart as a poster.
   await window.webContents.executeJavaScript("document.querySelector('[data-media-id=\"media_123e4567-e89b-12d3-a456-426614174004\"]').click()", true);
