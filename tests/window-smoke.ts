@@ -366,11 +366,27 @@ async function run(): Promise<void> {
   assert.equal(detail.title, "窗口测试影片");
 
   await window.webContents.executeJavaScript("document.querySelector('#media-detail-back').click()", true);
+  const queriesBeforeTyping = queries.length;
   await window.webContents.executeJavaScript("document.querySelector('#library-search-input').value = '窗口'; document.querySelector('#library-search-input').dispatchEvent(new Event('input', { bubbles: true }))", true);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(queries.length, queriesBeforeTyping, "typing alone never issues a background library query");
+  await window.webContents.executeJavaScript("document.querySelector('#library-search-form').requestSubmit()", true);
   await waitFor("search query", async () => queries.at(-1)?.query, (value) => value === "窗口");
   assert.equal(queries.at(-1)?.query, "窗口");
-
+  const searchView = await waitFor(
+    "explicit search view",
+    () => window.webContents.executeJavaScript("({ hidden: document.querySelector('#search-section')?.hidden, title: document.querySelector('#search-title')?.textContent || '', count: document.querySelector('#search-count')?.textContent || '', back: document.querySelector('#search-back')?.textContent || '', cards: document.querySelectorAll('#search-grid .media-card').length })", true) as Promise<{ hidden: boolean; title: string; count: string; back: string; cards: number }>,
+    (value) => value.hidden === false && value.title === "搜索「窗口」",
+  );
+  assert.match(searchView.count, /共 \d+ 部作品/);
+  assert.match(searchView.back, /清空搜索/);
+  assert.ok(searchView.cards > 0);
   await window.webContents.executeJavaScript("document.querySelector('[data-nav=folder]').click()", true);
+  await waitFor(
+    "top navigation clears the search query",
+    () => window.webContents.executeJavaScript("({ query: document.querySelector('#library-search-input')?.value || '', searchHidden: document.querySelector('#search-section')?.hidden })", true) as Promise<{ query: string; searchHidden: boolean }>,
+    (value) => value.query === "" && value.searchHidden === true,
+  );
   const readFolders = () => window.webContents.executeJavaScript(`(() => {
     const cards = [...document.querySelectorAll('#source-list [data-source-card-id]')].map((card) => ({
       text: card.textContent || '',

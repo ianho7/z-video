@@ -25,12 +25,27 @@ function episodeLabel(resume: NonNullable<LocalCollectionSummary["resume"]>): st
   return resume.episodeTitle;
 }
 
+/** Search hit label for the one episode whose title matched the query. */
+export function matchedEpisodeLabel(match: NonNullable<LocalCollectionSummary["matchedEpisode"]>): string {
+  const where = match.seasonNumber !== undefined && match.episodeNumber !== undefined
+    ? `第 ${match.seasonNumber} 季 第 ${match.episodeNumber} 集`
+    : match.episodeNumber !== undefined
+      ? `第 ${match.episodeNumber} 集`
+      : "";
+  return [where, match.title].filter(Boolean).join(" · ");
+}
+
+export interface CollectionCardOptions {
+  /** Search results mark the one episode whose title matched the query. */
+  showMatchedEpisode?: boolean;
+}
+
 /**
  * One card per work. The button carries the representative media ID so the
  * existing detail flow opens the work without a second lookup, and the card
  * never shows a file size or a private path.
  */
-export function collectionCard(collection: LocalCollectionSummary, includeReleaseDate = false): HTMLElement {
+export function collectionCard(collection: LocalCollectionSummary, includeReleaseDate = false, options: CollectionCardOptions = {}): HTMLElement {
   const article = document.createElement("article");
   article.className = `media-card${collection.available ? "" : " unavailable"}`;
   article.dataset.collectionId = collection.collectionId;
@@ -79,6 +94,12 @@ export function collectionCard(collection: LocalCollectionSummary, includeReleas
     progress.textContent = collection.watchedEpisodeCount > 0 ? "已看完" : "还没看";
   }
   button.append(poster, title, meta, progress);
+  if (options.showMatchedEpisode && collection.matchedEpisode) {
+    const chip = document.createElement("span");
+    chip.className = "match-chip";
+    chip.textContent = matchedEpisodeLabel(collection.matchedEpisode);
+    button.append(chip);
+  }
   article.append(button);
   return article;
 }
