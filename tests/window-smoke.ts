@@ -15,6 +15,9 @@ interface SmokeItem {
   sizeBytes: number;
   modifiedAtMs: number;
   available: boolean;
+  seasonNumber?: number;
+  episodeNumber?: number;
+  collectionId?: string;
   artwork?: Array<{ kind: "poster" | "fanart"; cacheKey: string }>;
 }
 
@@ -32,7 +35,9 @@ const delayed: SmokeItem = { ...item, mediaId: "media_123e4567-e89b-12d3-a456-42
 const replacement: SmokeItem = { ...item, mediaId: "media_123e4567-e89b-12d3-a456-426614174003", title: "新详情", artwork: [] };
 const fanartOnly: SmokeItem = { ...item, mediaId: "media_123e4567-e89b-12d3-a456-426614174004", title: "仅有背景", artwork: [{ kind: "fanart", cacheKey: "fanart" }] };
 const good: SmokeItem = { ...item, mediaId: "media_123e4567-e89b-12d3-a456-426614174005", title: "有效海报", artwork: [{ kind: "poster", cacheKey: "good" }] };
-const items: SmokeItem[] = [item, broken, delayed, replacement, fanartOnly, good];
+const episodeOne: SmokeItem = { ...item, mediaId: "media_123e4567-e89b-12d3-a456-426614174006", title: "第一集", kind: "episode", collectionId: "collection_episode", seasonNumber: 1, episodeNumber: 1 };
+const episodeTwo: SmokeItem = { ...item, mediaId: "media_123e4567-e89b-12d3-a456-426614174007", title: "第二集", kind: "episode", collectionId: "collection_episode", seasonNumber: 1, episodeNumber: 2 };
+const items: SmokeItem[] = [item, broken, delayed, replacement, fanartOnly, good, episodeOne, episodeTwo];
 const otherSourceId = "source_123e4567-e89b-12d3-a456-426614174001";
 const state = {
   status: "ready",
@@ -132,7 +137,7 @@ async function run(): Promise<void> {
       await new Promise((resolve) => setTimeout(resolve, 300));
     }
     const collections = items.map((entry) => ({
-      collectionId: `collection_${entry.mediaId}`,
+      collectionId: entry.collectionId ?? `collection_${entry.mediaId}`,
       title: entry.title,
       kind: entry.kind === "movie" || entry.kind === "show" || entry.kind === "unclassified" ? entry.kind : "unclassified",
       premieredDate: null,
@@ -152,7 +157,12 @@ async function run(): Promise<void> {
     cancelledScans.push(scanId);
     return true;
   });
-  ipcMain.handle("local-library:get", async (_event, mediaId: string) => ({ state, item: items.find((candidate) => candidate.mediaId === mediaId) }));
+  ipcMain.handle("local-library:get", async (_event, mediaId: string) => {
+    if (mediaId === episodeOne.mediaId) {
+      return { state, detail: { item: episodeOne, collectionTitle: "窗口测试剧", collectionKind: "show", episodes: [episodeOne, episodeTwo] } };
+    }
+    return { state, item: items.find((candidate) => candidate.mediaId === mediaId) };
+  });
   ipcMain.handle("local-library:artwork", async (_event, request: { mediaId: string }) => {
     const { mediaId } = request;
     artworkRequests.push(mediaId);
@@ -163,6 +173,12 @@ async function run(): Promise<void> {
   ipcMain.handle("local-library:continue-watching", async () => ({ state, items: [] }));
   ipcMain.handle("app-preferences:get", async () => ({ ...preferences }));
   ipcMain.handle("app-preferences:set-sort", async (_event, sort) => ({ ...preferences, sort }));
+  const playbackOpens: string[] = [];
+  ipcMain.handle("local-playback:open", async (_event, request: { mediaId: string }) => {
+    playbackOpens.push(request.mediaId);
+    return { opened: true };
+  });
+  ipcMain.handle("local-playback:command", async () => undefined);
 
   const window = new BrowserWindow({
     show: false,
@@ -655,8 +671,231 @@ async function run(): Promise<void> {
   assert.equal(removedSources.includes(item.sourceId), true);
   assert.match(await window.webContents.executeJavaScript("document.querySelector('#app-notice').textContent", true), /源文件没有被删除/);
 
+  // B6b · motion system. Only a visible window advances CSS transitions, so this
+  // block runs after window.show() and asserts real animation names/durations.
+  const setMotionMedia = async (value: "reduce" | "no-preference") => {
+    const debuggerSession = window.webContents.debugger;
+    if (!debuggerSession.isAttached()) debuggerSession.attach("1.3");
+    await debuggerSession.sendCommand("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value }] });
+    await window.webContents.executeJavaScript("new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))", true);
+  };
+  const readMotionEnv = () => window.webContents.executeJavaScript(`(() => {
+    const root = getComputedStyle(document.documentElement);
+    return {
+      dataMotion: document.documentElement.dataset.motion || '',
+      reduced: matchMedia('(prefers-reduced-motion: reduce)').matches,
+      tokens: { one: root.getPropertyValue('--mo-1').trim(), two: root.getPropertyValue('--mo-2').trim(), three: root.getPropertyValue('--mo-3').trim(), four: root.getPropertyValue('--mo-4').trim(), back: root.getPropertyValue('--mo-return').trim() },
+      easeOut: root.getPropertyValue('--ease-out').trim(),
+      easeInout: root.getPropertyValue('--ease-inout').trim(),
+    };
+  })()`, true) as Promise<{ dataMotion: string; reduced: boolean; tokens: Record<string, string>; easeOut: string; easeInout: string }>;
+  const readButtonMotion = (selector: string) => window.webContents.executeJavaScript(`(() => {
+    const element = document.querySelector(${JSON.stringify(selector)});
+    const style = element ? getComputedStyle(element) : null;
+    return style ? { property: style.transitionProperty, duration: style.transitionDuration, animationName: style.animationName, outlineStyle: style.outlineStyle, outlineWidth: style.outlineWidth, focusVisible: element.matches(':focus-visible'), animations: element.getAnimations().map((animation) => ({ property: animation.transitionProperty || '', name: animation.animationName || '', duration: animation.effect ? animation.effect.getTiming().duration : null })) } : null;
+  })()`, true) as Promise<{ property: string; duration: string; animationName: string; outlineStyle: string; outlineWidth: string; focusVisible: boolean; animations: Array<{ property: string; name: string; duration: number | null }> } | null>;
+  const readFlight = () => window.webContents.executeJavaScript(`(() => {
+    const flight = document.querySelector('#motion-flight');
+    const content = document.querySelector('#detail-content');
+    const poster = document.querySelector('#detail-poster');
+    const animations = (element) => element ? element.getAnimations().map((animation) => ({ property: animation.transitionProperty || '', name: animation.animationName || '', duration: animation.effect ? animation.effect.getTiming().duration : null, easing: animation.effect ? animation.effect.getTiming().easing : '', properties: animation.effect ? animation.effect.getKeyframes().flatMap((frame) => Object.keys(frame).filter((key) => !['offset', 'easing', 'composite', 'computedOffset'].includes(key))) : [] })) : [];
+    return {
+      flight: flight ? { willChange: getComputedStyle(flight).willChange, duration: getComputedStyle(flight).transitionDuration, transform: getComputedStyle(flight).transform, animations: animations(flight), posterVisibility: poster ? getComputedStyle(poster).visibility : '' } : null,
+      content: animations(content),
+      contentDuration: content ? getComputedStyle(content).transitionDuration : '',
+      contentProperty: content ? getComputedStyle(content).transitionProperty : '',
+      willChangeCount: [...document.querySelectorAll('*')].filter((element) => { const value = getComputedStyle(element).willChange; return value !== 'auto' && value !== ''; }).length,
+      detailHidden: document.querySelector('#media-detail')?.hidden,
+    };
+  })()`, true) as Promise<{ flight: { willChange: string; duration: string; transform: string; animations: Array<{ property: string; name: string; duration: number | null; easing: string; properties: string[] }>; posterVisibility: string } | null; content: Array<{ property: string; name: string; duration: number | null; easing: string; properties: string[] }>; contentDuration: string; contentProperty: string; willChangeCount: number; detailHidden: boolean }>;
+
+  await window.webContents.executeJavaScript("document.querySelector('[data-nav=home]').click()", true);
+  await waitFor("home shelves before motion checks", () => window.webContents.executeJavaScript("document.querySelectorAll('#recent-row .media-card').length", true) as Promise<number>, (count) => count > 0);
+
+  await setMotionMedia("no-preference");
+  const motionEnv = await readMotionEnv();
+  assert.equal(motionEnv.dataMotion, "auto", "motion follows the system by default");
+  assert.equal(motionEnv.reduced, false);
+  assert.deepEqual(motionEnv.tokens, { one: "90ms", two: "140ms", three: "200ms", four: "420ms", back: "160ms" }, "the four motion tokens and the 160ms return are real CSS values");
+  assert.equal(motionEnv.easeOut, "cubic-bezier(.2,.7,.3,1)");
+  assert.equal(motionEnv.easeInout, "cubic-bezier(.4,0,.2,1)");
+
+  // ① feedback: 90ms sink + 140ms colour, no radius morph.
+  const feedbackButton = await readButtonMotion("[data-nav=home]");
+  assert.match(feedbackButton!.property, /background-color/);
+  assert.match(feedbackButton!.property, /transform/);
+  assert.match(feedbackButton!.duration, /0\.09s/);
+  assert.match(feedbackButton!.duration, /0\.14s/);
+  const navRect = await window.webContents.executeJavaScript("(() => { const box = document.querySelector('[data-nav=home]').getBoundingClientRect(); return { x: box.left + box.width / 2, y: box.top + box.height / 2 }; })()", true) as { x: number; y: number };
+  window.webContents.sendInputEvent({ type: "mouseDown", x: Math.round(navRect.x), y: Math.round(navRect.y), button: "left", clickCount: 1 });
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  const pressed = await window.webContents.executeJavaScript("(() => { const button = document.querySelector('[data-nav=home]'); return button.getAnimations().map((animation) => ({ property: animation.transitionProperty || '', duration: animation.effect ? animation.effect.getTiming().duration : null })); })()", true) as Array<{ property: string; duration: number | null }>;
+  assert.ok(pressed.some((animation) => animation.property === "transform" && Math.round(Number(animation.duration)) === 90), `press feedback sinks for 90ms: ${JSON.stringify(pressed)}`);
+  window.webContents.sendInputEvent({ type: "mouseUp", x: Math.round(navRect.x), y: Math.round(navRect.y), button: "left", clickCount: 1 });
+  await new Promise((resolve) => setTimeout(resolve, 200));
+
+  // ④ process: scanning is the only infinite animation.
+  window.webContents.send("local-library:scan-progress", scanProgress({ scanId: "scan_123e4567-e89b-42d3-a456-426614174020" }));
+  await waitFor("running scan for motion", () => window.webContents.executeJavaScript("document.querySelector('#scan-status')?.hidden === false", true) as Promise<boolean>, Boolean);
+  const scanMotion = await window.webContents.executeJavaScript(`(() => {
+    const running = [...document.querySelectorAll('*')].map((element) => ({ element, style: getComputedStyle(element) })).filter(({ style }) => style.animationName !== 'none' && style.animationIterationCount.includes('infinite'));
+    return {
+      text: document.querySelector('#scan-status-text')?.textContent || '',
+      infinite: running.map(({ element, style }) => ({ id: element.id, className: typeof element.className === 'string' ? element.className : '', name: style.animationName, duration: style.animationDuration })),
+    };
+  })()`, true) as { text: string; infinite: Array<{ id: string; className: string; name: string; duration: string }> };
+  assert.match(scanMotion.text, /扫描中 · 1204/);
+  assert.equal(scanMotion.infinite.length, 1, `only the scan activity is allowed to loop: ${JSON.stringify(scanMotion.infinite)}`);
+  assert.equal(scanMotion.infinite[0].name, "mo-pulse");
+  assert.equal(scanMotion.infinite[0].duration, "1.6s");
+  window.webContents.send("local-library:scan-progress", scanProgress({ scanId: "scan_123e4567-e89b-42d3-a456-426614174020", status: "cancelled", error: "扫描已取消，已保留此前索引和播放历史" }));
+  await waitFor("cancelled scan notice for motion", () => window.webContents.executeJavaScript("document.querySelector('#app-notice')?.hidden === false", true) as Promise<boolean>, Boolean);
+  await window.webContents.executeJavaScript("document.querySelector('#app-notice-close').click()", true);
+
+  // ③ view transition: home card poster flies to the detail poster in 200ms.
+  await window.webContents.executeJavaScript("document.querySelector('#recent-row .media-card [data-media-id]').click()", true);
+  const enterFlight = await waitFor("home → detail flight", readFlight, (value) => value.flight !== null);
+  assert.equal(enterFlight.flight!.duration, "0.2s", "the entrance transition uses the 200ms token");
+  assert.equal(enterFlight.flight!.willChange, "transform", "will-change is attached only for the flight window");
+  assert.equal(enterFlight.flight!.posterVisibility, "hidden", "the destination poster waits for the flying clone");
+  assert.ok(enterFlight.flight!.animations.some((animation) => animation.property === "transform" && Number(animation.duration) === 200), `flight animates only transform: ${JSON.stringify(enterFlight.flight!.animations)}`);
+  assert.ok(enterFlight.flight!.animations.every((animation) => animation.properties.every((property) => property === "transform" || property === "opacity")), "the shared element moves only transform/opacity");
+  assert.ok(enterFlight.content.some((animation) => animation.property === "opacity" && Number(animation.duration) === 200), `detail content fades independently: ${JSON.stringify(enterFlight.content)}`);
+  await waitFor("detail transition settles", readFlight, (value) => value.flight === null && value.detailHidden === false);
+  const settledDetail = await readFlight();
+  assert.equal(settledDetail.willChangeCount, 0, "will-change is removed when the transition ends");
+  assert.equal(settledDetail.flight, null);
+  assert.equal(await window.webContents.executeJavaScript("getComputedStyle(document.querySelector('#detail-poster')).visibility", true), "visible");
+
+  // Return transition: 160ms reverse, then home is interactive again.
+  await window.webContents.executeJavaScript("document.querySelector('#media-detail-back').click()", true);
+  const returnFlight = await waitFor("detail → home return flight", readFlight, (value) => value.flight !== null);
+  assert.equal(returnFlight.flight!.duration, "0.16s", "the return transition uses the 160ms token");
+  await waitFor("return transition settles", readFlight, (value) => value.flight === null);
+  await waitFor("home restored after return", () => window.webContents.executeJavaScript("document.querySelectorAll('#recent-row .media-card').length", true) as Promise<number>, (count) => count > 0);
+
+  // Playback path: the flight yields immediately and the player fade is ≤200ms.
+  await window.webContents.executeJavaScript("document.querySelector('#recent-row .media-card [data-media-id]').click()", true);
+  await waitFor("flight before playback", readFlight, (value) => value.flight !== null);
+  const playbackClick = await window.webContents.executeJavaScript(`(() => {
+    document.querySelector('#media-detail-open')?.click();
+    return {
+      playerVisible: document.querySelector('[data-view="player"]')?.hidden === false,
+      flight: Boolean(document.querySelector('#motion-flight')),
+      shell: document.querySelector('.player-shell')?.getAnimations().map((animation) => ({ property: animation.transitionProperty || '', duration: animation.effect ? animation.effect.getTiming().duration : null })) || [],
+    };
+  })()`, true) as { playerVisible: boolean; flight: boolean; shell: Array<{ property: string; duration: number | null }> };
+  assert.equal(playbackClick.playerVisible, true, "clicking continue during the transition shows the player immediately");
+  assert.equal(playbackClick.flight, false, "the in-flight shared element yields to playback");
+  assert.ok(playbackClick.shell.some((animation) => animation.property === "opacity" && animation.duration !== null && Number(animation.duration) <= 200), `the player fade stays within 200ms: ${JSON.stringify(playbackClick.shell)}`);
+  await waitFor("playback open recorded", async () => playbackOpens.length, (count) => count > 0);
+  window.webContents.send("local-playback:event", { type: "closed" });
+  await waitFor("player closed back to detail", () => window.webContents.executeJavaScript("document.querySelector('[data-view=player]')?.hidden === true && document.querySelector('#media-detail')?.hidden === false", true) as Promise<boolean>, Boolean);
+  await window.webContents.executeJavaScript("document.querySelector('#media-detail-back').click()", true);
+  await waitFor("home restored after playback", () => window.webContents.executeJavaScript("document.querySelectorAll('#recent-row .media-card').length", true) as Promise<number>, (count) => count > 0);
+
+  // ⑤ narrative: end-of-episode copy + a linear, opacity-only countdown ring.
+  await window.webContents.executeJavaScript(`document.querySelector('#recent-row [data-media-id="${episodeOne.mediaId}"]').click()`, true);
+  await waitFor("episode detail", () => window.webContents.executeJavaScript("document.querySelector('#media-detail-title')?.textContent", true) as Promise<string>, (title) => title === "窗口测试剧");
+  assert.match(await window.webContents.executeJavaScript("document.querySelector('#detail-episodes')?.textContent || ''", true), /第一集/);
+  await window.webContents.executeJavaScript("document.querySelector('#media-detail-open').click()", true);
+  await waitFor("player visible for end panel", () => window.webContents.executeJavaScript("document.querySelector('[data-view=player]')?.hidden === false", true) as Promise<boolean>, Boolean);
+  window.webContents.send("local-playback:event", { type: "state", mediaId: episodeOne.mediaId, state: "ended" });
+  const ended = await waitFor("end panel with next episode", () => window.webContents.executeJavaScript(`(() => ({
+    hidden: document.querySelector('#player-ended')?.hidden,
+    next: document.querySelector('#player-next-title')?.textContent || '',
+    countdown: document.querySelector('#player-countdown')?.textContent || '',
+    remaining: document.querySelector('#player-ended')?.style.getPropertyValue('--remaining') || '',
+    segments: document.querySelectorAll('.player-countdown-segment').length,
+    segment: (() => { const segment = document.querySelectorAll('.player-countdown-segment')[9]; const style = segment ? getComputedStyle(segment) : null; return style ? { property: style.transitionProperty, duration: style.transitionDuration, timing: style.transitionTimingFunction } : null; })(),
+  }))()`, true) as Promise<any>, (value) => value.hidden === false && /第二集/.test(value.next));
+  assert.match(ended.countdown, /10 秒/);
+  assert.match(ended.next, /第二集/);
+  assert.equal(ended.segments, 10, "the ring is drawn as ten fixed arcs");
+  assert.match(ended.segment.property, /opacity/);
+  assert.equal(ended.segment.duration, "1s");
+  assert.equal(ended.segment.timing, "linear", "countdown progress only uses linear timing");
+  const ticked = await waitFor("linear countdown tick", () => window.webContents.executeJavaScript(`(() => {
+    const ended = document.querySelector('#player-ended');
+    const segment = document.querySelectorAll('.player-countdown-segment')[9];
+    const animation = segment?.getAnimations().find((candidate) => candidate.transitionProperty === 'opacity');
+    return { remaining: ended?.style.getPropertyValue('--remaining') || '', animation: animation ? { duration: animation.effect ? animation.effect.getTiming().duration : null, easing: animation.effect ? animation.effect.getTiming().easing : '' } : null };
+  })()`, true) as Promise<any>, (value) => Boolean(value.animation));
+  assert.equal(ticked.animation.duration, 1000);
+  assert.equal(ticked.animation.easing, "linear");
+
+  // Reduced motion keeps the static next-episode and countdown copy.
+  await setMotionMedia("reduce");
+  const reducedEnded = await window.webContents.executeJavaScript(`(() => ({
+    reduced: matchMedia('(prefers-reduced-motion: reduce)').matches,
+    next: document.querySelector('#player-next-title')?.textContent || '',
+    countdown: document.querySelector('#player-countdown')?.textContent || '',
+    segment: (() => { const segment = document.querySelectorAll('.player-countdown-segment')[9]; const style = segment ? getComputedStyle(segment) : null; return style ? { property: style.transitionProperty, duration: style.transitionDuration } : null; })(),
+  }))()`, true) as any;
+  assert.equal(reducedEnded.reduced, true);
+  assert.match(reducedEnded.next, /第二集/, "the next episode is still written out when motion is reduced");
+  assert.match(reducedEnded.countdown, /秒后自动播放下一集/);
+  assert.match(reducedEnded.segment.property, /opacity/, "reduced motion keeps opacity");
+  assert.doesNotMatch(reducedEnded.segment.property, /transform/, "reduced motion drops movement");
+  assert.equal(reducedEnded.segment.duration, "0.14s");
+  await window.webContents.executeJavaScript("document.querySelector('#player-cancel-next').click()", true);
+  window.webContents.send("local-playback:event", { type: "closed" });
+  await waitFor("detail after reduced end panel", () => window.webContents.executeJavaScript("document.querySelector('#media-detail')?.hidden === false", true) as Promise<boolean>, Boolean);
+  await window.webContents.executeJavaScript("document.querySelector('#media-detail-back').click()", true);
+  await waitFor("home after reduced end panel", () => window.webContents.executeJavaScript("document.querySelectorAll('#recent-row .media-card').length", true) as Promise<number>, (count) => count > 0);
+
+  // Reduced motion: no shared-element flight, 140ms opacity only.
+  await window.webContents.executeJavaScript("document.querySelector('#recent-row .media-card [data-media-id]').click()", true);
+  await waitFor("reduced detail", () => window.webContents.executeJavaScript("document.querySelector('#media-detail')?.hidden === false && Boolean(document.querySelector('#media-detail-title')?.textContent)", true) as Promise<boolean>, Boolean);
+  assert.equal(await window.webContents.executeJavaScript("Boolean(document.querySelector('#motion-flight'))", true), false, "reduced motion never creates the shared-element clone");
+  const reducedDetail = await readFlight();
+  assert.match(reducedDetail.contentProperty, /opacity/);
+  assert.doesNotMatch(reducedDetail.contentProperty, /transform/);
+  assert.equal(reducedDetail.contentDuration, "0.14s");
+  assert.equal(await window.webContents.executeJavaScript("document.querySelectorAll('#recent-row .media-card-progress').length > 0", true), true);
+  const progressCopy = await window.webContents.executeJavaScript("[...document.querySelectorAll('#recent-row .media-card-progress')].map((element) => element.textContent || '').join(' | ')", true) as string;
+  assert.match(progressCopy, /已看|还没看|看到|已看完/, "watched/progress stays readable without motion");
+  await window.webContents.executeJavaScript("document.querySelector('#media-detail-back').click()", true);
+  await waitFor("home after reduced detail", () => window.webContents.executeJavaScript("document.querySelectorAll('#recent-row .media-card').length", true) as Promise<number>, (count) => count > 0);
+
+  // Reduced process: scan text + static dot, no loop.
+  window.webContents.send("local-library:scan-progress", scanProgress({ scanId: "scan_123e4567-e89b-42d3-a456-426614174021" }));
+  const reducedScan = await waitFor("reduced scan", () => window.webContents.executeJavaScript(`(() => ({ text: document.querySelector('#scan-status-text')?.textContent || '', animation: getComputedStyle(document.querySelector('#home-scan-card .scan-pill-dot')).animationName }))()`, true) as Promise<{ text: string; animation: string }>, (value) => /扫描中/.test(value.text));
+  assert.match(reducedScan.text, /扫描中 · 1204/);
+  assert.equal(reducedScan.animation, "none", "reduced motion keeps a static scan dot instead of looping");
+  window.webContents.send("local-library:scan-progress", scanProgress({ scanId: "scan_123e4567-e89b-42d3-a456-426614174021", status: "cancelled", error: "扫描已取消，已保留此前索引和播放历史" }));
+  await waitFor("reduced cancelled notice", () => window.webContents.executeJavaScript("document.querySelector('#app-notice')?.hidden === false", true) as Promise<boolean>, Boolean);
+  await window.webContents.executeJavaScript("document.querySelector('#app-notice-close').click()", true);
+
+  // Focus rings are never animated, in either tier.
+  const focusRing = await window.webContents.executeJavaScript(`(() => {
+    const button = document.querySelector('[data-nav=home]');
+    button.focus({ focusVisible: true });
+    const style = getComputedStyle(button);
+    return { visible: button.matches(':focus-visible'), outlineStyle: style.outlineStyle, outlineWidth: style.outlineWidth, duration: style.transitionDuration, animations: button.getAnimations().length };
+  })()`, true) as { visible: boolean; outlineStyle: string; outlineWidth: string; duration: string; animations: number };
+  assert.equal(focusRing.visible, true);
+  assert.equal(focusRing.outlineStyle, "solid");
+  assert.ok(Number.parseFloat(focusRing.outlineWidth) > 0, `the focus ring is visible: ${focusRing.outlineWidth}`);
+  assert.equal(focusRing.duration, "0s", "focus rings do not animate");
+  assert.equal(focusRing.animations, 0);
+
+  // Manual "off" tier exists for the future settings surface and is instant.
+  const offTier = await window.webContents.executeJavaScript(`(() => {
+    document.documentElement.dataset.motion = 'off';
+    const style = getComputedStyle(document.querySelector('[data-nav=home]'));
+    const result = { duration: style.transitionDuration, animation: style.animationName };
+    document.documentElement.dataset.motion = 'auto';
+    return result;
+  })()`, true) as { duration: string; animation: string };
+  assert.equal(offTier.duration, "0s");
+  assert.equal(offTier.animation, "none");
+
+  await setMotionMedia("no-preference");
+  assert.equal((await readMotionEnv()).reduced, false, "the emulated system setting is restored for later checks");
+
   window.close();
-  for (const channel of ["local-library:state", "local-library:source-remove", "local-library:source-refresh", "local-library:rescan-all", "local-library:choose-folder", "local-library:open-video", "local-library:list", "local-library:list-collections", "local-library:scan-cancel", "local-library:get", "local-library:artwork", "local-library:continue-watching", "app-preferences:get", "app-preferences:set-sort"]) ipcMain.removeHandler(channel);
+  for (const channel of ["local-library:state", "local-library:source-remove", "local-library:source-refresh", "local-library:rescan-all", "local-library:choose-folder", "local-library:open-video", "local-library:list", "local-library:list-collections", "local-library:scan-cancel", "local-library:get", "local-library:artwork", "local-library:continue-watching", "app-preferences:get", "app-preferences:set-sort", "local-playback:open", "local-playback:command"]) ipcMain.removeHandler(channel);
 }
 
 run().then(() => app.quit()).catch((error: unknown) => {
