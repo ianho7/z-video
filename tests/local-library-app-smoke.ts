@@ -11,6 +11,7 @@ const INDEX_FILE_COUNT = 8_000;
 const APP_TIMEOUT_MS = 180_000;
 let appDeadline = 0;
 let delayNextLibraryList = false;
+let failNextCollectionList = false;
 let failNextSourceRemove = false;
 let delayNextDetail = false;
 let failNextDetail = false;
@@ -19,6 +20,10 @@ ipcMain.handle = (channel, listener) => originalIpcHandle(channel, async (event,
   if ((channel === IPC_CHANNELS.localLibraryList || channel === IPC_CHANNELS.localLibraryListCollections) && delayNextLibraryList) {
     delayNextLibraryList = false;
     await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+  if (channel === IPC_CHANNELS.localLibraryListCollections && failNextCollectionList) {
+    failNextCollectionList = false;
+    throw new Error("这一页读取失败（测试夹具）");
   }
   if (channel === IPC_CHANNELS.localLibraryRemoveSource && failNextSourceRemove) {
     failNextSourceRemove = false;
@@ -181,10 +186,16 @@ async function run(): Promise<void> {
     await capture("onboarding");
 
     window.webContents.send(IPC_CHANNELS.localLibraryState, { status: "error", schemaVersion: 2, sqliteAvailable: false, sources: [], error: { code: "storage", message: "片库暂时不可用" } });
-    const errorState = await waitFor("library error card", () => evaluate(window, `({ visible: !document.querySelector('#library-error').hidden, text: document.querySelector('#library-error').textContent, buttons: [...document.querySelectorAll('#library-error button')].map(button => button.textContent) })`), (value) => value.visible);
+    const errorState = await waitFor("library error card", () => evaluate(window, `({ visible: !document.querySelector('#library-error').hidden, title: document.querySelector('#library-error-title')?.textContent || '', text: document.querySelector('#library-error').textContent, buttons: [...document.querySelectorAll('#library-error button')].map(button => button.textContent), tech: document.querySelector('#library-error .tech-details p')?.textContent || '', techOpen: document.querySelector('#library-error .tech-details')?.open })`), (value) => value.visible);
     await capture("error");
+    assert.equal(errorState.title, "片库文件暂时无法读写", "a storage failure uses plain language instead of a raw error code");
     assert.match(errorState.text, /storage/);
-    assert.deepEqual(errorState.buttons, ["重试"]);
+    assert.deepEqual(errorState.buttons, ["重试", "复制诊断信息", "查看文件夹"], "the storage failure offers concrete next steps");
+    assert.match(errorState.tech, /错误代码：storage/, "the raw error code lives in technical details");
+    assert.equal(errorState.techOpen, false, "technical details stay collapsed by default");
+    await evaluate(window, "document.querySelector('#library-error-copy')?.click()");
+    const copied = await waitFor("diagnostics copy feedback", () => evaluate(window, "document.querySelector('#library-message')?.textContent || ''"), (value) => /诊断信息已复制|无法自动复制/.test(value));
+    assert.match(copied, /诊断信息已复制|无法自动复制/);
     await evaluate(window, "document.querySelector('#library-error-retry').click()");
     await waitFor("library retry", () => evaluate(window, "document.querySelector('#library-error').hidden"), (hidden) => hidden === true);
 
@@ -219,6 +230,7 @@ async function run(): Promise<void> {
         skeletons: document.querySelectorAll('#library-grid .media-skeleton').length,
         busy: document.querySelector('#library-grid')?.getAttribute('aria-busy'),
         pageTotal: Number(scope.match(/\\d+/)?.[0] || 0),
+        scrollTop: document.scrollingElement ? document.scrollingElement.scrollTop : window.scrollY,
         scanPanelTitle: document.querySelector('#scan-panel-title')?.textContent || '',
       };
     })()`);
@@ -255,7 +267,7 @@ async function run(): Promise<void> {
 
     const firstContent = await waitFor("first content appears during scan", readScanUi, (value) => value.cards > 0, 20_000);
     assert.ok(firstContent.pageTotal > 0);
-    assert.equal(await evaluate(window, "(() => { const card = document.querySelector('#library-grid .media-card'); if (!card) return false; card.dataset.scanProbe = 'kept'; return true; })()"), true);
+    assert.equal(await evaluate(window, "(() => { const cards = [...document.querySelectorAll('#library-grid .media-card')]; cards.forEach((card) => { card.dataset.scanProbe = 'kept'; }); return cards.length > 0; })()"), true);
     await waitFor("welcome card retires after first content", readScanUi, (value) => value.onboardingVisible === false);
 
     await evaluate(window, "document.querySelector('#scan-pill-cancel')?.click()");
@@ -265,15 +277,39 @@ async function run(): Promise<void> {
     assert.equal(cancelled.pillHidden, true);
     const preserved = await waitFor("cancelled scan keeps the partial index", readScanUi, (value) => value.pageTotal > 0 && value.cards > 0);
     assert.ok(preserved.pageTotal > 0);
-    assert.equal(await evaluate(window, "Boolean(document.querySelector('#library-grid [data-scan-probe=kept]'))"), true, "scan refresh reuses existing cards instead of replacing the grid");
+    // Verify in-place reuse on a settled list: the same data must keep the same
+    // card nodes. Marking a single scan-time card was racy because committed
+    // rows can legitimately push it off page one.
+    await evaluate(window, "document.querySelectorAll('#library-grid .media-card').forEach((card) => { card.dataset.scanProbe = 'kept'; })");
+    await evaluate(window, "document.querySelector('#library-filter-buttons [data-filter=all]')?.click()");
+    const reusedCards = await waitFor(
+      "library refresh reuses existing cards",
+      () => evaluate(window, "({ probes: document.querySelectorAll('#library-grid [data-scan-probe=kept]').length, cards: document.querySelectorAll('#library-grid .media-card').length, skeletons: document.querySelectorAll('#library-grid .media-skeleton').length, busy: document.querySelector('#library-grid')?.getAttribute('aria-busy') })"),
+      (value) => value.busy === null && Number(value.cards) > 0,
+    );
+    assert.equal(reusedCards.skeletons, 0, "a later refresh never replaces the grid with skeletons");
+    assert.equal(reusedCards.probes, reusedCards.cards, "a later refresh reuses every existing card node instead of replacing the grid");
     await evaluate(window, "document.querySelector('#app-notice-close')?.click()");
     await waitFor("cancelled notice dismissed", readScanUi, (value) => value.noticeVisible === false);
 
     await evaluate(window, "document.querySelector('#choose-folder-button')?.click()");
     const secondRunning = await waitFor("second scan running", readScanUi, (value) => value.pillVisible && value.cardVisible && /owned-fixture/.test(value.cardText), 20_000);
     assert.match(secondRunning.cardText, /owned-fixture/);
+    // The ticket's known flake: the compact scan-pill check must not depend on
+    // whatever scroll offset an earlier assertion left behind. Reset first,
+    // then prove the sticky header keeps the pill on screen while scrolled.
+    const stickyHeader = await waitFor("sticky header while the page is scrolled", () => evaluate(window, `(() => {
+      window.scrollTo(0, 400);
+      const scroller = document.scrollingElement;
+      const bar = document.querySelector('.window-bar')?.getBoundingClientRect();
+      const header = document.querySelector('.app-header')?.getBoundingClientRect();
+      const pill = document.querySelector('#scan-status')?.getBoundingClientRect();
+      return { scrollTop: scroller ? scroller.scrollTop : window.scrollY, barTop: bar?.top, headerTop: header?.top, pillTop: pill?.top };
+    })()`), (value) => value.scrollTop > 100 && Math.abs(Number(value.headerTop) - 36) <= 1 && Number(value.pillTop) >= 36, 5_000);
+    assert.equal(stickyHeader.barTop, 0, "the window bar stays visible while scrolling");
+    await evaluate(window, "(() => { const scroller = document.scrollingElement; if (scroller) scroller.scrollTop = 0; window.scrollTo(0, 0); })()");
     window.setSize(900, 640);
-    const compactScan = await waitFor("second scan at 900x640", readScanUi, (value) => value.viewport.width <= 900 && value.pillVisible && value.cardVisible);
+    const compactScan = await waitFor("second scan at 900x640", readScanUi, (value) => value.viewport.width <= 900 && value.scrollTop === 0 && value.pillVisible && value.cardVisible);
     assertInside("900 scan pill", compactScan.pillRect, compactScan.viewport);
     assertInside("900 home scan card", compactScan.cardRect, compactScan.viewport);
     assertInside("900 home scan cancel", compactScan.cardCancelRect, compactScan.viewport);
@@ -702,12 +738,123 @@ async function run(): Promise<void> {
     await waitFor("sources visible", () => evaluate(window, "document.querySelector('#source-list')?.getBoundingClientRect().width > 0"), Boolean);
     await capture("sources");
     await evaluate(window, "document.querySelector('[data-nav=all]')?.click()");
-    await evaluate(window, "document.querySelector('#library-pagination button:last-child')?.click()");
+    await evaluate(window, "document.querySelector('#library-filter-buttons [data-filter=unclassified]')?.click()");
+    const filterEmpty = await waitFor("filter empty state with a next step", () => evaluate(window, `(() => ({
+      visible: document.querySelector('#library-empty')?.hidden === false,
+      title: document.querySelector('#library-empty-title')?.textContent || '',
+      viewAllHidden: document.querySelector('#empty-view-all')?.hidden,
+      paginationHidden: document.querySelector('#library-pagination')?.hidden,
+    }))()`), (value) => value.visible && value.title === "当前类型没有媒体");
+    assert.equal(filterEmpty.viewAllHidden, false, "a filter with no results offers 查看全部");
+    assert.equal(filterEmpty.paginationHidden, true, "an empty filter result has no pages");
+    await evaluate(window, "document.querySelector('#empty-view-all')?.click()");
+    await waitFor("view all recovers from the empty filter", () => evaluate(window, "({ hidden: document.querySelector('#library-empty')?.hidden, count: document.querySelectorAll('#library-grid .media-card').length, filter: document.querySelector('#library-filter')?.value })"), (value) => value.hidden === true && Number(value.count) > 0 && value.filter === "all");
+    const readPagination = () => evaluate(window, `(() => {
+      const nav = document.querySelector('#library-pagination');
+      const status = document.querySelector('#pagination-status')?.textContent || '';
+      const scope = document.querySelector('#page-scope')?.textContent || '';
+      const current = nav?.querySelector('[aria-current="page"]');
+      const disabled = (role) => Boolean(nav?.querySelector('[data-page-role="' + role + '"]')?.disabled);
+      return {
+        hidden: nav?.hidden,
+        status,
+        scope,
+        cards: document.querySelectorAll('#library-grid .media-card').length,
+        current: current?.textContent || '',
+        firstDisabled: disabled('first'),
+        previousDisabled: disabled('previous'),
+        nextDisabled: disabled('next'),
+        lastDisabled: disabled('last'),
+        scrollTop: document.scrollingElement ? document.scrollingElement.scrollTop : window.scrollY,
+      };
+    })()`);
+    const firstPage = await waitFor("pagination on the first work page", readPagination, (value) => value.hidden === false && value.status === "第 1 / 334 页");
+    assert.equal(firstPage.firstDisabled, true, "page one disables the first-page action");
+    assert.equal(firstPage.previousDisabled, true, "page one disables the previous-page action");
+    assert.equal(firstPage.nextDisabled, false);
+    assert.equal(firstPage.current, "1");
+    assert.equal(firstPage.cards, 24, "the work list stays at 24 works per page");
+    assert.match(firstPage.scope, /第 1 页/);
+
+    await evaluate(window, "window.scrollTo(0, 240)");
+    await evaluate(window, "document.querySelector('#library-pagination [data-page-role=next]')?.click()");
     const pageTwo = await waitFor(
       "second library page",
-      () => evaluate(window, "({ scope: document.querySelector('#page-scope')?.textContent || '', mediaId: document.querySelector('#library-grid [data-media-id]')?.dataset.mediaId || '', title: document.querySelector('#library-grid .media-card-title')?.textContent || '' })"),
+      () => evaluate(window, "({ scope: document.querySelector('#page-scope')?.textContent || '', mediaId: document.querySelector('#library-grid [data-media-id]')?.dataset.mediaId || '', title: document.querySelector('#library-grid .media-card-title')?.textContent || '', top: document.scrollingElement ? document.scrollingElement.scrollTop : window.scrollY, status: document.querySelector('#pagination-status')?.textContent || '' })"),
       (value) => value.scope.includes("第 2 页") && Boolean(value.mediaId && value.title),
     );
+    assert.equal(pageTwo.status, "第 2 / 334 页");
+    assert.equal(pageTwo.top, 0, "changing page returns the result area to the top");
+
+    await evaluate(window, "document.querySelector('#library-pagination [data-page-role=last]')?.click()");
+    const lastPage = await waitFor("last work page", readPagination, (value) => value.status === "第 334 / 334 页");
+    assert.equal(lastPage.lastDisabled, true, "the last page disables the last-page action");
+    assert.equal(lastPage.nextDisabled, true, "the last page disables the next-page action");
+    assert.equal(lastPage.scrollTop, 0, "jumping to the last page stays at the top");
+    assert.ok(lastPage.cards > 0 && lastPage.cards <= 24, `the last page keeps a bounded 24-item page: ${lastPage.cards}`);
+    assert.equal(await evaluate(window, "document.querySelector('#library-pagination [data-page-role=first]')?.disabled"), false);
+    await evaluate(window, "document.querySelector('#library-pagination [data-page-role=first]')?.click()");
+    await waitFor("first work page again", readPagination, (value) => value.status === "第 1 / 334 页");
+
+    const submitJump = (value: string) => evaluate(window, `(() => {
+      const input = document.querySelector('#pagination-jump-input');
+      if (!(input instanceof HTMLInputElement)) throw new Error('jump input missing');
+      input.value = ${JSON.stringify(value)};
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      document.querySelector('#pagination-jump')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    })()`);
+    await submitJump("abc");
+    const invalidJump = await waitFor("invalid jump input feedback", () => evaluate(window, "({ invalid: document.querySelector('#pagination-jump-input')?.getAttribute('aria-invalid'), error: document.querySelector('#pagination-jump-error')?.textContent || '', errorHidden: document.querySelector('#pagination-jump-error')?.hidden, status: document.querySelector('#pagination-status')?.textContent || '' })"), (value) => value.invalid === "true" && value.errorHidden === false);
+    assert.match(invalidJump.error, /1–334/, "invalid jump input says which page range is valid");
+    assert.equal(invalidJump.status, "第 1 / 334 页", "invalid jump input never changes the page");
+
+    await submitJump("9999");
+    const clampedJump = await waitFor("out-of-range jump clamps to the last page", readPagination, (value) => value.status === "第 334 / 334 页");
+    assert.equal(clampedJump.scrollTop, 0, "jumping to a clamped page returns to the top");
+
+    await submitJump("2");
+    await waitFor("jump back to the second page", readPagination, (value) => value.status === "第 2 / 334 页");
+
+    failNextCollectionList = true;
+    await evaluate(window, "document.querySelector('#library-pagination [data-page-role=next]')?.click()");
+    const pageError = await waitFor("page read failure card", () => evaluate(window, `(() => ({
+      visible: document.querySelector('#library-page-error')?.hidden === false,
+      message: document.querySelector('#library-page-error-message')?.textContent || '',
+      buttons: [...document.querySelectorAll('#library-page-error button')].map((button) => button.textContent || ''),
+      tech: document.querySelector('#library-page-error-code')?.textContent || '',
+      emptyHidden: document.querySelector('#library-empty')?.hidden,
+      paginationHidden: document.querySelector('#library-pagination')?.hidden,
+      focusedId: document.activeElement instanceof HTMLElement ? document.activeElement.id : '',
+    }))()`), (value) => value.visible);
+    assert.match(pageError.message, /不是空片库/, "a failed page is never described as an empty library");
+    assert.deepEqual(pageError.buttons, ["重试当前页", "返回首页"]);
+    assert.match(pageError.tech, /collection_page_read_failed/);
+    assert.match(pageError.tech, /page=3/);
+    assert.equal(pageError.emptyHidden, true, "a failed page hides the empty-state card");
+    assert.equal(pageError.paginationHidden, true, "a failed page hides the pager");
+    assert.equal(pageError.focusedId, "library-page-error-title", "focus moves into the page failure card");
+    await capture("page-error");
+    await evaluate(window, "document.querySelector('#library-page-error-retry')?.click()");
+    await waitFor("page retry recovers", readPagination, (value) => value.hidden === false && value.status === "第 3 / 334 页");
+    assert.equal(await evaluate(window, "document.querySelector('#library-page-error')?.hidden"), true);
+    await evaluate(window, "document.querySelector('#library-pagination [data-page-role=previous]')?.click()");
+    await waitFor("back to the second page after retry", readPagination, (value) => value.status === "第 2 / 334 页");
+
+    window.setSize(900, 640);
+    const compactPagination = await waitFor("pagination at 900x640", () => evaluate(window, `(() => {
+      const nav = document.querySelector('#library-pagination');
+      nav?.scrollIntoView({ block: 'end' });
+      const rect = nav?.getBoundingClientRect();
+      return {
+        viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight },
+        rect: rect ? { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom } : null,
+        buttons: document.querySelectorAll('#library-pagination button').length,
+      };
+    })()`), (value) => value.viewport.width <= 900 && Boolean(value.rect) && value.rect!.left >= 0 && value.rect!.right <= value.viewport.width + 1 && value.rect!.bottom <= value.viewport.height + 1);
+    assert.ok(compactPagination.rect!.top >= 0, "the compact pager is not clipped above the viewport");
+    assert.ok(compactPagination.buttons >= 9, "the compact pager keeps first/previous/pages/next/last buttons");
+    await capture("pagination-compact");
+
     const originScroll = await evaluate(window, `(() => {
       window.scrollTo(0, 240);
       const scroller = document.scrollingElement;
@@ -1269,6 +1416,17 @@ async function run(): Promise<void> {
     assert.equal((await readFolders()).cards.length, 1, "temporarily disconnected folders stay registered");
 
     await evaluate(window, "document.querySelector('[data-nav=all]')?.click()");
+    const offlineNotice = await waitFor("library offline banner", () => evaluate(window, `(() => ({
+      visible: document.querySelector('#library-offline-notice')?.hidden === false,
+      text: document.querySelector('#library-offline-text')?.textContent || '',
+      button: document.querySelector('#library-offline-folders')?.textContent || '',
+    }))()`), (value) => value.visible);
+    assert.match(offlineNotice.text, /离线/, "the work list states that a folder is offline");
+    assert.match(offlineNotice.text, /重新扫描/, "the offline banner explains how to recover");
+    assert.equal(offlineNotice.button, "查看文件夹");
+    await evaluate(window, "document.querySelector('#library-offline-folders')?.click()");
+    await waitFor("offline banner opens the folder page", () => evaluate(window, "({ sources: document.querySelector('#sources-page')?.hidden === false, nav: document.querySelector('[data-nav][aria-current=page]')?.dataset.nav || '' })"), (value) => value.sources === true && value.nav === "folder");
+    await evaluate(window, "document.querySelector('[data-nav=all]')?.click()");
     await evaluate(window, "(() => { const search = document.querySelector('#library-search-input'); search.value = 'Owned UX Audit Feature Film 2026'; search.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#library-search-form').requestSubmit(); })()");
     await waitFor(
       "offline movie card",
@@ -1362,6 +1520,48 @@ async function run(): Promise<void> {
     assert.match(await evaluate(window, "document.querySelector('#app-notice')?.textContent || ''"), /源文件没有被删除/);
     await capture("folders-removed");
 
+    window.setSize(900, 640);
+    await evaluate(window, "document.querySelector('[data-nav=all]')?.click()");
+    const compactEmpty = await waitFor("no-source empty CTA at 900x640", () => evaluate(window, `(() => {
+      const card = document.querySelector('#library-empty');
+      card?.scrollIntoView({ block: 'end' });
+      const rect = card?.getBoundingClientRect();
+      return {
+        visible: card?.hidden === false,
+        title: document.querySelector('#library-empty-title')?.textContent || '',
+        addFolder: document.querySelector('#empty-add-folder')?.hidden === false,
+        addVideo: document.querySelector('#empty-add-video')?.hidden === false,
+        clearSearchHidden: document.querySelector('#empty-clear-search')?.hidden !== false,
+        viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight },
+        rect: rect ? { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom } : null,
+      };
+    })()`), (value) => value.viewport.width <= 900 && value.visible && value.title === "还没有本地来源");
+    assert.equal(compactEmpty.addFolder, true, "the no-source empty state offers 添加文件夹");
+    assert.equal(compactEmpty.addVideo, true, "the no-source empty state offers 添加单个视频");
+    assert.equal(compactEmpty.clearSearchHidden, true, "a no-source empty state does not offer 清除搜索");
+    assert.ok(compactEmpty.rect!.left >= 0 && compactEmpty.rect!.right <= compactEmpty.viewport.width + 1 && compactEmpty.rect!.top >= 0 && compactEmpty.rect!.bottom <= compactEmpty.viewport.height + 1, `the empty state is not clipped at 900x640: ${JSON.stringify(compactEmpty)}`);
+    await capture("empty-compact");
+
+    window.webContents.send(IPC_CHANNELS.localLibraryState, { status: "error", schemaVersion: 2, sqliteAvailable: false, sources: [], error: { code: "storage", message: "片库暂时不可用" } });
+    const compactError = await waitFor("storage error card at 900x640", () => evaluate(window, `(() => {
+      const card = document.querySelector('#library-error');
+      card?.scrollIntoView({ block: 'end' });
+      const rect = card?.getBoundingClientRect();
+      return {
+        visible: card?.hidden === false,
+        title: document.querySelector('#library-error-title')?.textContent || '',
+        viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight },
+        rect: rect ? { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom } : null,
+      };
+    })()`), (value) => value.viewport.width <= 900 && value.visible);
+    assert.equal(compactError.title, "片库文件暂时无法读写");
+    assert.ok(compactError.rect!.left >= 0 && compactError.rect!.right <= compactError.viewport.width + 1 && compactError.rect!.top >= 0 && compactError.rect!.bottom <= compactError.viewport.height + 1, `the error card is not clipped at 900x640: ${JSON.stringify(compactError)}`);
+    await capture("error-compact");
+    await evaluate(window, "document.querySelector('#library-error-retry')?.click()");
+    await waitFor("storage error retry recovers at compact size", () => evaluate(window, "document.querySelector('#library-error')?.hidden"), (hidden) => hidden === true);
+    window.setSize(1040, 720);
+    await waitFor("default size restored after compact state checks", () => evaluate(window, "document.documentElement.clientWidth"), (width) => Number(width) > 1000);
+
     const diagnostics = await readFile(join(logDir, "diagnostics.jsonl"), "utf8").catch(() => "");
     assert.match(diagnostics, /"operation":"window\.renderer-ready"/);
     assert.match(diagnostics, /"operation":"local-library\.list"/);
@@ -1417,6 +1617,25 @@ async function run(): Promise<void> {
       continueWatching: { minimum: continueMin, scope: continueMin.scope, cards: continueMin.cards, default: continueDefault, defaultContent: continueDefault.windowContent, defaultOuter: defaultAfterContinueOuter },
       removeFailure: { prompt: removePrompt.removeCopy, title: removePrompt.removeTitle, destructive: /destructive-button/.test(removePrompt.removeConfirmClass), defaultFocus: removePrompt.activeId, error: removeFailure.removeError, retryLabel: removeFailure.removeConfirmText },
       folders: { page: folderPage.cards.map((card: { text: string }) => card.text.slice(0, 160)), notice: folderPage.sourceText.includes(fixtureRoot) ? "root-leaked" : "safe", offline: { title: offlinePrompt.offlineTitle, copy: offlinePrompt.offlineCopy, kept: keptOffline.cards[0]?.text.slice(0, 120) }, rescanAllPrompt: offlinePromptAll.offlineCopy },
+      pagination: {
+        first: firstPage.status,
+        last: lastPage.status,
+        restored: restoredPage.scope,
+        jumpError: invalidJump.error,
+        clampedJump: clampedJump.status,
+        pageError: { message: pageError.message, buttons: pageError.buttons, tech: pageError.tech },
+        compact: compactPagination.rect,
+        compactButtons: compactPagination.buttons,
+        restoredScroll: originScroll.top,
+      },
+      states: {
+        storage: { title: errorState.title, buttons: errorState.buttons, tech: errorState.tech },
+        filterEmpty: filterEmpty.title,
+        searchEmpty: { clearSearch: true },
+        offline: offlineNotice.text,
+        compactEmpty: { title: compactEmpty.title, addFolder: compactEmpty.addFolder, addVideo: compactEmpty.addVideo },
+        compactError: compactError.title,
+      },
     }, null, 2) + "\n", "utf8");
     process.stdout.write("PASS: production local-library UX smoke (home work shelves, continue row, all/movie/work counts, single-episode fallback, saved sort, explicit search view)\n");
     await quitProductionApp();

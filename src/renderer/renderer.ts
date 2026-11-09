@@ -1,4 +1,5 @@
 import { coverData, generatedCover } from "./cover.js";
+import { paginationModel, parseJumpTarget } from "./pagination.js";
 document.querySelectorAll<HTMLButtonElement>("[data-window-action]").forEach((button) => {
   button.addEventListener("click", () => {
     const action = button.dataset.windowAction;
@@ -50,7 +51,24 @@ const libraryEmpty = document.querySelector<HTMLElement>("#library-empty");
 const libraryEmptyTitle = document.querySelector<HTMLElement>("#library-empty-title");
 const libraryEmptyMessage = document.querySelector<HTMLElement>("#library-empty-message");
 const searchAllTypesButton = document.querySelector<HTMLButtonElement>("#search-all-types-button");
-const libraryRetryButton = document.querySelector<HTMLButtonElement>("#library-retry-button");
+const libraryErrorTitle = document.querySelector<HTMLElement>("#library-error-title");
+const libraryErrorCopy = document.querySelector<HTMLButtonElement>("#library-error-copy");
+const libraryErrorFolders = document.querySelector<HTMLButtonElement>("#library-error-folders");
+const libraryPageError = document.querySelector<HTMLElement>("#library-page-error");
+const libraryPageErrorTitle = document.querySelector<HTMLElement>("#library-page-error-title");
+const libraryPageErrorMessage = document.querySelector<HTMLElement>("#library-page-error-message");
+const libraryPageErrorCode = document.querySelector<HTMLElement>("#library-page-error-code");
+const libraryPageErrorRetry = document.querySelector<HTMLButtonElement>("#library-page-error-retry");
+const libraryPageErrorBack = document.querySelector<HTMLButtonElement>("#library-page-error-back");
+const libraryOfflineNotice = document.querySelector<HTMLElement>("#library-offline-notice");
+const libraryOfflineText = document.querySelector<HTMLElement>("#library-offline-text");
+const libraryOfflineFolders = document.querySelector<HTMLButtonElement>("#library-offline-folders");
+const emptyAddFolder = document.querySelector<HTMLButtonElement>("#empty-add-folder");
+const emptyAddVideo = document.querySelector<HTMLButtonElement>("#empty-add-video");
+const emptyRescan = document.querySelector<HTMLButtonElement>("#empty-rescan");
+const emptyViewAll = document.querySelector<HTMLButtonElement>("#empty-view-all");
+const emptyClearSearch = document.querySelector<HTMLButtonElement>("#empty-clear-search");
+const emptyFormats = document.querySelector<HTMLDetailsElement>("#empty-formats");
 const sourceFilters = document.querySelector<HTMLElement>("#library-source-filters");
 const libraryPagination = document.querySelector<HTMLElement>("#library-pagination");
 const pageScope = document.querySelector<HTMLElement>("#page-scope");
@@ -284,20 +302,45 @@ function hasResume(playback: LocalPlaybackState | undefined): playback is LocalP
   return Boolean(playback && playback.positionSec > 0 && !playback.watched);
 }
 
-function currentEmptyCopy(totalCount: number): { title: string; message: string } {
-  if (currentQuery.query) return { title: "没有匹配结果", message: currentQuery.filter && currentQuery.filter !== "all" ? `当前只在「${filterLabel(currentQuery.filter)}」里搜索。` : "换一个关键词，或清除搜索条件。" };
-  if (currentQuery.filter && currentQuery.filter !== "all") {
-    return { title: "当前类型没有媒体", message: "切换类型或查看全部媒体。" };
+type EmptyAction = "add-folder" | "add-video" | "rescan" | "view-all" | "clear-search" | "formats";
+
+function currentEmptyState(totalCount: number): { title: string; message: string; actions: Set<EmptyAction> } {
+  const filter = currentQuery.filter ?? "all";
+  if (currentQuery.query) {
+    return {
+      title: "没有匹配结果",
+      // B5a's search view owns cross-type search; a library-scoped query only needs clearing here.
+      message: filter !== "all"
+        ? `当前只在「${filterLabel(filter)}」里搜索。缩短关键词或清除搜索。`
+        : "换一个更短的关键词，或清除搜索。搜索会检查作品名、剧名与单集名，不会改动你的文件。",
+      actions: new Set<EmptyAction>(["clear-search"]),
+    };
+  }
+  if (filter !== "all") {
+    return { title: "当前类型没有媒体", message: "切换类型或查看全部媒体。", actions: new Set<EmptyAction>(["view-all"]) };
   }
   if (scanProgress?.status === "running") {
     return {
       title: "正在扫描本地来源",
       message: `已提交 ${scanProgress.importedFiles + scanProgress.updatedFiles} 项，新条目会在扫描中陆续显示。`,
+      actions: new Set<EmptyAction>(),
     };
   }
-  if (state?.sources.length === 0) return { title: "还没有本地来源", message: "选择一个文件夹开始索引，或直接打开一个视频文件。" };
-  if (totalCount === 0) return { title: "来源中没有可播放视频", message: "扫描其他目录，或确认来源中包含支持的视频文件。" };
-  return { title: "暂无内容", message: "选择一个本地来源开始索引。" };
+  if (state?.sources.length === 0) {
+    return {
+      title: "还没有本地来源",
+      message: "选择一个文件夹开始索引，或直接打开一个视频文件。",
+      actions: new Set<EmptyAction>(["add-folder", "add-video"]),
+    };
+  }
+  if (totalCount === 0) {
+    return {
+      title: "这个文件夹还没有支持的视频",
+      message: "重新扫描这个文件夹、添加其他文件夹，或先查看支持的格式。",
+      actions: new Set<EmptyAction>(["rescan", "add-folder", "formats"]),
+    };
+  }
+  return { title: "暂无内容", message: "选择一个本地来源开始索引。", actions: new Set<EmptyAction>(["add-folder"]) };
 }
 
 function filterLabel(filter: NonNullable<LocalLibraryQuery["filter"]>): string {
@@ -314,10 +357,20 @@ function currentCollectionQuery(): LocalCollectionQuery {
   return { ...rest, ...(filter && filter !== "episode" ? { filter } : {}) };
 }
 
-function updateEmptyCopy(totalCount: number): void {
-  const copy = currentEmptyCopy(totalCount);
+function updateEmptyState(totalCount: number): void {
+  const copy = currentEmptyState(totalCount);
   if (libraryEmptyTitle) libraryEmptyTitle.textContent = copy.title;
   if (libraryEmptyMessage) libraryEmptyMessage.textContent = copy.message;
+  const has = (action: EmptyAction) => copy.actions.has(action);
+  if (emptyAddFolder) emptyAddFolder.hidden = !has("add-folder");
+  if (emptyAddVideo) emptyAddVideo.hidden = !has("add-video");
+  if (emptyRescan) emptyRescan.hidden = !has("rescan");
+  if (emptyViewAll) emptyViewAll.hidden = !has("view-all");
+  if (emptyClearSearch) emptyClearSearch.hidden = !has("clear-search");
+  if (emptyFormats) {
+    emptyFormats.hidden = !has("formats");
+    if (emptyFormats.hidden) emptyFormats.open = false;
+  }
 }
 
 /** B5a: one explicit search destination instead of filtering the current page. */
@@ -1208,8 +1261,17 @@ function renderState(next: LocalLibraryState): void {
   if (next.status === "error") {
     const message = document.querySelector<HTMLElement>("#library-error-message");
     const code = document.querySelector<HTMLElement>("#library-error-code");
+    if (libraryErrorTitle) {
+      libraryErrorTitle.textContent = next.error?.code === "storage" || next.error?.code === "sqlite-unavailable"
+        ? "片库文件暂时无法读写"
+        : "片库加载失败";
+    }
     if (message) message.textContent = next.error?.message ?? "本地片库不可用。";
-    if (code) code.textContent = next.error?.code ? `错误代码：${next.error.code}` : "";
+    if (code) code.textContent = `错误代码：${next.error?.code ?? "unknown"}`;
+    if (libraryPageError) libraryPageError.hidden = true;
+    if (libraryEmpty) libraryEmpty.hidden = true;
+    if (libraryPagination) libraryPagination.hidden = true;
+    if (libraryOfflineNotice) libraryOfflineNotice.hidden = true;
     if (onboarding) onboarding.hidden = true;
     if (hero) hero.hidden = true;
     if (continueSection) continueSection.hidden = true;
@@ -1219,7 +1281,21 @@ function renderState(next: LocalLibraryState): void {
   if (collectionSection && !isDetailOrPlayerVisible()) collectionSection.hidden = next.status === "error" || homeVisible || searchActive;
   renderSources(next, scanProgress, sourceList, { singleVideoSourceIds });
   renderSourceFilters();
+  renderOfflineNotice();
   if (next.status === "error") setMessage(next.error?.message ?? "本地片库不可用。", true);
+}
+
+function renderOfflineNotice(): void {
+  if (!libraryOfflineNotice) return;
+  const offline = state?.status !== "error" ? (state?.sources ?? []).filter((source) => !source.available) : [];
+  const visible = offline.length > 0 && !homeVisible && !isDetailOrPlayerVisible();
+  libraryOfflineNotice.hidden = !visible;
+  if (!visible) return;
+  if (libraryOfflineText) {
+    libraryOfflineText.textContent = offline.length === 1
+      ? `「${offline[0].label}」文件夹离线，其中的作品暂时不能播放。重新连接驱动器或网络位置后，在文件夹页重新扫描。`
+      : `${offline.length} 个文件夹离线，其中的作品暂时不能播放。重新连接驱动器或网络位置后，在文件夹页重新扫描。`;
+  }
 }
 
 function collectionCardSignature(item: LocalCollectionSummary): string {
@@ -1227,8 +1303,20 @@ function collectionCardSignature(item: LocalCollectionSummary): string {
 }
 
 function renderPage(page: LibraryPageView): void {
+  const pagination = paginationModel(page.totalCount, page.pageSize, page.page);
+  if (page.page > pagination.totalPages) {
+    // A removal or rescan can shrink the list under the current page. Ask for
+    // the nearest valid page instead of showing an empty "page 334" screen.
+    if (currentQuery.page !== pagination.totalPages) {
+      setQuery({ page: pagination.totalPages });
+      void loadLibrary();
+      return;
+    }
+  }
+  if (page.page !== currentQuery.page) currentQuery = { ...currentQuery, page: page.page };
   activePage = page;
-  if (onboarding) onboarding.hidden = !(state?.status !== "error" && homeVisible && page.totalCount === 0);
+  if (libraryPageError) libraryPageError.hidden = true;
+  if (onboarding) onboarding.hidden = !(state?.status !== "error" && homeVisible && page.totalCount === 0 && !currentQuery.query);
   const focusedMediaId = preserveGridFocus();
   if (!libraryGrid || !libraryEmpty) return;
   artworkObserver?.disconnect();
@@ -1271,8 +1359,7 @@ function renderPage(page: LibraryPageView): void {
     if (!keptCards.has(child)) child.remove();
   });
   libraryEmpty.hidden = page.items.length > 0;
-  updateEmptyCopy(page.totalCount);
-  if (libraryRetryButton) libraryRetryButton.hidden = true;
+  if (page.items.length === 0) updateEmptyState(page.totalCount);
   if (pageScope) {
     if (page.totalCount) pageScope.textContent = page.mode === "collection" ? `共 ${page.totalCount} 部作品 · 第 ${page.page} 页` : `共 ${page.totalCount} 集 · 第 ${page.page} 页`;
     else pageScope.textContent = "";
@@ -1316,23 +1403,92 @@ function renderSourceFilters(): void {
 
 function renderPagination(page: { totalCount: number; page: number; pageSize: number }): void {
   if (!libraryPagination) return;
-  const totalPages = Math.max(1, Math.ceil(page.totalCount / page.pageSize));
+  const model = paginationModel(page.totalCount, page.pageSize, page.page);
   libraryPagination.replaceChildren();
-  if (totalPages <= 1) return;
-  const add = (label: string, target: number, disabled = false, current = false) => {
+  if (page.totalCount === 0) {
+    libraryPagination.hidden = true;
+    return;
+  }
+  libraryPagination.hidden = false;
+  const addButton = (label: string, target: number, options: { disabled?: boolean; current?: boolean; role?: string; ariaLabel?: string } = {}) => {
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = label;
     button.dataset.page = String(target);
-    button.disabled = disabled;
-    if (current) button.setAttribute("aria-current", "page");
-    libraryPagination.append(button);
+    if (options.role) button.dataset.pageRole = options.role;
+    if (options.ariaLabel) button.setAttribute("aria-label", options.ariaLabel);
+    button.disabled = Boolean(options.disabled);
+    if (options.current) button.setAttribute("aria-current", "page");
+    libraryPagination?.append(button);
   };
-  add("上一页", page.page - 1, page.page <= 1);
-  const start = Math.max(1, page.page - 2);
-  const end = Math.min(totalPages, start + 4);
-  for (let current = start; current <= end; current += 1) add(String(current), current, false, current === page.page);
-  add("下一页", page.page + 1, page.page >= totalPages);
+  addButton("首页", 1, { disabled: model.firstDisabled, role: "first", ariaLabel: "首页" });
+  addButton("上一页", model.page - 1, { disabled: model.previousDisabled, role: "previous", ariaLabel: "上一页" });
+  for (const candidate of model.pages) addButton(String(candidate), candidate, { current: candidate === model.page, role: candidate === model.page ? "current" : "page" });
+  addButton("下一页", model.page + 1, { disabled: model.nextDisabled, role: "next", ariaLabel: "下一页" });
+  addButton("末页", model.totalPages, { disabled: model.lastDisabled, role: "last", ariaLabel: `末页，第 ${model.totalPages} 页` });
+
+  const status = document.createElement("span");
+  status.id = "pagination-status";
+  status.className = "page-status";
+  status.textContent = model.status;
+  status.setAttribute("aria-live", "polite");
+
+  const form = document.createElement("form");
+  form.id = "pagination-jump";
+  form.className = "jump-form";
+  const label = document.createElement("label");
+  label.htmlFor = "pagination-jump-input";
+  label.textContent = "跳至";
+  const input = document.createElement("input");
+  input.id = "pagination-jump-input";
+  input.className = "jump-input";
+  input.type = "text";
+  input.inputMode = "numeric";
+  input.autocomplete = "off";
+  input.placeholder = "页码";
+  input.setAttribute("aria-label", `跳转到第几页，共 ${model.totalPages} 页`);
+  const submit = document.createElement("button");
+  submit.type = "submit";
+  submit.className = "secondary-button";
+  submit.textContent = "前往";
+  const jumpError = document.createElement("span");
+  jumpError.id = "pagination-jump-error";
+  jumpError.className = "jump-error";
+  jumpError.setAttribute("role", "alert");
+  jumpError.hidden = true;
+  form.append(label, input, submit);
+  libraryPagination.append(status, form, jumpError);
+}
+
+function showPaginationJumpError(message: string | undefined): void {
+  if (!libraryPagination) return;
+  const error = libraryPagination.querySelector<HTMLElement>("#pagination-jump-error");
+  const input = libraryPagination.querySelector<HTMLInputElement>("#pagination-jump-input");
+  if (message) {
+    input?.setAttribute("aria-invalid", "true");
+    if (error) { error.textContent = message; error.hidden = false; }
+  } else {
+    input?.removeAttribute("aria-invalid");
+    if (error) { error.textContent = ""; error.hidden = true; }
+  }
+}
+
+function submitPaginationJump(): void {
+  if (!activePage || !libraryPagination) return;
+  const input = libraryPagination.querySelector<HTMLInputElement>("#pagination-jump-input");
+  const totalPages = paginationModel(activePage.totalCount, activePage.pageSize, activePage.page).totalPages;
+  const target = parseJumpTarget(input?.value ?? "", totalPages);
+  if (target === undefined) {
+    showPaginationJumpError(`请输入 1–${totalPages} 之间的页码。`);
+    input?.focus();
+    return;
+  }
+  showPaginationJumpError(undefined);
+  if (input) input.value = "";
+  if (target === currentQuery.page) return;
+  setQuery({ page: target });
+  scrollResultsToTop();
+  void loadLibrary();
 }
 
 function renderHomeHero(): void {
@@ -1534,7 +1690,7 @@ async function loadLibrary(): Promise<boolean> {
       } else if (result.page.totalCount) {
         setMessage(`已索引 ${result.page.totalCount} 部作品。`, false);
       } else {
-        setMessage(currentEmptyCopy(0).message, false);
+        setMessage(currentEmptyState(0).message, false);
       }
       return true;
     }
@@ -1549,7 +1705,7 @@ async function loadLibrary(): Promise<boolean> {
     } else if (result.page.totalCount) {
       setMessage(`已索引 ${result.page.totalCount} 集。`, false);
     } else {
-      setMessage(currentEmptyCopy(0).message, false);
+      setMessage(currentEmptyState(0).message, false);
     }
     return true;
   } catch (error) {
@@ -1557,14 +1713,19 @@ async function loadLibrary(): Promise<boolean> {
       if (state?.status === "error") {
         libraryGrid?.removeAttribute("aria-busy");
         libraryGrid?.replaceChildren();
+        if (libraryPageError) libraryPageError.hidden = true;
         return false;
       }
-      setMessage(error instanceof Error ? error.message : "本地片库加载失败。", true);
+      const message = error instanceof Error ? error.message : "本地片库加载失败。";
+      setMessage(message, true);
       if (libraryGrid) { libraryGrid.removeAttribute("aria-busy"); libraryGrid.replaceChildren(); }
-      if (libraryEmpty) libraryEmpty.hidden = false;
-      if (libraryEmptyTitle) libraryEmptyTitle.textContent = "片库加载失败";
-      if (libraryEmptyMessage) libraryEmptyMessage.textContent = error instanceof Error ? error.message : "本地片库加载失败。";
-      if (libraryRetryButton) libraryRetryButton.hidden = false;
+      if (libraryEmpty) libraryEmpty.hidden = true;
+      if (libraryPagination) libraryPagination.hidden = true;
+      if (libraryOfflineNotice) libraryOfflineNotice.hidden = true;
+      if (libraryPageError) libraryPageError.hidden = false;
+      if (libraryPageErrorMessage) libraryPageErrorMessage.textContent = "这一页没有读取成功。这不是空片库，现有作品没有被删除。可以重试当前页，或返回首页稍后继续。";
+      if (libraryPageErrorCode) libraryPageErrorCode.textContent = `collection_page_read_failed · page=${currentQuery.page} · pageSize=${currentQuery.pageSize} · ${message}`;
+      libraryPageErrorTitle?.focus({ preventScroll: true });
     }
     return false;
   }
@@ -1591,6 +1752,20 @@ function syncQueryControls(): void {
 function setQuery(patch: Partial<LocalLibraryQuery>): void {
   currentQuery = { ...currentQuery, ...patch, page: patch.page ?? 1 };
   syncQueryControls();
+}
+
+/** Page, filter, sort and new-search changes start the result area at the top. */
+function scrollResultsToTop(): void {
+  if (libraryContent) libraryContent.scrollTop = 0;
+  const scroller = document.scrollingElement;
+  if (scroller) scroller.scrollTop = 0;
+  window.scrollTo(0, 0);
+}
+
+function applyQuery(patch: Partial<LocalLibraryQuery>): void {
+  setQuery(patch);
+  scrollResultsToTop();
+  void loadLibrary();
 }
 
 function currentDetailOriginKind(): DetailOriginKind {
@@ -1926,6 +2101,7 @@ function closeDetail(): void {
     return;
   }
   if (collectionSection) collectionSection.hidden = homeVisible;
+  renderOfflineNotice();
   if (origin) applyDetailNav(origin.nav);
   void Promise.all([loadLibrary(), homeVisible ? loadHomeShelves() : Promise.resolve()]).then(([applied]) => {
     if (applied) {
@@ -2082,6 +2258,7 @@ function setSourceDialogBusy(busy: boolean): void {
 
 async function refreshAfterSourceChange(): Promise<void> {
   setQuery({ sourceId: undefined, page: 1 });
+  scrollResultsToTop();
   await Promise.all([loadLibrary(), loadContinueWatching(), loadHomeShelves()]);
 }
 
@@ -2323,6 +2500,7 @@ function navigateHomeOrLibrary(target: string): void {
   if (homeVisible) { setQuery({ query: undefined, sourceId: undefined, filter: "all" }); void loadContinueWatching(); void loadHomeShelves(); }
   else { if (hero) hero.hidden = true; if (continueSection) continueSection.hidden = true; if (recentSection) recentSection.hidden = true; if (showsSection) showsSection.hidden = true; setQuery({ sourceId: undefined, query: undefined, filter: target === "movie" || target === "show" ? target : "all", sort: target === "recent" ? "added_desc" : currentQuery.sort }); void loadLibrary(); }
   updateScanUi();
+  renderOfflineNotice();
 }
 document.querySelectorAll<HTMLButtonElement>("[data-nav]").forEach((button) => button.addEventListener("click", () => {
   if (button.dataset.nav === "folder") showSources();
@@ -2351,6 +2529,7 @@ function showSources(): void {
   setQuery({ query: undefined, sourceId: undefined, page: 1 });
   if (state) renderSources(state, scanProgress, sourceList, { singleVideoSourceIds });
   updateScanUi();
+  renderOfflineNotice();
 }
 document.querySelector<HTMLAnchorElement>('#detail-offline-banner a')?.addEventListener("click", (event) => { event.preventDefault(); showSources(); });
 document.querySelectorAll<HTMLButtonElement>('[data-import="folder"]').forEach((button) => button.addEventListener("click", () => chooseFolderButton?.click()));
@@ -2363,22 +2542,66 @@ document.querySelector<HTMLButtonElement>("#library-filter-buttons")?.addEventLi
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-filter]");
   const filter = button?.dataset.filter as LocalLibraryQuery["filter"] | undefined;
   if (!filter) return;
-  setQuery({ filter, page: 1 });
-  void loadLibrary();
+  applyQuery({ filter, page: 1 });
 });
 sourceFilters?.addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-source-filter-id]");
   if (!button) {
-    if ((event.target as HTMLElement).closest(".source-filter-chip")) {
-      setQuery({ sourceId: undefined, page: 1 });
-      void loadLibrary();
-    }
+    if ((event.target as HTMLElement).closest(".source-filter-chip")) applyQuery({ sourceId: undefined, page: 1 });
     return;
   }
-  setQuery({ sourceId: button.dataset.sourceFilterId, page: 1 });
-  void loadLibrary();
+  applyQuery({ sourceId: button.dataset.sourceFilterId, page: 1 });
 });
-libraryRetryButton?.addEventListener("click", () => void loadLibrary());
+emptyAddFolder?.addEventListener("click", () => chooseFolderButton?.click());
+emptyAddVideo?.addEventListener("click", () => openVideoButton?.click());
+emptyRescan?.addEventListener("click", () => rescanAllButton?.click());
+emptyViewAll?.addEventListener("click", () => {
+  applyQuery({ filter: "all", page: 1 });
+});
+emptyClearSearch?.addEventListener("click", () => {
+  clearLibrarySearch();
+});
+/** B5a routes typed search to its own view; this only clears a library-scoped query. */
+function clearLibrarySearch(): void {
+  if (searchInput) searchInput.value = "";
+  applyQuery({ query: undefined, page: 1 });
+  searchInput?.focus();
+}
+function copyDiagnostics(): void {
+  const lines = [
+    "z-video 本地片库诊断",
+    `时间：${new Date().toISOString()}`,
+    `状态：${state?.status ?? "unknown"}`,
+    `错误代码：${state?.error?.code ?? "unknown"}`,
+    `错误信息：${state?.error?.message ?? ""}`,
+    `来源数：${state?.sources.length ?? 0}`,
+  ];
+  const text = lines.join("\n");
+  const done = (copied: boolean) => setMessage(copied ? "诊断信息已复制。" : "无法自动复制，请手动记录错误代码。", !copied);
+  const fallback = () => {
+    try {
+      const area = document.createElement("textarea");
+      area.value = text;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.append(area);
+      area.select();
+      const copied = document.execCommand("copy");
+      area.remove();
+      done(copied);
+    } catch {
+      done(false);
+    }
+  };
+  if (navigator.clipboard?.writeText) void navigator.clipboard.writeText(text).then(() => done(true)).catch(fallback);
+  else fallback();
+}
+libraryErrorCopy?.addEventListener("click", copyDiagnostics);
+libraryErrorFolders?.addEventListener("click", () => showSources());
+libraryOfflineFolders?.addEventListener("click", () => showSources());
+libraryPageErrorRetry?.addEventListener("click", () => void loadLibrary());
+libraryPageErrorBack?.addEventListener("click", () => navigateHomeOrLibrary("home"));
 document.querySelector<HTMLButtonElement>("#library-error-retry")?.addEventListener("click", () => void loadLibrary());
 for (const row of [document.querySelector<HTMLElement>("#recent-row"), document.querySelector<HTMLElement>("#shows-row")]) row?.addEventListener("click", (event) => { const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-media-id]"); if (button?.dataset.mediaId) void openDetail(button.dataset.mediaId, button); });
 document.querySelector<HTMLButtonElement>("#hero-detail")?.addEventListener("click", (event) => { const item = homeItems[0]?.item ?? recentItems[0]; if (item) void openDetail(item.mediaId, event.currentTarget as HTMLElement); });
@@ -2590,19 +2813,25 @@ searchGrid?.addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-media-id]");
   if (button?.dataset.mediaId) void openDetail(button.dataset.mediaId, button);
 });
-filterSelect?.addEventListener("change", () => { setQuery({ filter: filterSelect.value as LocalLibraryQuery["filter"], page: 1 }); void loadLibrary(); });
+filterSelect?.addEventListener("change", () => applyQuery({ filter: filterSelect.value as LocalLibraryQuery["filter"], page: 1 }));
 sortSelect?.addEventListener("change", () => {
   const sort = sortSelect.value as LocalSort;
-  setQuery({ sort, page: 1 });
+  applyQuery({ sort, page: 1 });
   void window.zVideo.appPreferences.setSort(sort).catch(() => setMessage("排序偏好保存失败，本次排序仍已应用。", true));
-  void loadLibrary();
 });
 libraryPagination?.addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-page]");
   const page = Number(button?.dataset.page);
   if (!button || !Number.isInteger(page) || page < 1 || button.disabled || page === currentQuery.page) return;
-  setQuery({ page });
-  void loadLibrary();
+  applyQuery({ page });
+});
+libraryPagination?.addEventListener("submit", (event) => {
+  if ((event.target as HTMLElement).id !== "pagination-jump") return;
+  event.preventDefault();
+  submitPaginationJump();
+});
+libraryPagination?.addEventListener("input", (event) => {
+  if ((event.target as HTMLElement).id === "pagination-jump-input") showPaginationJumpError(undefined);
 });
 window.zVideo.localLibrary.onState(renderState);
 window.zVideo.localLibrary.onScanProgress(renderScanProgress);
