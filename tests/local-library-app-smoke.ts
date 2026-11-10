@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { copyFile, mkdtemp, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
 import { IPC_CHANNELS } from "../src/shared/ipc-channels";
+import { DAY_MS, GIB } from "../src/shared/cleanup-contracts";
 
 const LONG_TITLE = "Owned UX Audit Feature Film 2026 — Long Detail Title";
 const LONG_PLOT = "海边小城的旧电影院迎来新经理，他计划修复影厅并重新放映。".repeat(6);
@@ -99,8 +101,7 @@ async function waitFor<T>(label: string, read: () => Promise<T>, predicate: (val
   throw new Error(label + " did not become ready within " + timeoutMs + "ms: " + JSON.stringify(last));
 }
 
-async function waitForProductionWindow(): Promise<BrowserWindow> {
-  const deadline = Math.min(Date.now() + 15_000, appDeadline);
+async function waitForProductionWindow(): Promise<BrowserWindow> {  const deadline = Math.min(Date.now() + 15_000, appDeadline);
   await app.whenReady();
   while (Date.now() < deadline) {
     const window = BrowserWindow.getAllWindows()[0];
@@ -116,6 +117,59 @@ async function quitProductionApp(): Promise<void> {
     app.once("will-quit", () => resolve());
     app.quit();
   });
+}
+
+function openCleanupSqlite(filePath: string): DatabaseSyncType {
+  const sqlite = require("node:sqlite") as { DatabaseSync?: new (path: string) => DatabaseSyncType };
+  if (typeof sqlite.DatabaseSync !== "function") throw new Error("node:sqlite is unavailable");
+  return new sqlite.DatabaseSync(filePath);
+}
+
+interface CleanupUiSeed {
+  mediaId: string;
+  sizeBytes: number;
+  addedAtMs: number;
+  history?: {
+    openCount: number;
+    effectiveWatchCount: number;
+    completedCount: number;
+    totalPlayedSec: number;
+    lastOpenedAtMs: number;
+  };
+}
+
+/**
+ * Test-only fixture shaping: 45-day-old protection windows and 6 GB files are
+ * written directly because the production facade has no such switch. All UI
+ * assertions still run through the real main/worker/renderer path.
+ */
+function seedCleanupUiFacts(dbPath: string, nowMs: number, seeds: CleanupUiSeed[]): void {
+  const sqlite = openCleanupSqlite(dbPath);
+  try {
+    for (const seed of seeds) {
+      sqlite.prepare("UPDATE media_files SET size_bytes = ?, added_at = ? WHERE media_id = ?").run(seed.sizeBytes, seed.addedAtMs, seed.mediaId);
+      if (!seed.history) continue;
+      sqlite.prepare(`
+        INSERT OR REPLACE INTO media_history (
+          media_id, open_count, effective_watch_count, completed_count, inspection_open_count, total_played_sec,
+          first_seen_at, last_opened_at, last_played_at, last_session_played_sec, last_session_wall_sec,
+          last_position_sec, last_duration_sec, updated_at
+        ) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, 0, 0, 0, NULL, ?)
+      `).run(
+        seed.mediaId,
+        seed.history.openCount,
+        seed.history.effectiveWatchCount,
+        seed.history.completedCount,
+        seed.history.totalPlayedSec,
+        seed.addedAtMs,
+        seed.history.lastOpenedAtMs,
+        seed.history.lastOpenedAtMs,
+        nowMs,
+      );
+    }
+  } finally {
+    sqlite.close();
+  }
 }
 
 async function run(): Promise<void> {
@@ -1572,7 +1626,7 @@ async function run(): Promise<void> {
     assert.equal(removeFailure.cards.length, 1, "a failed removal leaves the folder record intact");
     await waitFor("remove retry enabled", () => evaluate(window, "document.querySelector('#remove-source-confirm')?.disabled === false"), Boolean, 5_000);
     await evaluate(window, "document.querySelector('#remove-source-confirm')?.click()");
-    const removed = await waitFor("remove retry succeeds", readFolders, (value) => value.removeOpen === false && value.cards.length === 0 && /还没有添加文件夹/.test(value.sourceText), 20_000);
+    const removed = await waitFor("remove retry succeeds", readFolders, (value) => value.removeOpen === false && value.cards.length === 0 && value.libraryCards === 0 && /还没有添加文件夹/.test(value.sourceText), 20_000);
     assert.equal(removed.libraryCards, 0, "removing the folder refreshes the library too");
     assert.match(await evaluate(window, "document.querySelector('#app-notice')?.textContent || ''"), /源文件没有被删除/);
     const removedLedger = await evaluate(window, `window.zVideo.localLibrary.get(${JSON.stringify(openedMediaId)}).then((result) => ({ hasDetail: Boolean(result.detail), viewing: result.detail?.viewing ?? null }))`);
@@ -1622,10 +1676,352 @@ async function run(): Promise<void> {
     window.setSize(1040, 720);
     await waitFor("default size restored after compact state checks", () => evaluate(window, "document.documentElement.clientWidth"), (width) => Number(width) > 1000);
 
+    // A2 · cleanup rules and queue in the production app. A second owned
+    // fixture is scanned after the original sources are gone, then its file
+    // facts are shaped through SQLite so 45-day-old and multi-GB cases are
+    // deterministic. Everything the user sees and clicks goes through the real
+    // main/worker/IPC/renderer path.
+    const cleanupRoot = join(profile, "cleanup-ui-fixture");
+    await mkdir(cleanupRoot, { recursive: true });
+    const cleanupTitles = [
+      "Cleanup Never Opened",
+      "Cleanup Glanced",
+      "Cleanup Few Opens",
+      "Cleanup Low Return",
+      "Cleanup Low Revisit",
+      "Cleanup Recent Control",
+      "Cleanup Protected",
+    ];
+    for (const title of cleanupTitles) await writeFile(join(cleanupRoot, `${title}.mkv`), Buffer.from(`cleanup ui fixture ${title}`));
+    for (let index = 0; index < 18; index += 1) await writeFile(join(cleanupRoot, `Cleanup Extra ${index}.mkv`), Buffer.from(`cleanup extra ${index}`));
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [cleanupRoot] });
+    await evaluate(window, "document.querySelector('#choose-folder-button')?.click()");
+    await waitFor("cleanup fixture scan", readScanUi, (value) => value.pageTotal >= cleanupTitles.length + 18 && value.pillHidden === true && value.cardHidden === true, 30_000);
+    const cleanupItems = await evaluate<Array<{ mediaId: string; title: string }>>(window, `window.zVideo.localLibrary.list({ page: 1, pageSize: 100, query: "Cleanup" }).then((result) => (result.page?.items ?? []).map((item) => ({ mediaId: item.mediaId, title: item.title })))`);
+    assert.equal(cleanupItems.length, cleanupTitles.length + 18, "the cleanup fixture is fully indexed");
+    const cleanupMediaId = (title: string): string => {
+      const item = cleanupItems.find((candidate) => candidate.title === title);
+      if (!item) throw new Error(`cleanup UI fixture is missing ${title}`);
+      return item.mediaId;
+    };
+    const cleanupDbPath = join(profile, "local-library", "library.sqlite");
+    const cleanupNow = Date.now();
+    const neverOpenedId = cleanupMediaId("Cleanup Never Opened");
+    const glancedId = cleanupMediaId("Cleanup Glanced");
+    const fewOpensId = cleanupMediaId("Cleanup Few Opens");
+    const lowReturnId = cleanupMediaId("Cleanup Low Return");
+    const lowRevisitId = cleanupMediaId("Cleanup Low Revisit");
+    seedCleanupUiFacts(cleanupDbPath, cleanupNow, [
+      { mediaId: neverOpenedId, sizeBytes: 3 * GIB, addedAtMs: cleanupNow - 45 * DAY_MS },
+      { mediaId: glancedId, sizeBytes: 3 * GIB, addedAtMs: cleanupNow - 60 * DAY_MS, history: { openCount: 2, effectiveWatchCount: 0, completedCount: 0, totalPlayedSec: 40, lastOpenedAtMs: cleanupNow - 40 * DAY_MS } },
+      { mediaId: fewOpensId, sizeBytes: 6 * GIB, addedAtMs: cleanupNow - 60 * DAY_MS, history: { openCount: 2, effectiveWatchCount: 1, completedCount: 0, totalPlayedSec: 1_000, lastOpenedAtMs: cleanupNow - 100 * DAY_MS } },
+      { mediaId: lowReturnId, sizeBytes: 6 * GIB, addedAtMs: cleanupNow - 60 * DAY_MS, history: { openCount: 3, effectiveWatchCount: 1, completedCount: 0, totalPlayedSec: 300, lastOpenedAtMs: cleanupNow - 10 * DAY_MS } },
+      { mediaId: lowRevisitId, sizeBytes: 6 * GIB, addedAtMs: cleanupNow - 60 * DAY_MS, history: { openCount: 2, effectiveWatchCount: 2, completedCount: 1, totalPlayedSec: 2_000, lastOpenedAtMs: cleanupNow - 200 * DAY_MS } },
+      { mediaId: cleanupMediaId("Cleanup Recent Control"), sizeBytes: 3 * GIB, addedAtMs: cleanupNow - 60 * DAY_MS, history: { openCount: 1, effectiveWatchCount: 1, completedCount: 0, totalPlayedSec: 1_000, lastOpenedAtMs: cleanupNow - 5 * DAY_MS } },
+      { mediaId: cleanupMediaId("Cleanup Protected"), sizeBytes: Math.floor(2.8 * GIB), addedAtMs: cleanupNow - 5 * DAY_MS },
+    ]);
+
+    const readCleanup = () => evaluate<{
+      visible: boolean;
+      summary: string;
+      message: string;
+      cards: Array<{ mediaId: string; rule: string; state: string; title: string; size: string; ruleText: string; reason: string; actions: string[] }>;
+      deleteSummary: string;
+      deleteButtonDisabled: boolean;
+      ruleFilters: Array<{ value: string; label: string; pressed: boolean }>;
+      stateFilters: Array<{ value: string; label: string; pressed: boolean }>;
+      viewport: { width: number; height: number };
+      sectionRect: { left: number; right: number; top: number; bottom: number } | null;
+      firstCardRect: { left: number; right: number; top: number; bottom: number } | null;
+      queueRect: { left: number; right: number; top: number; bottom: number } | null;
+      overflowX: number;
+    }>(window, `(() => {
+      const rect = (selector) => { const element = document.querySelector(selector); const box = element?.getBoundingClientRect(); return box ? { left: box.left, right: box.right, top: box.top, bottom: box.bottom } : null; };
+      return {
+        visible: document.querySelector('#cleanup-section')?.hidden === false,
+        summary: document.querySelector('#cleanup-summary')?.textContent || '',
+        message: document.querySelector('#cleanup-message')?.textContent || '',
+        cards: [...document.querySelectorAll('#cleanup-candidates .cleanup-card')].map((card) => ({
+          mediaId: card.dataset.cleanupMediaId || '',
+          rule: card.dataset.cleanupRule || '',
+          state: card.dataset.cleanupState || '',
+          title: card.querySelector('.cleanup-card-title')?.textContent || '',
+          size: card.querySelector('.cleanup-card-size')?.textContent || '',
+          ruleText: card.querySelector('.cleanup-card-rule')?.textContent || '',
+          reason: card.querySelector('.cleanup-card-reason')?.textContent || '',
+          actions: [...card.querySelectorAll('[data-cleanup-action]')].map((button) => button.dataset.cleanupAction || ''),
+        })),
+        deleteSummary: document.querySelector('#cleanup-delete-summary')?.textContent || '',
+        deleteButtonDisabled: document.querySelector('#cleanup-view-delete')?.disabled === true,
+        ruleFilters: [...document.querySelectorAll('#cleanup-rule-filters [data-cleanup-rule]')].map((button) => ({ value: button.dataset.cleanupRule || '', label: button.textContent || '', pressed: button.getAttribute('aria-pressed') === 'true' })),
+        stateFilters: [...document.querySelectorAll('#cleanup-state-filters [data-cleanup-state]')].map((button) => ({ value: button.dataset.cleanupState || '', label: button.textContent || '', pressed: button.getAttribute('aria-pressed') === 'true' })),
+        viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight },
+        sectionRect: rect('#cleanup-section'),
+        firstCardRect: rect('#cleanup-candidates .cleanup-card'),
+        queueRect: rect('#cleanup-queue-bar'),
+        overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      };
+    })()`);
+    const readCleanupSettings = () => evaluate<{
+      open: boolean;
+      preset: string;
+      thresholds: Record<string, number>;
+      days: Record<string, number>;
+      toggles: Record<string, boolean>;
+      summary: string;
+      preview: string;
+      error: string;
+      rect: { left: number; right: number; top: number; bottom: number } | null;
+      viewport: { width: number; height: number };
+    }>(window, `(() => {
+      const dialog = document.querySelector('#cleanup-settings-dialog');
+      const thresholds = {};
+      document.querySelectorAll('#cleanup-threshold-fields input[data-cleanup-threshold]').forEach((input) => { thresholds[input.dataset.cleanupThreshold] = Number(input.value); });
+      const days = {};
+      document.querySelectorAll('#cleanup-day-fields input[data-cleanup-days]').forEach((input) => { days[input.dataset.cleanupDays] = Number(input.value); });
+      const toggles = {};
+      document.querySelectorAll('#cleanup-rule-toggles input[data-cleanup-toggle]').forEach((input) => { toggles[input.dataset.cleanupToggle] = input.checked; });
+      const box = dialog?.getBoundingClientRect();
+      return {
+        open: dialog?.open === true,
+        preset: document.querySelector('#cleanup-preset-buttons [aria-pressed="true"]')?.dataset.cleanupPreset || '',
+        thresholds, days, toggles,
+        summary: document.querySelector('#cleanup-settings-summary')?.textContent || '',
+        preview: document.querySelector('#cleanup-preview')?.textContent || '',
+        error: document.querySelector('#cleanup-settings-error')?.hidden === false ? document.querySelector('#cleanup-settings-error')?.textContent || '' : '',
+        rect: box ? { left: box.left, right: box.right, top: box.top, bottom: box.bottom } : null,
+        viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight },
+      };
+    })()`);
+    const openCleanupSettingsUi = async (): Promise<void> => {
+      await evaluate(window, "document.querySelector('#cleanup-settings-button')?.click()");
+      await waitFor("cleanup settings open", readCleanupSettings, (value) => value.open === true);
+    };
+    const closeCleanupSettingsUi = async (): Promise<void> => {
+      await evaluate(window, "document.querySelector('#cleanup-settings-cancel')?.click()");
+      await waitFor("cleanup settings closed", readCleanupSettings, (value) => value.open === false);
+    };
+
+    await evaluate(window, "document.querySelector('#cleanup-entry')?.click()");
+    const cleanupInitial = await waitFor("cleanup view with candidates", readCleanup, (value) => value.visible && value.cards.length === 5, 15_000);
+    assert.match(cleanupInitial.summary, /候选 5 部 · 约 24\.0 GB/, "the summary counts only current candidates and their bytes");
+    assert.deepEqual(cleanupInitial.cards.map((card) => card.title), ["Cleanup Few Opens", "Cleanup Low Return", "Cleanup Never Opened", "Cleanup Glanced", "Cleanup Low Revisit"]);
+    assert.deepEqual(cleanupInitial.cards.map((card) => card.rule), ["C", "D", "A", "B", "E"]);
+    assert.match(cleanupInitial.cards[0].ruleText, /规则 C · 打开少 \+ 大文件/);
+    assert.match(cleanupInitial.cards[0].reason, /打开 2 次 ≤ 2 次/);
+    assert.match(cleanupInitial.cards[0].reason, /上次打开 100 天前 ≥ 90 天/);
+    assert.match(cleanupInitial.cards[0].reason, /6\.0 GB ≥ 5\.0 GB/);
+    assert.match(cleanupInitial.cards[2].reason, /从未打开/);
+    assert.match(cleanupInitial.cards[2].reason, /保护期 30 天/);
+    assert.match(cleanupInitial.cards[4].reason, /看完但低回访/);
+    assert.match(cleanupInitial.cards[1].size, /6\.0 GB/);
+    assert.equal(cleanupInitial.cards.some((card) => card.reason.includes(cleanupRoot)), false, "candidate reasons never leak a source root");
+    assert.equal(cleanupInitial.deleteButtonDisabled, true);
+    assert.match(cleanupInitial.deleteSummary, /待删清单 0 项 · 0 B/);
+    assert.deepEqual(cleanupInitial.stateFilters.map((filter) => filter.label), ["待整理", "保留", "稍后", "待删"]);
+    assert.equal(cleanupInitial.ruleFilters.length, 6);
+    assert.equal(cleanupInitial.ruleFilters.find((filter) => filter.value === "all")?.pressed, true);
+    await capture("cleanup");
+
+    await evaluate(window, `document.querySelector('#cleanup-rule-filters [data-cleanup-rule="C"]')?.click()`);
+    const ruleFiltered = await waitFor("rule C filter", readCleanup, (value) => value.cards.length === 1 && value.cards[0].rule === "C");
+    assert.equal(ruleFiltered.cards[0].title, "Cleanup Few Opens");
+    await evaluate(window, `document.querySelector('#cleanup-rule-filters [data-cleanup-rule="all"]')?.click()`);
+    await waitFor("all rule filter", readCleanup, (value) => value.cards.length === 5);
+
+    // Presets → custom → restore defaults → rule toggles, all through the real
+    // preferences IPC and a fresh queue query.
+    await openCleanupSettingsUi();
+    const standardForm = await readCleanupSettings();
+    assert.equal(standardForm.preset, "standard");
+    assert.equal(standardForm.thresholds.protectionDays, 30);
+    assert.equal(standardForm.thresholds.largeBytes, 2);
+    assert.equal(standardForm.thresholds.lowReturnMaxSec, 10);
+    assert.equal(standardForm.days.snooze, 30);
+    assert.equal(standardForm.days.keep, 180);
+    assert.deepEqual(standardForm.toggles, { A: true, B: true, C: true, D: true, E: true });
+    await evaluate(window, `document.querySelector('#cleanup-preset-buttons [data-cleanup-preset="aggressive"]')?.click()`);
+    const aggressiveForm = await waitFor("aggressive preset fields", readCleanupSettings, (value) => value.open && value.thresholds.protectionDays === 14);
+    assert.equal(aggressiveForm.thresholds.largeBytes, 1);
+    assert.equal(aggressiveForm.thresholds.staleDays, 60);
+    assert.equal(aggressiveForm.thresholds.fewOpenCount, 3);
+    assert.equal(aggressiveForm.thresholds.completionPercent, 85);
+    assert.equal(aggressiveForm.preset, "aggressive");
+    await evaluate(window, "document.querySelector('#cleanup-settings-save')?.click()");
+    await waitFor("aggressive preset saved", readCleanupSettings, (value) => value.open === false);
+    await waitFor("aggressive preset keeps candidates", readCleanup, (value) => value.cards.length === 5);
+    const savedPreferences = JSON.parse(await readFile(join(profile, "app-preferences.json"), "utf8")) as { cleanup?: { preset?: string; thresholds?: { protectionDays?: number } } };
+    assert.equal(savedPreferences.cleanup?.preset, "aggressive", "presets are stored in application preferences");
+    assert.equal(savedPreferences.cleanup?.thresholds?.protectionDays, 14);
+
+    await openCleanupSettingsUi();
+    await evaluate(window, `(() => {
+      const set = (key, value) => { const input = document.querySelector('[data-cleanup-threshold="' + key + '"]'); input.value = String(value); input.dispatchEvent(new Event('input', { bubbles: true })); };
+      set('largeBytes', 8); set('veryLargeBytes', 8); set('hugeBytes', 8);
+      return true;
+    })()`);
+    await evaluate(window, "document.querySelector('#cleanup-settings-save')?.click()");
+    const customQueue = await waitFor("custom thresholds hide candidates", readCleanup, (value) => value.cards.length === 0 && value.visible);
+    assert.match(customQueue.summary, /候选 0 部/);
+    assert.match(customQueue.message, /已保存/);
+
+    await openCleanupSettingsUi();
+    await evaluate(window, "document.querySelector('#cleanup-settings-defaults')?.click()");
+    const defaultsForm = await waitFor("restore defaults", readCleanupSettings, (value) => value.thresholds.protectionDays === 30 && value.thresholds.largeBytes === 2);
+    assert.equal(defaultsForm.preset, "standard");
+    await evaluate(window, "document.querySelector('#cleanup-settings-save')?.click()");
+    await waitFor("defaults keep five candidates", readCleanup, (value) => value.cards.length === 5);
+
+    await openCleanupSettingsUi();
+    await evaluate(window, `document.querySelector('#cleanup-rule-toggles input[data-cleanup-toggle="A"]')?.click()`);
+    await evaluate(window, "document.querySelector('#cleanup-settings-save')?.click()");
+    const ruleClosed = await waitFor("rule A closed", readCleanup, (value) => value.cards.length === 4);
+    assert.equal(ruleClosed.cards.some((card) => card.rule === "A"), false, "closing rule A removes never-opened candidates");
+    await openCleanupSettingsUi();
+    await evaluate(window, `document.querySelector('#cleanup-rule-toggles input[data-cleanup-toggle="A"]')?.click()`);
+    await evaluate(window, "document.querySelector('#cleanup-settings-save')?.click()");
+    await waitFor("rule A restored", readCleanup, (value) => value.cards.length === 5);
+
+    await openCleanupSettingsUi();
+    await evaluate(window, `(() => { const input = document.querySelector('[data-cleanup-threshold="protectionDays"]'); input.value = "0"; input.dispatchEvent(new Event("input", { bubbles: true })); return true; })()`);
+    await evaluate(window, "document.querySelector('#cleanup-settings-save')?.click()");
+    const invalidSettings = await waitFor("threshold validation error", readCleanupSettings, (value) => value.error.length > 0);
+    assert.match(invalidSettings.error, /保护期/);
+    assert.equal(invalidSettings.open, true, "an invalid threshold keeps the settings dialog open");
+    await closeCleanupSettingsUi();
+    await waitFor("candidates unchanged after invalid save", readCleanup, (value) => value.cards.length === 5);
+
+    // Keep / snooze / delete marks.
+    await evaluate(window, `document.querySelector('[data-cleanup-media-id="${neverOpenedId}"] [data-cleanup-action="keep"]')?.click()`);
+    const afterKeep = await waitFor("keep mark hides the candidate", readCleanup, (value) => value.cards.length === 4 && !value.cards.some((card) => card.mediaId === neverOpenedId));
+    assert.match(afterKeep.message, /保留/);
+    await evaluate(window, `document.querySelector('[data-cleanup-media-id="${glancedId}"] [data-cleanup-action="snooze"]')?.click()`);
+    const afterSnooze = await waitFor("snooze mark hides the candidate", readCleanup, (value) => value.cards.length === 3 && !value.cards.some((card) => card.mediaId === glancedId));
+    assert.match(afterSnooze.message, /稍后/);
+    await evaluate(window, `document.querySelector('[data-cleanup-media-id="${fewOpensId}"] [data-cleanup-action="delete"]')?.click()`);
+    await waitFor("delete mark moves candidate", readCleanup, (value) => value.cards.length === 2 && value.deleteSummary.includes("1 项"));
+    assert.match(await evaluate(window, "document.querySelector('#cleanup-delete-summary')?.textContent || ''"), /1 项 · 6\.0 GB/);
+    await evaluate(window, `document.querySelector('[data-cleanup-media-id="${lowReturnId}"] [data-cleanup-action="delete"]')?.click()`);
+    const afterDeletes = await waitFor("second delete mark", readCleanup, (value) => value.cards.length === 1 && /2 项 · 12\.0 GB/.test(value.deleteSummary));
+    assert.equal(afterDeletes.deleteButtonDisabled, false);
+
+    // Marked states stay inspectable through the status filters.
+    await evaluate(window, `document.querySelector('#cleanup-state-filters [data-cleanup-state="keep"]')?.click()`);
+    const keepFilter = await waitFor("keep state filter", readCleanup, (value) => value.cards.length === 1 && value.cards[0].state === "keep");
+    assert.equal(keepFilter.cards[0].title, "Cleanup Never Opened");
+    assert.equal(keepFilter.cards[0].state, "keep");
+    assert.deepEqual(keepFilter.cards[0].actions, ["none"]);
+    await evaluate(window, `document.querySelector('#cleanup-state-filters [data-cleanup-state="snooze"]')?.click()`);
+    const snoozeFilter = await waitFor("snooze state filter", readCleanup, (value) => value.cards.length === 1 && value.cards[0].state === "snooze");
+    assert.equal(snoozeFilter.cards[0].title, "Cleanup Glanced");
+    await evaluate(window, `document.querySelector('#cleanup-state-filters [data-cleanup-state="delete-candidate"]')?.click()`);
+    const deleteFilter = await waitFor("delete state filter", readCleanup, (value) => value.cards.length === 2);
+    assert.deepEqual(deleteFilter.cards.map((card) => card.state), ["delete-candidate", "delete-candidate"]);
+    await evaluate(window, `document.querySelector('#cleanup-state-filters [data-cleanup-state="none"]')?.click()`);
+    await waitFor("active queue restored", readCleanup, (value) => value.cards.length === 1 && value.cards[0].title === "Cleanup Low Revisit");
+
+    // Delete list: explicit Explorer reveal (main-only path) and returning a file to the queue.
+    const revealedPaths: string[] = [];
+    const originalShowItemInFolder = shell.showItemInFolder;
+    let revealStubbed = false;
+    try {
+      shell.showItemInFolder = (path: string) => { revealedPaths.push(path); };
+      revealStubbed = shell.showItemInFolder !== originalShowItemInFolder;
+    } catch {
+      revealStubbed = false;
+    }
+    await evaluate(window, "document.querySelector('#cleanup-view-delete')?.click()");
+    const deleteDialog = await waitFor("delete list dialog", () => evaluate<{
+      open: boolean;
+      summary: string;
+      items: Array<{ title: string; text: string }>;
+      revealButtons: number;
+      unmarkButtons: number;
+      rect: { left: number; right: number; top: number; bottom: number } | null;
+      viewport: { width: number; height: number };
+      note: string;
+    }>(window, `(() => {
+      const dialog = document.querySelector('#cleanup-delete-dialog');
+      const box = dialog?.getBoundingClientRect();
+      return {
+        open: dialog?.open === true,
+        summary: document.querySelector('#cleanup-delete-dialog-summary')?.textContent || '',
+        items: [...document.querySelectorAll('#cleanup-delete-list .cleanup-delete-item')].map((item) => ({ title: item.querySelector('strong')?.textContent || '', text: item.textContent || '' })),
+        revealButtons: document.querySelectorAll('#cleanup-delete-list [data-cleanup-reveal]').length,
+        unmarkButtons: document.querySelectorAll('#cleanup-delete-list [data-cleanup-unmark]').length,
+        rect: box ? { left: box.left, right: box.right, top: box.top, bottom: box.bottom } : null,
+        viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight },
+        note: document.querySelector('#cleanup-delete-dialog .cleanup-delete-note')?.textContent || '',
+      };
+    })()`), (value) => value.open === true && value.items.length === 2);
+    assert.deepEqual(deleteDialog.items.map((item) => item.title).sort(), ["Cleanup Few Opens", "Cleanup Low Return"].sort());
+    assert.equal(deleteDialog.revealButtons, 2);
+    assert.equal(deleteDialog.unmarkButtons, 2);
+    assert.match(deleteDialog.note, /不会自动删除文件/);
+    if (revealStubbed) {
+      await evaluate(window, `document.querySelector('#cleanup-delete-list [data-cleanup-reveal="${fewOpensId}"]')?.click()`);
+      await waitFor("reveal message", () => evaluate(window, "document.querySelector('#cleanup-delete-message')?.textContent || ''"), (value) => /资源管理器/.test(value));
+      assert.equal(revealedPaths.length, 1);
+      assert.equal(revealedPaths[0], join(cleanupRoot, "Cleanup Few Opens.mkv"), "main resolves the private path for Explorer");
+    } else {
+      // The native shell module is frozen on this runtime; prove the bridge returns a safe result instead.
+      const revealResult = await evaluate(window, `window.zVideo.localLibrary.revealCleanupMedia(${JSON.stringify(fewOpensId)})`);
+      assert.equal(revealResult.revealed, true);
+    }
+    await evaluate(window, `document.querySelector('#cleanup-delete-list [data-cleanup-unmark="${lowReturnId}"]')?.click()`);
+    const afterUnmark = await waitFor("unmark returns to candidates", readCleanup, (value) => value.cards.length === 2 && /1 项 · 6\.0 GB/.test(value.deleteSummary));
+    assert.equal(afterUnmark.cards.some((card) => card.mediaId === lowReturnId), true);
+    await evaluate(window, "document.querySelector('#cleanup-delete-close')?.click()");
+    await waitFor("delete dialog closed", () => evaluate(window, "document.querySelector('#cleanup-delete-dialog')?.open"), (value) => value === false);
+    assert.equal((await stat(join(cleanupRoot, "Cleanup Never Opened.mkv"))).isFile(), true, "cleanup never deletes a source file");
+    assert.equal((await stat(join(cleanupRoot, "Cleanup Few Opens.mkv"))).isFile(), true, "a delete-candidate stays on disk");
+
+    // 900×640 keeps the queue, reasons, delete list and settings inside the window.
+    window.setSize(900, 640);
+    const compactCleanup = await waitFor("cleanup at 900x640", async () => {
+      await evaluate(window, "document.querySelector('#cleanup-candidates .cleanup-card')?.scrollIntoView({ block: 'center' })");
+      return readCleanup();
+    }, (value) => value.viewport.width <= 900 && value.visible && value.cards.length > 0);
+    assert.ok(compactCleanup.overflowX <= 0, `the cleanup view has no horizontal overflow at 900x640: ${compactCleanup.overflowX}`);
+    assertInside("900 cleanup first card", compactCleanup.firstCardRect, compactCleanup.viewport);
+    await evaluate(window, "document.querySelector('#cleanup-queue-bar')?.scrollIntoView({ block: 'end' })");
+    const compactQueue = await readCleanup();
+    assertInside("900 cleanup delete bar", compactQueue.queueRect, compactQueue.viewport);
+    await openCleanupSettingsUi();
+    const compactSettings = await readCleanupSettings();
+    assert.equal(compactSettings.viewport.width <= 900, true);
+    assertInside("900 cleanup settings dialog", compactSettings.rect, compactSettings.viewport);
+    await closeCleanupSettingsUi();
+    await evaluate(window, "document.querySelector('#cleanup-view-delete')?.click()");
+    const compactDelete = await waitFor("delete dialog at 900x640", () => evaluate(window, `(() => {
+      const dialog = document.querySelector('#cleanup-delete-dialog');
+      const box = dialog?.getBoundingClientRect();
+      return { open: dialog?.open === true, rect: box ? { left: box.left, right: box.right, top: box.top, bottom: box.bottom } : null, viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight }, overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth };
+    })()`), (value) => value.open === true);
+    assertInside("900 cleanup delete dialog", compactDelete.rect, compactDelete.viewport);
+    assert.ok(compactDelete.overflowX <= 0, "the delete list has no horizontal overflow at 900x640");
+    await evaluate(window, "document.querySelector('#cleanup-delete-close')?.click()");
+    await capture("cleanup-compact");
+    window.setSize(1040, 720);
+    await waitFor("default size restored after cleanup checks", () => evaluate(window, "document.documentElement.clientWidth"), (width) => Number(width) > 1000);
+    const cleanupReceipt = {
+      initial: { summary: cleanupInitial.summary, rules: cleanupInitial.cards.map((card) => card.rule), titles: cleanupInitial.cards.map((card) => card.title), reasons: cleanupInitial.cards.slice(0, 2).map((card) => card.reason) },
+      ruleFilter: ruleFiltered.cards.map((card) => card.title),
+      settings: { standard: standardForm.summary, aggressive: aggressiveForm.summary, customSummary: customQueue.summary, ruleClosed: ruleClosed.cards.length, invalidError: invalidSettings.error },
+      marks: { afterKeep: afterKeep.cards.length, afterSnooze: afterSnooze.cards.length, afterDeletes: afterDeletes.cards.length, deleteSummary: afterDeletes.deleteSummary, keepFilter: keepFilter.cards.map((card) => card.title), snoozeFilter: snoozeFilter.cards.map((card) => card.title), deleteFilter: deleteFilter.cards.length, afterUnmark: afterUnmark.deleteSummary },
+      deleteList: { summary: deleteDialog.summary, items: deleteDialog.items.map((item) => item.title), revealStubbed, revealedPaths: revealedPaths.length },
+      compact: { viewport: compactCleanup.viewport, card: compactCleanup.firstCardRect, queue: compactQueue.queueRect, settings: compactSettings.rect, delete: compactDelete.rect, overflowX: compactCleanup.overflowX },
+    };
+
+    shell.showItemInFolder = originalShowItemInFolder;
+
     const diagnostics = await readFile(join(logDir, "diagnostics.jsonl"), "utf8").catch(() => "");
     assert.match(diagnostics, /"operation":"window\.renderer-ready"/);
     assert.match(diagnostics, /"operation":"local-library\.list"/);
     assert.match(diagnostics, /"operation":"local-library\.list-collections"/);
+    assert.match(diagnostics, /"operation":"local-library\.cleanup-queue"/);
+    assert.match(diagnostics, /"operation":"local-library\.cleanup-set-state"/);
+    assert.match(diagnostics, /"operation":"app-preferences\.set-cleanup"/);
     assert.doesNotMatch(diagnostics, /session\.restore|session\.login|discovery\.start/);
     const resultPath = process.env.Z_VIDEO_LOCAL_LIBRARY_APP_RESULT;
     if (!resultPath) throw new Error("Z_VIDEO_LOCAL_LIBRARY_APP_RESULT is required");
@@ -1676,6 +2072,7 @@ async function run(): Promise<void> {
       },
       continueWatching: { minimum: continueMin, scope: continueMin.scope, cards: continueMin.cards, default: continueDefault, defaultContent: continueDefault.windowContent, defaultOuter: defaultAfterContinueOuter },
       removeFailure: { prompt: removePrompt.removeCopy, title: removePrompt.removeTitle, destructive: /destructive-button/.test(removePrompt.removeConfirmClass), defaultFocus: removePrompt.activeId, error: removeFailure.removeError, retryLabel: removeFailure.removeConfirmText },
+      cleanup: cleanupReceipt,
       folders: { page: folderPage.cards.map((card: { text: string }) => card.text.slice(0, 160)), notice: folderPage.sourceText.includes(fixtureRoot) ? "root-leaked" : "safe", offline: { title: offlinePrompt.offlineTitle, copy: offlinePrompt.offlineCopy, kept: keptOffline.cards[0]?.text.slice(0, 120) }, rescanAllPrompt: offlinePromptAll.offlineCopy },
       pagination: {
         first: firstPage.status,

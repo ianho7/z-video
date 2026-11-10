@@ -9,6 +9,7 @@ import {
   type AppPlaybackPreferences,
   type AppPreferences,
 } from "../shared/app-preferences-contracts";
+import { parseCleanupSettings, type CleanupSettings } from "../shared/cleanup-contracts";
 import type { LocalLibrarySort } from "../shared/local-library-contracts";
 
 export class AppPreferencesStore {
@@ -37,6 +38,12 @@ export class AppPreferencesStore {
   async setSort(sort: LocalLibrarySort): Promise<AppPreferences> {
     if (!isLocalLibrarySort(sort)) throw new Error("本地片库排序条件无效");
     return this.enqueue({ sort });
+  }
+
+  /** Persist the validated cleanup thresholds/rules. Media rows are never written. */
+  async setCleanup(settings: CleanupSettings): Promise<AppPreferences> {
+    const cleanup = parseCleanupSettings(settings);
+    return this.enqueue({ cleanup });
   }
 
   async confirmPlayback(settings: AppPlaybackPreferences): Promise<AppPreferences> {

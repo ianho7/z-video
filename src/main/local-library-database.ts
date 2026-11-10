@@ -25,6 +25,12 @@ import {
   type LocalViewingSessionStartInput,
 } from "../shared/local-library-contracts";
 import { localLibraryErrorMessage } from "./local-library-errors";
+import type {
+  CleanupSettings,
+  LocalCleanupQueue,
+  LocalCleanupQueueQuery,
+  LocalCleanupStateInput,
+} from "../shared/cleanup-contracts";
 
 type WorkerCommand =
   | { command: "initialize"; dbPath: string }
@@ -48,6 +54,8 @@ type WorkerCommand =
   | { command: "heartbeat-viewing-session"; heartbeat: LocalViewingSessionHeartbeatInput }
   | { command: "finish-viewing-session"; session: LocalViewingSessionFinishInput }
   | { command: "get-viewing-history"; mediaId: string }
+  | { command: "list-cleanup-queue"; query: LocalCleanupQueueQuery; settings: CleanupSettings; nowMs: number }
+  | { command: "set-cleanup-state"; input: LocalCleanupStateInput; nowMs: number; keepDays: number; snoozeDays: number }
   | { command: "close" };
 
 interface WorkerSuccess {
@@ -310,6 +318,15 @@ export class LocalLibraryDatabase {
   async getViewingHistory(mediaId: string): Promise<LocalViewingHistory | undefined> {
     assertMediaId(mediaId);
     return this.call<LocalViewingHistory | undefined>({ command: "get-viewing-history", mediaId });
+  }
+
+  async listCleanupQueue(query: LocalCleanupQueueQuery, settings: CleanupSettings, nowMs = Date.now()): Promise<LocalCleanupQueue> {
+    return this.call<LocalCleanupQueue>({ command: "list-cleanup-queue", query, settings, nowMs });
+  }
+
+  async setCleanupState(input: LocalCleanupStateInput, keepDays: number, snoozeDays: number, nowMs = Date.now()): Promise<void> {
+    assertMediaId(input.mediaId);
+    await this.call<boolean>({ command: "set-cleanup-state", input, nowMs, keepDays, snoozeDays });
   }
 
   async close(): Promise<void> {

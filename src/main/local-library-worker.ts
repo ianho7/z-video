@@ -11,6 +11,7 @@ import {
   LOCAL_LIBRARY_SCHEMA_VERSION,
   isCompletedWatch,
   isEffectiveWatch,
+  isOpaqueMediaId,
   type LocalLibraryQuery,
   type LocalCollectionQuery,
   type LocalCollectionSummary,
@@ -27,6 +28,20 @@ import {
   type LocalViewingSessionHeartbeatInput,
   type LocalViewingSessionStartInput,
 } from "../shared/local-library-contracts";
+import {
+  DAY_MS,
+  evaluateCleanupRule,
+  effectiveCleanupState,
+  isCleanupState,
+  type CleanupRuleId,
+  type CleanupSettings,
+  type CleanupState,
+  type LocalCleanupCandidate,
+  type LocalCleanupQueue,
+  type LocalCleanupQueueItem,
+  type LocalCleanupQueueQuery,
+  type LocalCleanupStateInput,
+} from "../shared/cleanup-contracts";
 import { parseEpisodeNumbers, parseNfo, parsePremieredDate, type ParsedNfo } from "./local-library-metadata";
 import { localLibraryErrorCode, localLibraryErrorMessage } from "./local-library-errors";
 import { safeSourceLabel, safeSourceLocationHint } from "./local-library-label";
@@ -53,6 +68,8 @@ type WorkerRequest =
   | { id: number; command: "heartbeat-viewing-session"; heartbeat: LocalViewingSessionHeartbeatInput }
   | { id: number; command: "finish-viewing-session"; session: LocalViewingSessionFinishInput }
   | { id: number; command: "get-viewing-history"; mediaId: string }
+  | { id: number; command: "list-cleanup-queue"; query: LocalCleanupQueueQuery; settings: CleanupSettings; nowMs: number }
+  | { id: number; command: "set-cleanup-state"; input: LocalCleanupStateInput; nowMs: number; keepDays: number; snoozeDays: number }
   | { id: number; command: "close" };
 
 interface WorkerSuccess {
@@ -1249,7 +1266,9 @@ function getDetail(mediaId: string): LocalMediaDetail | undefined {
   const db = requireDatabase();
   const playback = getPlayback(item.mediaId);
   const episodePlayback = getCollectionPlayback(item.collectionId);
-  const viewing = getViewingHistory(item.mediaId);
+  // A cleanup "keep/snooze/delete" mark may create a zero aggregate row before
+  // the file was ever played. It is not a viewing record until a session exists.
+  const viewing = hasViewingSessions(item.mediaId) ? getViewingHistory(item.mediaId) : undefined;
   const collection = db.prepare("SELECT title, kind FROM collections WHERE collection_id = ?").get(item.collectionId) as { title?: string; kind?: string } | undefined;
   const rows = db.prepare(`
     SELECT media_files.media_id AS mediaId, media_files.collection_id AS collectionId, media_files.source_id AS sourceId,
@@ -1490,6 +1509,213 @@ function getViewingHistory(mediaId: string): LocalViewingHistory | undefined {
     FROM media_history WHERE media_id = ?
   `).get(mediaId) as Record<string, unknown> | undefined;
   return row ? viewingHistoryFromRow(row) : undefined;
+}
+
+function hasViewingSessions(mediaId: string): boolean {
+  const db = requireDatabase();
+  const row = db.prepare("SELECT 1 AS present FROM viewing_sessions WHERE media_id = ? LIMIT 1").get(mediaId) as { present?: number } | undefined;
+  return Boolean(row?.present);
+}
+
+interface CleanupRow {
+  mediaId?: string;
+  collectionId?: string;
+  sourceId?: string;
+  displayTitle?: string | null;
+  mediaKind?: string | null;
+  sizeBytes?: number;
+  modifiedAtMs?: number;
+  seasonNumber?: number | null;
+  episodeNumber?: number | null;
+  available?: number;
+  sourceAvailable?: number;
+  title?: string | null;
+  kind?: string | null;
+  year?: number | null;
+  plot?: string | null;
+  genreJson?: string | null;
+  rating?: number | null;
+  premieredAt?: string | null;
+  addedAtMs?: number;
+  openCount?: number | null;
+  effectiveWatchCount?: number | null;
+  completedCount?: number | null;
+  inspectionOpenCount?: number | null;
+  totalPlayedSec?: number | null;
+  lastOpenedAtMs?: number | null;
+  lastPlayedAt?: number | null;
+  lastSessionPlayedSec?: number | null;
+  lastSessionWallSec?: number | null;
+  lastPositionSec?: number | null;
+  lastDurationSec?: number | null;
+  mediaUpdatedAt?: number | null;
+  cleanupState?: string | null;
+  cleanupUntil?: number | null;
+  hasSessions?: number | null;
+}
+
+const CLEANUP_SELECT = `
+  SELECT media_files.media_id AS mediaId, media_files.collection_id AS collectionId, media_files.source_id AS sourceId,
+    media_files.display_title AS displayTitle, media_files.media_kind AS mediaKind,
+    media_files.size_bytes AS sizeBytes, media_files.modified_at_ms AS modifiedAtMs,
+    media_files.season_number AS seasonNumber, media_files.episode_number AS episodeNumber,
+    media_files.available, sources.available AS sourceAvailable,
+    collections.title, collections.kind, collections.year, collections.plot,
+    collections.genre_json AS genreJson, collections.rating, collections.premiered_at AS premieredAt,
+    media_files.added_at AS addedAtMs,
+    media_history.open_count AS openCount, media_history.effective_watch_count AS effectiveWatchCount,
+    media_history.completed_count AS completedCount, media_history.inspection_open_count AS inspectionOpenCount,
+    media_history.total_played_sec AS totalPlayedSec, media_history.last_opened_at AS lastOpenedAtMs,
+    media_history.last_played_at AS lastPlayedAt, media_history.last_session_played_sec AS lastSessionPlayedSec,
+    media_history.last_session_wall_sec AS lastSessionWallSec, media_history.last_position_sec AS lastPositionSec,
+    media_history.last_duration_sec AS lastDurationSec, media_history.updated_at AS mediaUpdatedAt,
+    media_history.cleanup_state AS cleanupState, media_history.cleanup_until AS cleanupUntil,
+    EXISTS (SELECT 1 FROM viewing_sessions WHERE viewing_sessions.media_id = media_files.media_id) AS hasSessions
+  FROM media_files
+    JOIN collections USING (collection_id)
+    JOIN sources USING (source_id)
+    LEFT JOIN media_history ON media_history.media_id = media_files.media_id
+  WHERE media_files.available = 1 AND sources.available = 1
+`;
+
+interface CleanupEvaluatedRow {
+  row: CleanupRow;
+  state: CleanupState;
+  rule?: CleanupRuleId;
+}
+
+/**
+ * Cleanup queue for current on-disk files only. A1 aggregates are the source of
+ * truth for the displayed numbers; the renderer never sees a raw row or a path.
+ * The query is bounded by a page, while relative-large uses a single percentile
+ * lookup so an 8000-file library still opens quickly.
+ */
+function listCleanupQueue(query: LocalCleanupQueueQuery, settings: CleanupSettings, nowMs: number): LocalCleanupQueue {
+  const db = requireDatabase();
+  const rows = db.prepare(CLEANUP_SELECT).all() as CleanupRow[];
+  const relativeLargeBytes = relativeLargeCutoff(rows.length, settings.thresholds.relativeLargePercent);
+  const evaluated: CleanupEvaluatedRow[] = rows.map((row) => {
+    const state = effectiveCleanupState(cleanupStateOf(row), row.cleanupUntil ?? undefined, nowMs);
+    const rule = evaluateCleanupRule({
+      sizeBytes: Number(row.sizeBytes ?? 0),
+      addedAtMs: Number(row.addedAtMs ?? 0),
+      openCount: Number(row.openCount ?? 0),
+      effectiveWatchCount: Number(row.effectiveWatchCount ?? 0),
+      completedCount: Number(row.completedCount ?? 0),
+      totalPlayedSec: Number(row.totalPlayedSec ?? 0),
+      ...(row.lastOpenedAtMs === null || row.lastOpenedAtMs === undefined || row.lastOpenedAtMs <= 0 ? {} : { lastOpenedAtMs: Number(row.lastOpenedAtMs) }),
+    }, settings, { nowMs, ...(relativeLargeBytes === undefined ? {} : { relativeLargeBytes }) });
+    return { row, state, ...(rule ? { rule } : {}) };
+  });
+
+  const requestedState = query.state ?? "none";
+  const requestedRule = query.rule ?? "all";
+  const active = evaluated.filter((entry) => {
+    if (requestedState === "none") {
+      return entry.state === "none" && entry.rule !== undefined && (requestedRule === "all" || entry.rule === requestedRule);
+    }
+    if (entry.state !== requestedState) return false;
+    return requestedRule === "all" || entry.rule === requestedRule;
+  });
+  active.sort(compareCleanupRows);
+
+  const totalBytes = active.reduce((sum, entry) => sum + Number(entry.row.sizeBytes ?? 0), 0);
+  const pageSize = Math.min(100, Math.max(1, Math.trunc(query.pageSize)));
+  const totalPages = Math.max(1, Math.ceil(active.length / pageSize));
+  const page = Math.min(totalPages, Math.max(1, Math.trunc(query.page)));
+  const pageEntries = active.slice((page - 1) * pageSize, page * pageSize);
+  const candidates: LocalCleanupCandidate[] = pageEntries.map((entry) => {
+    const viewing = viewingForCandidate(entry.row);
+    return {
+      item: toPublicItem(entry.row as Record<string, unknown>),
+      ...(viewing ? { viewing } : {}),
+      rule: entry.rule as CleanupRuleId,
+      cleanupState: entry.state,
+      ...(entry.row.cleanupUntil === null || entry.row.cleanupUntil === undefined ? {} : { cleanupUntilMs: Number(entry.row.cleanupUntil) }),
+      addedAtMs: Number(entry.row.addedAtMs ?? 0),
+    };
+  });
+
+  const deleteEntries = evaluated.filter((entry) => entry.state === "delete-candidate");
+  deleteEntries.sort((left, right) => Number(right.row.sizeBytes ?? 0) - Number(left.row.sizeBytes ?? 0) || String(left.row.mediaId).localeCompare(String(right.row.mediaId)));
+  const deleteBytes = deleteEntries.reduce((sum, entry) => sum + Number(entry.row.sizeBytes ?? 0), 0);
+  const deleteQueue: LocalCleanupQueueItem[] = deleteEntries.slice(0, 200).map((entry) => {
+    const viewing = viewingForCandidate(entry.row);
+    return {
+      item: toPublicItem(entry.row as Record<string, unknown>),
+      ...(viewing ? { viewing } : {}),
+      ...(entry.rule ? { rule: entry.rule } : {}),
+      cleanupState: "delete-candidate",
+      addedAtMs: Number(entry.row.addedAtMs ?? 0),
+    };
+  });
+
+  return {
+    query: { ...query, page, pageSize },
+    candidates,
+    totalCount: active.length,
+    totalBytes,
+    deleteQueue,
+    deleteCount: deleteEntries.length,
+    deleteBytes,
+    ...(relativeLargeBytes === undefined ? {} : { relativeLargeBytes }),
+    nowMs,
+  };
+}
+
+function viewingForCandidate(row: CleanupRow): LocalViewingHistory | undefined {
+  if (!(Number(row.openCount ?? 0) > 0 || Number(row.hasSessions ?? 0) === 1)) return undefined;
+  return viewingHistoryFromRow(row as Record<string, unknown>);
+}
+
+function cleanupStateOf(row: CleanupRow): CleanupState {
+  return isCleanupState(row.cleanupState) ? row.cleanupState : "none";
+}
+
+function compareCleanupRows(left: CleanupEvaluatedRow, right: CleanupEvaluatedRow): number {
+  const order: CleanupRuleId[] = ["C", "D", "A", "B", "E"];
+  const leftRank = left.rule ? order.indexOf(left.rule) : order.length;
+  const rightRank = right.rule ? order.indexOf(right.rule) : order.length;
+  if (leftRank !== rightRank) return leftRank - rightRank;
+  const sizeDelta = Number(right.row.sizeBytes ?? 0) - Number(left.row.sizeBytes ?? 0);
+  if (sizeDelta !== 0) return sizeDelta;
+  return String(left.row.mediaId).localeCompare(String(right.row.mediaId));
+}
+
+/** Top-Nth size when at least 20 files are on disk; undefined for smaller libraries. */
+function relativeLargeCutoff(fileCount: number, percent: number): number | undefined {
+  if (fileCount < 20) return undefined;
+  const db = requireDatabase();
+  const offset = Math.min(fileCount - 1, Math.floor(fileCount * percent / 100));
+  const row = db.prepare(`
+    SELECT media_files.size_bytes AS sizeBytes
+    FROM media_files JOIN sources ON sources.source_id = media_files.source_id
+    WHERE media_files.available = 1 AND sources.available = 1
+    ORDER BY media_files.size_bytes DESC, media_files.media_id ASC
+    LIMIT 1 OFFSET ?
+  `).get(offset) as { sizeBytes?: number } | undefined;
+  return row?.sizeBytes === undefined ? undefined : Number(row.sizeBytes);
+}
+
+function setCleanupState(input: LocalCleanupStateInput, nowMs: number, keepDays: number, snoozeDays: number): boolean {
+  const db = requireDatabase();
+  if (!isOpaqueMediaId(input.mediaId)) throw new LocalWorkerError("invalid-input", "mediaId 格式无效");
+  if (!isCleanupState(input.state)) throw new LocalWorkerError("invalid-input", "清理状态无效");
+  const media = db.prepare("SELECT media_files.media_id AS mediaId, media_files.added_at AS addedAtMs FROM media_files WHERE media_id = ?").get(input.mediaId) as { mediaId?: string; addedAtMs?: number } | undefined;
+  if (!media?.mediaId) throw new LocalWorkerError("invalid-input", "媒体不存在");
+  const until = input.state === "keep"
+    ? nowMs + Math.max(1, Math.trunc(keepDays)) * DAY_MS
+    : input.state === "snooze"
+      ? nowMs + Math.max(1, Math.trunc(snoozeDays)) * DAY_MS
+      : null;
+  // The cleanup mark lives on media_history, which is created on demand. A mark
+  // is not a viewing session, so zero counters never render as a "record".
+  db.prepare(`
+    INSERT INTO media_history (media_id, first_seen_at, last_opened_at, cleanup_state, cleanup_until, updated_at)
+    VALUES (?, ?, 0, ?, ?, ?)
+    ON CONFLICT(media_id) DO UPDATE SET cleanup_state = excluded.cleanup_state, cleanup_until = excluded.cleanup_until, updated_at = excluded.updated_at
+  `).run(input.mediaId, Number(media.addedAtMs ?? nowMs), input.state, until, nowMs);
+  return true;
 }
 
 function finiteNonNegative(value: unknown, fallback = 0): number {
@@ -2006,6 +2232,8 @@ async function handle(request: WorkerRequest): Promise<unknown> {
   }
   if (request.command === "finish-viewing-session") return finishViewingSession(request.session);
   if (request.command === "get-viewing-history") return getViewingHistory(request.mediaId);
+  if (request.command === "list-cleanup-queue") return listCleanupQueue(request.query, request.settings, request.nowMs);
+  if (request.command === "set-cleanup-state") return setCleanupState(request.input, request.nowMs, request.keepDays, request.snoozeDays);
   throw new LocalWorkerError("unknown", "未知本地片库命令");
 }
 

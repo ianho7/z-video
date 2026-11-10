@@ -20,6 +20,7 @@ import { card, collectionAsMediaItem, collectionCard } from "./views/all.js";
 import { renderSources } from "./views/sources.js";
 import { episodeRows, renderMovieFileInfo, renderSeasonTabs, renderViewingRecord } from "./views/detail.js";
 import { renderContinueCards } from "./views/home.js";
+import { cleanupSettingsSummary, renderCleanupCandidate, renderCleanupDeleteItem } from "./views/cleanup.js";
 import { biscuitPath, wavePath } from "./shapes.js";
 import type {
   LocalArtworkReference,
@@ -37,6 +38,24 @@ import type {
   LocalScanResult,
 } from "../shared/local-library-contracts";
 import { isLocalLibrarySort } from "../shared/app-preferences-contracts.js";
+import {
+  CLEANUP_PRESET_LABELS,
+  CLEANUP_RULE_LABELS,
+  CLEANUP_RULE_ORDER,
+  CLEANUP_STATE_LABELS,
+  CLEANUP_THRESHOLD_FIELDS,
+  defaultCleanupSettings,
+  parseCleanupSettings,
+  resolveCleanupPreset,
+  type CleanupPreset,
+  type CleanupRuleId,
+  type CleanupRuleToggles,
+  type CleanupSettings,
+  type CleanupState,
+  type CleanupThresholds,
+  type LocalCleanupQueue,
+  type LocalCleanupQueueQuery,
+} from "../shared/cleanup-contracts.js";
 import type { LocalPlaybackEvent } from "../shared/local-playback-contracts";
 
 const PAGE_SIZE = 24;
@@ -172,6 +191,28 @@ const offlineDialogCopy = document.querySelector<HTMLElement>("#offline-source-c
 const offlineDialogError = document.querySelector<HTMLElement>("#offline-source-error");
 const offlineKeepButton = document.querySelector<HTMLButtonElement>("#offline-source-keep");
 const offlineDeleteButton = document.querySelector<HTMLButtonElement>("#offline-source-delete");
+const cleanupEntry = document.querySelector<HTMLButtonElement>("#cleanup-entry");
+const cleanupSection = document.querySelector<HTMLElement>("#cleanup-section");
+const cleanupSummary = document.querySelector<HTMLElement>("#cleanup-summary");
+const cleanupMessage = document.querySelector<HTMLElement>("#cleanup-message");
+const cleanupCandidates = document.querySelector<HTMLElement>("#cleanup-candidates");
+const cleanupEmpty = document.querySelector<HTMLElement>("#cleanup-empty");
+const cleanupEmptyTitle = document.querySelector<HTMLElement>("#cleanup-empty-title");
+const cleanupEmptyMessage = document.querySelector<HTMLElement>("#cleanup-empty-message");
+const cleanupQueueBar = document.querySelector<HTMLElement>("#cleanup-queue-bar");
+const cleanupDeleteSummary = document.querySelector<HTMLElement>("#cleanup-delete-summary");
+const cleanupViewDelete = document.querySelector<HTMLButtonElement>("#cleanup-view-delete");
+const cleanupPagination = document.querySelector<HTMLElement>("#cleanup-pagination");
+const cleanupRuleFilters = document.querySelector<HTMLElement>("#cleanup-rule-filters");
+const cleanupStateFilters = document.querySelector<HTMLElement>("#cleanup-state-filters");
+const cleanupSettingsDialog = document.querySelector<HTMLDialogElement>("#cleanup-settings-dialog");
+const cleanupSettingsError = document.querySelector<HTMLElement>("#cleanup-settings-error");
+const cleanupSettingsPreview = document.querySelector<HTMLElement>("#cleanup-preview");
+const cleanupSettingsSummaryHost = document.querySelector<HTMLElement>("#cleanup-settings-summary");
+const cleanupDeleteDialog = document.querySelector<HTMLDialogElement>("#cleanup-delete-dialog");
+const cleanupDeleteDialogSummary = document.querySelector<HTMLElement>("#cleanup-delete-dialog-summary");
+const cleanupDeleteList = document.querySelector<HTMLElement>("#cleanup-delete-list");
+const cleanupDeleteMessage = document.querySelector<HTMLElement>("#cleanup-delete-message");
 let removingSourceId: string | undefined;
 let offlineSourceId: string | undefined;
 let sourceDialogBusy = false;
@@ -534,6 +575,9 @@ function captureSearchOrigin(): SearchOrigin {
 function showSearchView(): void {
   if (detail) detail.hidden = true;
   if (sidebar) sidebar.hidden = true;
+  if (cleanupSection) cleanupSection.hidden = true;
+  cleanupVisible = false;
+  cleanupRequestEpoch += 1;
   if (hero) hero.hidden = true;
   if (continueSection) continueSection.hidden = true;
   if (recentSection) recentSection.hidden = true;
@@ -1387,8 +1431,11 @@ function renderState(next: LocalLibraryState): void {
     if (continueSection) continueSection.hidden = true;
     if (recentSection) recentSection.hidden = true;
     if (showsSection) showsSection.hidden = true;
+    if (cleanupSection) cleanupSection.hidden = true;
+    cleanupVisible = false;
+    cleanupRequestEpoch += 1;
   }
-  if (collectionSection && !isDetailOrPlayerVisible()) collectionSection.hidden = next.status === "error" || homeVisible || searchActive;
+  if (collectionSection && !isDetailOrPlayerVisible() && !cleanupVisible) collectionSection.hidden = next.status === "error" || homeVisible || searchActive;
   renderSources(next, scanProgress, sourceList, { singleVideoSourceIds });
   renderSourceFilters();
   renderOfflineNotice();
@@ -1398,7 +1445,7 @@ function renderState(next: LocalLibraryState): void {
 function renderOfflineNotice(): void {
   if (!libraryOfflineNotice) return;
   const offline = state?.status !== "error" ? (state?.sources ?? []).filter((source) => !source.available) : [];
-  const visible = offline.length > 0 && !homeVisible && !isDetailOrPlayerVisible();
+  const visible = offline.length > 0 && !homeVisible && !isDetailOrPlayerVisible() && !cleanupVisible;
   libraryOfflineNotice.hidden = !visible;
   if (!visible) return;
   if (libraryOfflineText) {
@@ -1771,7 +1818,7 @@ function scheduleScanRefresh(): void {
 }
 
 async function loadLibrary(): Promise<boolean> {
-  if (isDetailOrPlayerVisible() || searchActive) {
+  if (isDetailOrPlayerVisible() || searchActive || cleanupVisible) {
     scanRefreshQueued = true;
     return false;
   }
@@ -1853,6 +1900,444 @@ async function loadContinueWatching(): Promise<void> {
   } catch {
     if (epoch === continueEpoch) renderContinue([]);
   }
+}
+
+/* A2 · cleanup view -------------------------------------------------------- */
+
+let cleanupVisible = false;
+let cleanupSettings: CleanupSettings = defaultCleanupSettings();
+let cleanupQueue: LocalCleanupQueue | undefined;
+let cleanupQuery: LocalCleanupQueueQuery = { page: 1, pageSize: 50, rule: "all", state: "none" };
+let cleanupSettingsDraft: CleanupSettings | undefined;
+let cleanupRequestEpoch = 0;
+let cleanupBusy = false;
+
+function cleanupRuleText(rule: CleanupRuleId): string {
+  return `${rule} · ${CLEANUP_RULE_LABELS[rule]}`;
+}
+
+function renderCleanupFilters(): void {
+  const rule = cleanupQuery.rule ?? "all";
+  const state = cleanupQuery.state ?? "none";
+  if (cleanupRuleFilters) {
+    const buttons: HTMLButtonElement[] = [];
+    const makeRule = (value: "all" | CleanupRuleId, label: string) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.cleanupRule = value;
+      button.setAttribute("aria-pressed", String(rule === value));
+      button.textContent = label;
+      buttons.push(button);
+    };
+    makeRule("all", "全部规则");
+    for (const ruleId of CLEANUP_RULE_ORDER) makeRule(ruleId, cleanupRuleText(ruleId));
+    cleanupRuleFilters.replaceChildren(...buttons);
+  }
+  if (cleanupStateFilters) {
+    const states: CleanupState[] = ["none", "keep", "snooze", "delete-candidate"];
+    cleanupStateFilters.replaceChildren(...states.map((value) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.cleanupState = value;
+      button.setAttribute("aria-pressed", String(state === value));
+      button.textContent = value === "none" ? "待整理" : CLEANUP_STATE_LABELS[value];
+      return button;
+    }));
+  }
+}
+
+function setCleanupQuery(patch: Partial<LocalCleanupQueueQuery>): void {
+  cleanupQuery = { ...cleanupQuery, ...patch, page: patch.page ?? 1 };
+  renderCleanupFilters();
+  void loadCleanupQueue();
+}
+
+function renderCleanupPagination(queue: LocalCleanupQueue): void {
+  if (!cleanupPagination) return;
+  cleanupPagination.replaceChildren();
+  const totalPages = Math.max(1, Math.ceil(queue.totalCount / queue.query.pageSize));
+  cleanupPagination.hidden = totalPages <= 1;
+  if (totalPages <= 1) return;
+  const add = (label: string, target: number, disabled: boolean, ariaLabel?: string) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.cleanupPage = String(target);
+    button.textContent = label;
+    button.disabled = disabled;
+    if (ariaLabel) button.setAttribute("aria-label", ariaLabel);
+    cleanupPagination?.append(button);
+  };
+  add("上一页", queue.query.page - 1, queue.query.page <= 1, "上一页");
+  const status = document.createElement("span");
+  status.className = "page-status";
+  status.textContent = `第 ${queue.query.page} / ${totalPages} 页`;
+  cleanupPagination.append(status);
+  add("下一页", queue.query.page + 1, queue.query.page >= totalPages, "下一页");
+}
+
+function renderCleanupQueue(queue: LocalCleanupQueue): void {
+  cleanupQueue = queue;
+  const active = (queue.query.state ?? "none") === "none";
+  if (cleanupSummary) {
+    cleanupSummary.textContent = active
+      ? `候选 ${queue.totalCount} 部 · 约 ${formatBytes(queue.totalBytes)}`
+      : `${CLEANUP_STATE_LABELS[queue.query.state ?? "none"]} ${queue.totalCount} 部 · 约 ${formatBytes(queue.totalBytes)}`;
+  }
+  if (cleanupMessage) {
+    cleanupMessage.textContent = active
+      ? "按 C → D → A → B → E 排序，同规则按可释放空间从大到小；每条候选都写出命中的规则和当前阈值。"
+      : "这些是你手动标记过的文件；可以撤销标记让它重新进入待整理。";
+  }
+  if (cleanupCandidates) {
+    cleanupCandidates.replaceChildren(...queue.candidates.map((candidate) => renderCleanupCandidate({
+      candidate,
+      settings: cleanupSettings,
+      nowMs: queue.nowMs,
+      ...(queue.relativeLargeBytes === undefined ? {} : { relativeLargeBytes: queue.relativeLargeBytes }),
+      artworkReady: true,
+    })));
+    cleanupCandidates.querySelectorAll<HTMLElement>("[data-artwork-media-id]").forEach((element) => enqueueArtwork(element, 1));
+  }
+  if (cleanupEmpty) {
+    cleanupEmpty.hidden = queue.totalCount > 0;
+    if (cleanupEmptyTitle) {
+      cleanupEmptyTitle.textContent = active ? "当前没有候选" : `没有“${CLEANUP_STATE_LABELS[queue.query.state ?? "none"]}”标记`;
+    }
+    if (cleanupEmptyMessage) {
+      cleanupEmptyMessage.textContent = active
+        ? "当前规则和阈值下没有需要整理的文件。可以打开“规则”调整预设或阈值，或返回片库继续浏览。"
+        : "标记过的文件会留在这里；撤销标记后它会重新进入待整理。";
+    }
+  }
+  if (cleanupQueueBar) cleanupQueueBar.hidden = false;
+  if (cleanupDeleteSummary) cleanupDeleteSummary.textContent = `待删清单 ${queue.deleteCount} 项 · ${formatBytes(queue.deleteBytes)}`;
+  if (cleanupViewDelete) cleanupViewDelete.disabled = queue.deleteCount === 0;
+  renderCleanupPagination(queue);
+}
+
+async function loadCleanupQueue(): Promise<void> {
+  if (!cleanupVisible) return;
+  const epoch = ++cleanupRequestEpoch;
+  if (cleanupMessage) cleanupMessage.textContent = "正在读取整理候选…";
+  try {
+    const result = await window.zVideo.localLibrary.getCleanupQueue(cleanupQuery);
+    if (epoch !== cleanupRequestEpoch || !cleanupVisible) return;
+    renderCleanupQueue(result.queue);
+  } catch (error) {
+    if (epoch !== cleanupRequestEpoch) return;
+    if (cleanupMessage) cleanupMessage.textContent = error instanceof Error ? error.message : "整理候选读取失败，请重试。";
+    cleanupCandidates?.replaceChildren();
+    if (cleanupEmpty) cleanupEmpty.hidden = true;
+    if (cleanupQueueBar) cleanupQueueBar.hidden = true;
+    if (cleanupPagination) cleanupPagination.hidden = true;
+  }
+}
+
+async function showCleanup(): Promise<void> {
+  if (searchActive) exitSearchState();
+  cleanupVisible = true;
+  requestEpoch += 1;
+  if (cleanupSection) cleanupSection.hidden = false;
+  if (collectionSection) collectionSection.hidden = true;
+  if (detail) detail.hidden = true;
+  if (sidebar) sidebar.hidden = true;
+  if (searchSection) searchSection.hidden = true;
+  if (onboarding) onboarding.hidden = true;
+  if (hero) hero.hidden = true;
+  if (recentSection) recentSection.hidden = true;
+  if (showsSection) showsSection.hidden = true;
+  if (continueSection) continueSection.hidden = true;
+  if (libraryEmpty) libraryEmpty.hidden = true;
+  if (libraryPagination) libraryPagination.hidden = true;
+  if (libraryOfflineNotice) libraryOfflineNotice.hidden = true;
+  cleanupQuery = { page: 1, pageSize: 50, rule: "all", state: "none" };
+  renderCleanupFilters();
+  updateScanUi();
+  try {
+    const preferences = await window.zVideo.appPreferences.get();
+    cleanupSettings = preferences.cleanup;
+  } catch {
+    cleanupSettings = defaultCleanupSettings();
+  }
+  if (!cleanupVisible) return;
+  await loadCleanupQueue();
+  document.querySelector<HTMLElement>("#cleanup-title")?.focus({ preventScroll: true });
+}
+
+function hideCleanup(returnFocus = true): void {
+  if (!cleanupVisible) return;
+  cleanupVisible = false;
+  cleanupRequestEpoch += 1;
+  cleanupQueue = undefined;
+  if (cleanupSection) cleanupSection.hidden = true;
+  if (collectionSection) collectionSection.hidden = homeVisible;
+  renderOfflineNotice();
+  updateScanUi();
+  void loadLibrary();
+  void loadContinueWatching();
+  if (homeVisible) void loadHomeShelves();
+  if (returnFocus) cleanupEntry?.focus({ preventScroll: true });
+}
+
+async function setCleanupMark(mediaId: string, state: CleanupState): Promise<void> {
+  if (cleanupBusy) return;
+  cleanupBusy = true;
+  if (cleanupMessage) cleanupMessage.textContent = "正在更新标记…";
+  try {
+    await window.zVideo.localLibrary.setCleanupState({ mediaId: mediaId as `media_${string}`, state });
+    const notice = state === "keep"
+      ? `已标记保留；${cleanupSettings.keepDays} 天内不会再出现在候选里。`
+      : state === "snooze"
+        ? `已标记稍后；${cleanupSettings.snoozeDays} 天内不再出现。`
+        : state === "delete-candidate"
+          ? "已加入待删清单。应用不会删除文件，请在资源管理器中确认后手动删除。"
+          : "已移回候选。";
+    await loadCleanupQueue();
+    if (cleanupMessage) cleanupMessage.textContent = notice;
+    if (cleanupDeleteDialog?.open) renderCleanupDeleteDialog();
+  } catch (error) {
+    if (cleanupMessage) cleanupMessage.textContent = error instanceof Error ? error.message : "标记失败，请重试。";
+  } finally {
+    cleanupBusy = false;
+  }
+}
+
+function cleanupFieldDisplay(field: (typeof CLEANUP_THRESHOLD_FIELDS)[number], value: number): string {
+  if (field.displayScale === 1) return String(value);
+  const display = value * field.displayScale;
+  return String(Math.round(display * 10) / 10);
+}
+
+function prepareCleanupDraft(settings: CleanupSettings): void {
+  cleanupSettingsDraft = {
+    preset: settings.preset,
+    thresholds: { ...settings.thresholds },
+    rules: { ...settings.rules },
+    snoozeDays: settings.snoozeDays,
+    keepDays: settings.keepDays,
+  };
+}
+
+function syncCleanupSettingsSummary(): void {
+  const draft = cleanupSettingsDraft;
+  if (!draft) return;
+  document.querySelectorAll<HTMLButtonElement>("#cleanup-preset-buttons [data-cleanup-preset]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.cleanupPreset === draft.preset));
+  });
+  if (cleanupSettingsSummaryHost) cleanupSettingsSummaryHost.textContent = `${CLEANUP_PRESET_LABELS[draft.preset]}预设 · ${cleanupSettingsSummary(draft)}`;
+  if (cleanupSettingsPreview) cleanupSettingsPreview.textContent = `保存后按当前设置重新计算候选：${cleanupSettingsSummary(draft)}。`;
+}
+
+function renderCleanupSettingsForm(): void {
+  const draft = cleanupSettingsDraft;
+  if (!draft) return;
+  const presetHost = document.querySelector<HTMLElement>("#cleanup-preset-buttons");
+  if (presetHost) {
+    const presets: Array<Exclude<CleanupPreset, "custom">> = ["conservative", "standard", "aggressive"];
+    presetHost.replaceChildren(...presets.map((preset) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.cleanupPreset = preset;
+      button.setAttribute("aria-pressed", String(draft.preset === preset));
+      button.textContent = CLEANUP_PRESET_LABELS[preset];
+      return button;
+    }));
+  }
+  const toggleHost = document.querySelector<HTMLElement>("#cleanup-rule-toggles");
+  if (toggleHost) {
+    toggleHost.replaceChildren(...(["A", "B", "C", "D", "E"] as const).map((rule) => {
+      const label = document.createElement("label");
+      label.className = "cleanup-toggle";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.dataset.cleanupToggle = rule;
+      input.checked = draft.rules[rule];
+      const text = document.createElement("span");
+      text.textContent = `${rule} · ${CLEANUP_RULE_LABELS[rule]}`;
+      label.append(input, text);
+      return label;
+    }));
+  }
+  const thresholdHost = document.querySelector<HTMLElement>("#cleanup-threshold-fields");
+  if (thresholdHost) {
+    thresholdHost.replaceChildren(...CLEANUP_THRESHOLD_FIELDS.map((field) => {
+      const wrapper = document.createElement("div");
+      wrapper.className = "cleanup-field";
+      const label = document.createElement("label");
+      label.htmlFor = `cleanup-threshold-${field.key}`;
+      label.textContent = field.label;
+      const control = document.createElement("div");
+      control.className = "cleanup-field-control";
+      const input = document.createElement("input");
+      input.id = `cleanup-threshold-${field.key}`;
+      input.type = "number";
+      input.inputMode = "decimal";
+      input.min = String(field.min);
+      input.max = String(field.max);
+      input.step = String(field.step);
+      input.value = cleanupFieldDisplay(field, draft.thresholds[field.key]);
+      input.dataset.cleanupThreshold = field.key;
+      input.dataset.cleanupScale = String(field.displayScale);
+      const unit = document.createElement("span");
+      unit.className = "cleanup-field-unit";
+      unit.textContent = field.unit;
+      control.append(input, unit);
+      wrapper.append(label, control);
+      return wrapper;
+    }));
+  }
+  const dayHost = document.querySelector<HTMLElement>("#cleanup-day-fields");
+  if (dayHost) {
+    dayHost.replaceChildren(...([
+      { key: "snooze", label: "稍后默认天数", value: draft.snoozeDays },
+      { key: "keep", label: "保留默认天数", value: draft.keepDays },
+    ] as const).map((field) => {
+      const wrapper = document.createElement("div");
+      wrapper.className = "cleanup-field";
+      const label = document.createElement("label");
+      label.htmlFor = `cleanup-days-${field.key}`;
+      label.textContent = field.label;
+      const control = document.createElement("div");
+      control.className = "cleanup-field-control";
+      const input = document.createElement("input");
+      input.id = `cleanup-days-${field.key}`;
+      input.type = "number";
+      input.inputMode = "numeric";
+      input.min = "1";
+      input.max = "3650";
+      input.step = "1";
+      input.value = String(field.value);
+      input.dataset.cleanupDays = field.key;
+      const unit = document.createElement("span");
+      unit.className = "cleanup-field-unit";
+      unit.textContent = "天";
+      control.append(input, unit);
+      wrapper.append(label, control);
+      return wrapper;
+    }));
+  }
+  syncCleanupSettingsSummary();
+}
+
+function openCleanupSettings(): void {
+  if (!cleanupSettingsDialog || cleanupSettingsDialog.open) return;
+  prepareCleanupDraft(cleanupSettings);
+  if (cleanupSettingsError) {
+    cleanupSettingsError.textContent = "";
+    cleanupSettingsError.hidden = true;
+  }
+  renderCleanupSettingsForm();
+  cleanupSettingsDialog.showModal();
+  document.querySelector<HTMLButtonElement>("#cleanup-settings-close")?.focus();
+}
+
+function applyCleanupDraftPreset(preset: Exclude<CleanupPreset, "custom">): void {
+  const draft = cleanupSettingsDraft;
+  if (!draft) return;
+  cleanupSettingsDraft = { ...draft, preset, thresholds: resolveCleanupPreset(preset) };
+  renderCleanupSettingsForm();
+}
+
+function applyCleanupDraftInputs(): void {
+  const draft = cleanupSettingsDraft;
+  if (!draft) return;
+  const next: CleanupSettings = {
+    preset: draft.preset,
+    thresholds: { ...draft.thresholds },
+    rules: { ...draft.rules },
+    snoozeDays: draft.snoozeDays,
+    keepDays: draft.keepDays,
+  };
+  document.querySelectorAll<HTMLInputElement>("#cleanup-threshold-fields input[data-cleanup-threshold]").forEach((input) => {
+    const key = input.dataset.cleanupThreshold as keyof CleanupThresholds | undefined;
+    const scale = Number(input.dataset.cleanupScale ?? "1");
+    const display = Number(input.value);
+    if (!key || !(key in next.thresholds) || !Number.isFinite(scale) || scale <= 0 || !Number.isFinite(display)) return;
+    next.thresholds[key] = Math.round(display / scale);
+    if (next.thresholds[key] !== draft.thresholds[key]) next.preset = "custom";
+  });
+  document.querySelectorAll<HTMLInputElement>("#cleanup-day-fields input[data-cleanup-days]").forEach((input) => {
+    const days = Number(input.value);
+    if (!Number.isInteger(days)) return;
+    if (input.dataset.cleanupDays === "snooze") next.snoozeDays = days;
+    else next.keepDays = days;
+  });
+  document.querySelectorAll<HTMLInputElement>("#cleanup-rule-toggles input[data-cleanup-toggle]").forEach((input) => {
+    const rule = input.dataset.cleanupToggle as keyof CleanupRuleToggles | undefined;
+    if (rule && rule in next.rules) next.rules[rule] = input.checked;
+  });
+  cleanupSettingsDraft = next;
+  syncCleanupSettingsSummary();
+}
+
+async function saveCleanupSettings(): Promise<void> {
+  if (!cleanupSettingsDraft) return;
+  applyCleanupDraftInputs();
+  const draft = cleanupSettingsDraft;
+  if (!draft) return;
+  if (cleanupSettingsError) {
+    cleanupSettingsError.textContent = "";
+    cleanupSettingsError.hidden = true;
+  }
+  try {
+    const settings = parseCleanupSettings(draft);
+    const preferences = await window.zVideo.appPreferences.setCleanup(settings);
+    cleanupSettings = preferences.cleanup;
+    cleanupSettingsDialog?.close();
+    await loadCleanupQueue();
+    if (cleanupMessage) cleanupMessage.textContent = "整理规则已保存；候选已按新阈值重新计算。";
+  } catch (error) {
+    if (cleanupSettingsError) {
+      cleanupSettingsError.textContent = error instanceof Error ? error.message : "整理规则保存失败，请检查阈值。";
+      cleanupSettingsError.hidden = false;
+    }
+  }
+}
+
+function renderCleanupDeleteDialog(): void {
+  const queue = cleanupQueue;
+  if (!cleanupDeleteList) return;
+  if (cleanupDeleteDialogSummary) {
+    cleanupDeleteDialogSummary.textContent = queue
+      ? `${queue.deleteCount} 项 · ${formatBytes(queue.deleteBytes)}。删除后重新扫描，观看记录会一起消失。`
+      : "";
+  }
+  cleanupDeleteList.replaceChildren();
+  if (!queue || queue.deleteCount === 0) {
+    const empty = document.createElement("li");
+    empty.className = "cleanup-delete-empty";
+    empty.textContent = "待删清单为空。在候选卡上点“待删”会把文件加入清单。";
+    cleanupDeleteList.append(empty);
+    return;
+  }
+  cleanupDeleteList.append(...queue.deleteQueue.map(renderCleanupDeleteItem));
+}
+
+function openCleanupDeleteDialog(): void {
+  if (!cleanupDeleteDialog || cleanupDeleteDialog.open) return;
+  if (cleanupDeleteMessage) cleanupDeleteMessage.textContent = "";
+  renderCleanupDeleteDialog();
+  cleanupDeleteDialog.showModal();
+  document.querySelector<HTMLButtonElement>("#cleanup-delete-close")?.focus();
+}
+
+async function revealCleanupMedia(mediaId: string): Promise<void> {
+  const host = cleanupDeleteMessage ?? cleanupMessage;
+  try {
+    const result = await window.zVideo.localLibrary.revealCleanupMedia(mediaId);
+    if (host) host.textContent = result.revealed ? "已在资源管理器中定位文件；应用没有删除它。" : "无法定位文件，可能已移动、删除或来源离线。";
+  } catch (error) {
+    if (host) host.textContent = error instanceof Error ? error.message : "无法在资源管理器中定位文件。";
+  }
+}
+
+function cleanupCardAction(element: HTMLElement): void {
+  const card = element.closest<HTMLElement>("[data-cleanup-media-id]");
+  const action = element.dataset.cleanupAction as "keep" | "snooze" | "delete" | "none" | undefined;
+  const mediaId = card?.dataset.cleanupMediaId;
+  if (!mediaId || !action) return;
+  const state: CleanupState = action === "delete" ? "delete-candidate" : action;
+  void setCleanupMark(mediaId, state);
 }
 
 function syncQueryControls(): void {
@@ -2591,7 +3076,7 @@ function updateScanUi(): void {
       if (scanStatusText.textContent !== text) scanStatusText.textContent = text;
     }
   }
-  const showCard = Boolean(running && homeVisible && !searchActive && !isDetailOrPlayerVisible());
+  const showCard = Boolean(running && homeVisible && !searchActive && !cleanupVisible && !isDetailOrPlayerVisible());
   if (homeScanCard) homeScanCard.hidden = !showCard;
   onboarding?.classList.toggle("is-compact", showCard);
   if (showCard && scanProgress) {
@@ -2675,6 +3160,11 @@ function renderScanResult(result: LocalScanResult): void {
 
 function navigateHomeOrLibrary(target: string): void {
   if (searchActive) exitSearchState();
+  if (cleanupVisible) {
+    cleanupVisible = false;
+    cleanupRequestEpoch += 1;
+    if (cleanupSection) cleanupSection.hidden = true;
+  }
   requestEpoch += 1;
   homeVisible = target === "home";
   if (detail) detail.hidden = true;
@@ -2700,6 +3190,11 @@ document.querySelectorAll<HTMLButtonElement>("[data-nav]").forEach((button) => b
 document.querySelectorAll<HTMLButtonElement>("[data-shelf]").forEach((button) => button.addEventListener("click", () => navigateHomeOrLibrary(button.dataset.shelf ?? "all")));
 function showSources(): void {
   if (searchActive) exitSearchState();
+  if (cleanupVisible) {
+    cleanupVisible = false;
+    cleanupRequestEpoch += 1;
+    if (cleanupSection) cleanupSection.hidden = true;
+  }
   requestEpoch += 1;
   homeVisible = false;
   if (detail) detail.hidden = true;
@@ -2846,6 +3341,8 @@ document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   if (removeDialog?.open) { event.preventDefault(); removeDialog.close(); }
   else if (offlineDialog?.open) { event.preventDefault(); offlineDialog.close(); }
+  else if (cleanupSettingsDialog?.open || cleanupDeleteDialog?.open) { /* the native dialog consumes Escape */ }
+  else if (cleanupVisible) { event.preventDefault(); hideCleanup(); }
 });
 libraryGrid?.addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-media-id]");
@@ -3006,6 +3503,62 @@ libraryPagination?.addEventListener("submit", (event) => {
 });
 libraryPagination?.addEventListener("input", (event) => {
   if ((event.target as HTMLElement).id === "pagination-jump-input") showPaginationJumpError(undefined);
+});
+/* A2 · cleanup view wiring. */
+cleanupEntry?.addEventListener("click", () => { void showCleanup(); });
+document.querySelector<HTMLButtonElement>("#cleanup-back")?.addEventListener("click", () => hideCleanup());
+cleanupRuleFilters?.addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-cleanup-rule]");
+  const rule = button?.dataset.cleanupRule as "all" | CleanupRuleId | undefined;
+  if (rule) setCleanupQuery({ rule });
+});
+cleanupStateFilters?.addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-cleanup-state]");
+  const state = button?.dataset.cleanupState as CleanupState | undefined;
+  if (state) setCleanupQuery({ state });
+});
+cleanupCandidates?.addEventListener("click", (event) => {
+  const target = (event.target as HTMLElement).closest<HTMLElement>("[data-cleanup-action]");
+  if (target) cleanupCardAction(target);
+});
+cleanupPagination?.addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-cleanup-page]");
+  const page = Number(button?.dataset.cleanupPage);
+  if (!button || button.disabled || !Number.isInteger(page) || page < 1) return;
+  setCleanupQuery({ page });
+});
+document.querySelector<HTMLButtonElement>("#cleanup-settings-button")?.addEventListener("click", openCleanupSettings);
+document.querySelector<HTMLButtonElement>("#cleanup-settings-close")?.addEventListener("click", () => cleanupSettingsDialog?.close());
+document.querySelector<HTMLButtonElement>("#cleanup-settings-cancel")?.addEventListener("click", () => cleanupSettingsDialog?.close());
+document.querySelector<HTMLElement>("#cleanup-preset-buttons")?.addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-cleanup-preset]");
+  const preset = button?.dataset.cleanupPreset;
+  if (preset === "conservative" || preset === "standard" || preset === "aggressive") applyCleanupDraftPreset(preset);
+});
+cleanupSettingsDialog?.addEventListener("input", applyCleanupDraftInputs);
+cleanupSettingsDialog?.addEventListener("change", applyCleanupDraftInputs);
+cleanupSettingsDialog?.addEventListener("close", () => {
+  cleanupSettingsDraft = undefined;
+  if (cleanupSettingsError) {
+    cleanupSettingsError.textContent = "";
+    cleanupSettingsError.hidden = true;
+  }
+});
+document.querySelector<HTMLButtonElement>("#cleanup-settings-defaults")?.addEventListener("click", () => {
+  prepareCleanupDraft(defaultCleanupSettings());
+  renderCleanupSettingsForm();
+});
+document.querySelector<HTMLButtonElement>("#cleanup-settings-save")?.addEventListener("click", () => { void saveCleanupSettings(); });
+cleanupViewDelete?.addEventListener("click", openCleanupDeleteDialog);
+document.querySelector<HTMLButtonElement>("#cleanup-delete-close")?.addEventListener("click", () => cleanupDeleteDialog?.close());
+cleanupDeleteDialog?.addEventListener("close", () => {
+  if (cleanupDeleteMessage) cleanupDeleteMessage.textContent = "";
+});
+cleanupDeleteList?.addEventListener("click", (event) => {
+  const target = (event.target as HTMLElement).closest<HTMLElement>("[data-cleanup-reveal], [data-cleanup-unmark]");
+  if (!target) return;
+  if (target.dataset.cleanupReveal) void revealCleanupMedia(target.dataset.cleanupReveal);
+  else if (target.dataset.cleanupUnmark) void setCleanupMark(target.dataset.cleanupUnmark, "none");
 });
 window.zVideo.localLibrary.onState(renderState);
 window.zVideo.localLibrary.onScanProgress(renderScanProgress);

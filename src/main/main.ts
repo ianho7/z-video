@@ -36,7 +36,7 @@ function createLocalWindow(): void {
   if (!appPreferences) throw new Error("应用设置尚未启动");
   localPlayback = new MainLocalPlaybackHost(window, localLibrary as unknown as LocalPlaybackStore, undefined, appPreferences);
   if (!localArtworkCache) throw new Error("本地 artwork cache 尚未启动");
-  unregisterLocalLibraryIpc = registerLocalLibraryIpcHandlers(localLibrary, window, localArtworkCache);
+  unregisterLocalLibraryIpc = registerLocalLibraryIpcHandlers(localLibrary, window, localArtworkCache, appPreferences);
   unregisterLocalPlaybackIpc = registerLocalPlaybackIpcHandlers(localPlayback);
   unregisterAppPreferencesIpc = registerAppPreferencesIpcHandlers(appPreferences);
   attachWindowLifecycle(window);

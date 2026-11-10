@@ -632,3 +632,78 @@ button:not(:disabled):active, summary:active, .media-card-button:active .media-p
   #player-volume { width: 64px; }
   .player-settings { width: min(520px, calc(100vw - 44px)); }
 }
+
+/* A2 · cleanup view: current-file candidates, rule reasons and delete list. */
+.cleanup-entry { flex: none; }
+.cleanup-section { display: block; max-width: 1100px; margin: 0 auto; padding-bottom: 12px; }
+.cleanup-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; flex-wrap: wrap; margin: 8px 0 4px; }
+.cleanup-heading h1 { margin: 6px 0 2px; font-size: clamp(30px, 4vw, 40px); font-weight: 900; letter-spacing: -.03em; }
+.cleanup-heading h1:focus { outline: none; }
+.cleanup-heading h1:focus-visible { outline: 3px solid var(--lavender); outline-offset: 4px; }
+.cleanup-heading-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.cleanup-summary { margin: 4px 0 0; color: var(--text); font: 900 18px var(--font-ui); }
+.cleanup-note { max-width: 72ch; margin: 6px 0 0; color: var(--text-muted); font-size: 12px; line-height: 1.6; }
+.cleanup-filters { display: grid; gap: 8px; margin: 18px 0 10px; }
+.cleanup-filters .segmented-control { flex-wrap: wrap; }
+.cleanup-message { min-height: 20px; margin: 0 0 10px; color: var(--text-muted); font-size: 12px; }
+.cleanup-candidates { display: grid; gap: 10px; }
+.cleanup-card { display: grid; grid-template-columns: 86px minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 14px 16px; border-radius: var(--r-card); background: var(--surface); }
+.cleanup-card[data-cleanup-state="keep"] { background: color-mix(in srgb, var(--mint-deep) 46%, var(--surface)); }
+.cleanup-card[data-cleanup-state="snooze"] { background: color-mix(in srgb, var(--warning-on) 32%, var(--surface)); }
+.cleanup-card[data-cleanup-state="delete-candidate"] { background: color-mix(in srgb, var(--error-surface) 52%, var(--surface)); }
+.cleanup-card-poster { display: grid; width: 86px; aspect-ratio: 2 / 3; place-items: center; overflow: hidden; border-radius: 14px; background: var(--tone-container, var(--surface-2)); color: var(--tone-on, var(--text)); font-size: 20px; font-weight: 900; }
+.cleanup-card-poster img { width: 100%; height: 100%; object-fit: cover; }
+.cleanup-card-copy { display: grid; gap: 3px; min-width: 0; }
+.cleanup-card-title { overflow-wrap: anywhere; font-size: 15px; font-weight: 800; }
+.cleanup-card-size { color: var(--text-muted); font-size: 12px; }
+.cleanup-card-rule { color: var(--lavender); font-size: 12px; font-weight: 800; }
+.cleanup-state-chip { display: inline-block; margin-left: 4px; padding: 2px 8px; border-radius: 999px; color: var(--text); background: var(--surface-2); font-size: 11px; }
+.cleanup-state-keep { color: var(--mint); }
+.cleanup-state-snooze { color: var(--warning); }
+.cleanup-state-delete-candidate { color: var(--error); }
+.cleanup-card-reason { margin: 2px 0 0; color: var(--text-muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.cleanup-card-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.cleanup-card-actions button { min-height: 40px; padding-inline: 13px; border-radius: var(--r-pill); font-size: 13px; }
+.cleanup-delete-button { color: var(--error); }
+.cleanup-queue-bar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 18px; padding: 14px 18px; border-radius: 22px; background: var(--surface-2); }
+.cleanup-queue-bar p { margin: 0; font: 800 14px var(--font-ui); }
+.cleanup-queue-bar .secondary-button { flex: none; }
+.cleanup-delete-list { display: grid; gap: 8px; max-height: 46vh; margin: 16px 0 0; padding: 0; overflow: auto; list-style: none; }
+.cleanup-delete-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-radius: 16px; background: var(--surface); }
+.cleanup-delete-copy { display: grid; min-width: 0; gap: 3px; }
+.cleanup-delete-copy strong { overflow-wrap: anywhere; font-size: 14px; }
+.cleanup-delete-copy span { color: var(--text-muted); font-size: 12px; }
+.cleanup-delete-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.cleanup-delete-actions button { min-height: 40px; padding-inline: 12px; border-radius: var(--r-pill); font-size: 12px; }
+.cleanup-delete-note { margin: 16px 0 0; color: var(--text-muted); font-size: 12px; line-height: 1.6; }
+dialog.cleanup-settings-dialog { width: min(760px, 94vw); max-height: calc(100vh - 48px); overflow: auto; padding: 26px 28px; }
+.cleanup-settings-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.cleanup-settings-head h2 { margin: 4px 0 0; font-size: 24px; font-weight: 900; }
+.cleanup-settings-head button { flex: none; }
+.cleanup-settings-body { display: grid; gap: 18px; margin-top: 18px; }
+.cleanup-setting-section h3 { margin: 0 0 8px; color: var(--text-muted); font-size: 12px; font-weight: 800; letter-spacing: .08em; }
+.cleanup-setting-note { margin: 8px 0 0; color: var(--text-muted); font-size: 12px; line-height: 1.6; }
+.cleanup-toggle-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+.cleanup-toggle { display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 0 12px; border-radius: 12px; background: var(--surface); font-size: 13px; }
+.cleanup-toggle input { width: 18px; height: 18px; accent-color: var(--lavender); }
+.cleanup-toggle span { min-width: 0; overflow-wrap: anywhere; }
+.cleanup-threshold-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+.cleanup-field { display: grid; gap: 4px; }
+.cleanup-field label { color: var(--text-muted); font-size: 12px; font-weight: 700; }
+.cleanup-field-control { display: flex; align-items: center; gap: 6px; }
+.cleanup-field input { width: 100%; min-height: 40px; padding: 0 10px; border: 1px solid var(--surface-2); border-radius: 10px; color: var(--text); background: var(--surface); font: 700 13px var(--font-ui); }
+.cleanup-field input:focus { outline: 2px solid var(--lavender); outline-offset: 1px; }
+.cleanup-field-unit { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
+.cleanup-preview { margin: 16px 0 0; padding: 10px 14px; border-radius: 14px; color: var(--text-muted); background: var(--surface); font-size: 12px; line-height: 1.6; }
+dialog.cleanup-delete-dialog { width: min(640px, 94vw); max-height: calc(100vh - 48px); overflow: auto; }
+.cleanup-delete-dialog #cleanup-delete-title { margin: 0 0 4px; }
+@media (max-width: 980px) {
+  .cleanup-card { grid-template-columns: 68px minmax(0, 1fr); }
+  .cleanup-card-actions { grid-column: 1 / -1; justify-content: flex-start; }
+  .cleanup-card-poster { width: 68px; }
+}
+@media (max-height: 700px) {
+  .cleanup-heading { align-items: flex-start; }
+  .cleanup-card { padding: 12px 14px; }
+  .cleanup-card-reason { font-size: 11px; }
+}

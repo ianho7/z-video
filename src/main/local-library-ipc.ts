@@ -1,4 +1,4 @@
-import { dialog, ipcMain, type BrowserWindow } from "electron";
+import { dialog, ipcMain, shell, type BrowserWindow } from "electron";
 import { dirname } from "node:path";
 
 import {
@@ -6,13 +6,20 @@ import {
   type LocalLibraryQuery,
   type LocalCollectionQuery,
 } from "../shared/local-library-contracts";
+import {
+  isCleanupRuleId,
+  isCleanupState,
+  type LocalCleanupQueueQuery,
+  type LocalCleanupStateInput,
+} from "../shared/cleanup-contracts";
 import { IPC_CHANNELS } from "../shared/ipc-channels";
 import { recordUiOperation } from "./diagnostics";
 import { localLibraryErrorCode, localLibraryErrorMessage } from "./local-library-errors";
 import { LocalLibraryDatabase } from "./local-library-database";
 import { LocalArtworkCache } from "./local-artwork-cache";
+import type { AppPreferencesStore } from "./app-preferences";
 
-export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, window: BrowserWindow, artworkCache: LocalArtworkCache): () => void {
+export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, window: BrowserWindow, artworkCache: LocalArtworkCache, preferences: AppPreferencesStore): () => void {
   const unsubscribe = database.onState((state) => {
     if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(IPC_CHANNELS.localLibraryState, state);
   });
@@ -90,6 +97,27 @@ export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, 
     if (!isScanId(value)) throw new Error("scanId 格式无效");
     return database.cancelScan(value);
   }));
+  ipcMain.handle(IPC_CHANNELS.localLibraryCleanupQueue, (_event, value: unknown) => withUiOperation("local-library.cleanup-queue", async () => {
+    const query = parseCleanupQuery(value);
+    const settings = preferences.get().cleanup;
+    const queue = await database.listCleanupQueue(query, settings);
+    return { state: database.getState(), queue };
+  }));
+  ipcMain.handle(IPC_CHANNELS.localLibraryCleanupSetState, (_event, value: unknown) => withUiOperation("local-library.cleanup-set-state", async () => {
+    const input = parseCleanupStateInput(value);
+    const settings = preferences.get().cleanup;
+    await database.setCleanupState(input, settings.keepDays, settings.snoozeDays);
+    const queue = await database.listCleanupQueue({ page: 1, pageSize: 50, rule: "all", state: "none" }, settings);
+    return { state: database.getState(), queue };
+  }));
+  ipcMain.handle(IPC_CHANNELS.localLibraryCleanupReveal, (_event, value: unknown) => withUiOperation("local-library.cleanup-reveal", async () => {
+    const mediaId = parseMediaId(value);
+    const filePath = await database.resolveMediaPath(mediaId);
+    if (!filePath) return { revealed: false };
+    // Main resolves the private path; the renderer only learns whether Explorer opened.
+    shell.showItemInFolder(filePath);
+    return { revealed: true };
+  }));
   return () => {
     unsubscribe();
     unsubscribeScan();
@@ -107,6 +135,9 @@ export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, 
       IPC_CHANNELS.localLibraryRescanAll,
       IPC_CHANNELS.localLibraryScan,
       IPC_CHANNELS.localLibraryCancelScan,
+      IPC_CHANNELS.localLibraryCleanupQueue,
+      IPC_CHANNELS.localLibraryCleanupSetState,
+      IPC_CHANNELS.localLibraryCleanupReveal,
     ]) ipcMain.removeHandler(channel);
   };
 }
@@ -164,6 +195,35 @@ function parseLocalCollectionQuery(value: unknown): LocalCollectionQuery {
 function parseMediaId(value: unknown): string {
   if (!isOpaqueMediaId(value)) throw new Error("mediaId 格式无效");
   return value;
+}
+
+function parseCleanupQuery(value: unknown): LocalCleanupQueueQuery {
+  if (value === undefined || value === null) return { page: 1, pageSize: 50, rule: "all", state: "none" };
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("整理查询参数格式无效");
+  const record = value as Record<string, unknown>;
+  const allowed = new Set(["page", "pageSize", "rule", "state"]);
+  if (Object.keys(record).some((key) => !allowed.has(key))) throw new Error("整理查询字段无效");
+  const page = record.page === undefined ? 1 : parseInteger(record.page, "页码");
+  const pageSize = record.pageSize === undefined ? 50 : parseInteger(record.pageSize, "分页大小");
+  if (page < 1 || pageSize < 1 || pageSize > 100) throw new Error("整理分页参数无效");
+  if (record.rule !== undefined && record.rule !== "all" && !isCleanupRuleId(record.rule)) throw new Error("整理规则筛选无效");
+  if (record.state !== undefined && !isCleanupState(record.state)) throw new Error("整理状态筛选无效");
+  return {
+    page,
+    pageSize,
+    rule: record.rule === undefined ? "all" : record.rule as LocalCleanupQueueQuery["rule"],
+    state: record.state === undefined ? "none" : record.state,
+  };
+}
+
+function parseCleanupStateInput(value: unknown): LocalCleanupStateInput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("整理标记参数格式无效");
+  const record = value as Record<string, unknown>;
+  const allowed = new Set(["mediaId", "state"]);
+  if (Object.keys(record).some((key) => !allowed.has(key))) throw new Error("整理标记字段无效");
+  const mediaId = parseMediaId(record.mediaId);
+  if (!isCleanupState(record.state)) throw new Error("整理标记状态无效");
+  return { mediaId: mediaId as `media_${string}`, state: record.state };
 }
 
 function parseSourceId(value: unknown): string {

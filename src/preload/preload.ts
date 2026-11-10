@@ -18,6 +18,7 @@ import type {
   LocalPlaybackOpenOptions,
 } from "../shared/contracts";
 import type { LocalLibrarySort } from "../shared/local-library-contracts";
+import type { CleanupSettings, LocalCleanupQueueQuery, LocalCleanupStateInput } from "../shared/cleanup-contracts";
 
 // Sandboxed preloads may require Electron's built-ins, but not local CommonJS
 // modules. Keep these names identical to shared/ipc-channels.ts.
@@ -38,12 +39,16 @@ const IPC_CHANNELS = {
   localLibraryScan: "local-library:scan",
   localLibraryCancelScan: "local-library:scan-cancel",
   localLibraryScanProgress: "local-library:scan-progress",
+  localLibraryCleanupQueue: "local-library:cleanup-queue",
+  localLibraryCleanupSetState: "local-library:cleanup-set-state",
+  localLibraryCleanupReveal: "local-library:cleanup-reveal",
   localPlaybackOpen: "local-playback:open",
   localPlaybackCommand: "local-playback:command",
   localPlaybackChooseSubtitleFile: "local-playback:choose-subtitle-file",
   localPlaybackEvent: "local-playback:event",
   appPreferencesGet: "app-preferences:get",
   appPreferencesSetSort: "app-preferences:set-sort",
+  appPreferencesSetCleanup: "app-preferences:set-cleanup",
   restore: "session:restore",
   login: "session:login",
   sendMfa: "session:send-mfa",
@@ -96,6 +101,9 @@ const api: ElectronApi = {
     rescanAll: () => ipcRenderer.invoke(IPC_CHANNELS.localLibraryRescanAll),
     scanFolder: () => ipcRenderer.invoke(IPC_CHANNELS.localLibraryScan),
     cancelScan: (scanId: string) => ipcRenderer.invoke(IPC_CHANNELS.localLibraryCancelScan, scanId),
+    getCleanupQueue: (query?: Partial<LocalCleanupQueueQuery>) => ipcRenderer.invoke(IPC_CHANNELS.localLibraryCleanupQueue, query),
+    setCleanupState: (input: LocalCleanupStateInput) => ipcRenderer.invoke(IPC_CHANNELS.localLibraryCleanupSetState, input),
+    revealCleanupMedia: (mediaId: string) => ipcRenderer.invoke(IPC_CHANNELS.localLibraryCleanupReveal, mediaId),
     onScanProgress: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, value: Parameters<typeof listener>[0]) => listener(value);
       ipcRenderer.on(IPC_CHANNELS.localLibraryScanProgress, handler);
@@ -120,6 +128,7 @@ const api: ElectronApi = {
   appPreferences: {
     get: () => ipcRenderer.invoke(IPC_CHANNELS.appPreferencesGet),
     setSort: (sort: LocalLibrarySort) => ipcRenderer.invoke(IPC_CHANNELS.appPreferencesSetSort, sort),
+    setCleanup: (settings: CleanupSettings) => ipcRenderer.invoke(IPC_CHANNELS.appPreferencesSetCleanup, settings),
   },
   appearance: {
     onState: (listener: (state: WindowAppearanceState) => void) => {
