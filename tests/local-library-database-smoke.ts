@@ -8,6 +8,7 @@ import { app } from "electron";
 import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
 
 import { isOpaqueMediaId } from "../src/shared/local-library-contracts";
+import { CLEANUP_PRESETS, DAY_MS, GIB, defaultCleanupSettings } from "../src/shared/cleanup-contracts";
 import { LocalLibraryDatabase } from "../src/main/local-library-database";
 
 function openSqlite(filePath: string): DatabaseSyncType {
@@ -47,6 +48,53 @@ async function recordViewingSession(database: LocalLibraryDatabase, mediaId: `me
     completed: seed.completed,
     closeReason: seed.closeReason,
   });
+}
+
+interface CleanupSeed {
+  mediaId: string;
+  sizeBytes: number;
+  addedAtMs: number;
+  history?: {
+    openCount: number;
+    effectiveWatchCount: number;
+    completedCount: number;
+    totalPlayedSec: number;
+    lastOpenedAtMs: number;
+  };
+}
+
+/**
+ * Test-only fixture shaping: there is no facade call to fake 45-day-old
+ * protection windows or multi-GB files, so the smoke writes the input facts
+ * directly. Every assertion after this still goes through the public facade.
+ */
+function seedCleanupFacts(dbPath: string, nowMs: number, seeds: CleanupSeed[]): void {
+  const sqlite = openSqlite(dbPath);
+  try {
+    for (const seed of seeds) {
+      sqlite.prepare("UPDATE media_files SET size_bytes = ?, added_at = ? WHERE media_id = ?").run(seed.sizeBytes, seed.addedAtMs, seed.mediaId);
+      if (!seed.history) continue;
+      sqlite.prepare(`
+        INSERT OR REPLACE INTO media_history (
+          media_id, open_count, effective_watch_count, completed_count, inspection_open_count, total_played_sec,
+          first_seen_at, last_opened_at, last_played_at, last_session_played_sec, last_session_wall_sec,
+          last_position_sec, last_duration_sec, updated_at
+        ) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, 0, 0, 0, NULL, ?)
+      `).run(
+        seed.mediaId,
+        seed.history.openCount,
+        seed.history.effectiveWatchCount,
+        seed.history.completedCount,
+        seed.history.totalPlayedSec,
+        seed.addedAtMs,
+        seed.history.lastOpenedAtMs,
+        seed.history.lastOpenedAtMs,
+        nowMs,
+      );
+    }
+  } finally {
+    sqlite.close();
+  }
 }
 
 async function run(): Promise<void> {
@@ -685,6 +733,168 @@ async function run(): Promise<void> {
     await ledgerDb.removeSource(readdedScan.sourceId);
     assert.equal(await ledgerDb.getViewingHistory(readdedItem.mediaId), undefined, "removing the source forgets the history");
     await ledgerDb.close();
+
+    // A2 cleanup rules and queue. Sizes/ages are seeded directly because the
+    // public facade intentionally has no "pretend this is a 6 GB file from last
+    // year" switch; every read/decision below still goes through the facade.
+    const cleanupRoot = join(profile, "cleanup-fixture");
+    await mkdir(cleanupRoot, { recursive: true });
+    const cleanupTitles = [
+      "Cleanup Never Opened",
+      "Cleanup Glanced",
+      "Cleanup Few Opens",
+      "Cleanup Low Return",
+      "Cleanup Low Revisit",
+      "Cleanup Recent Control",
+      "Cleanup Protected",
+    ];
+    for (const title of cleanupTitles) await writeFile(join(cleanupRoot, `${title}.mkv`), Buffer.from(`cleanup fixture ${title}`));
+    for (let index = 0; index < 18; index += 1) await writeFile(join(cleanupRoot, `Cleanup Extra ${index}.mkv`), Buffer.from(`cleanup extra ${index}`));
+    const cleanupDbPath = join(profile, "cleanup.sqlite");
+    const cleanupDb = new LocalLibraryDatabase({ dbPath: cleanupDbPath, workerPath });
+    await cleanupDb.start();
+    const cleanupScan = await cleanupDb.scanFolder(cleanupRoot);
+    assert.equal(cleanupScan.status, "completed");
+    assert.equal(cleanupScan.importedFiles, cleanupTitles.length + 18);
+    const cleanupItems = (await cleanupDb.list({ page: 1, pageSize: 100, sourceId: cleanupScan.sourceId })).items;
+    const mediaIdByTitle = new Map(cleanupItems.map((item) => [item.title, item.mediaId]));
+    const cleanupId = (title: string): `media_${string}` => {
+      const mediaId = mediaIdByTitle.get(title);
+      if (!mediaId) throw new Error(`cleanup fixture is missing ${title}`);
+      return mediaId;
+    };
+    const cleanupNow = Date.now();
+    const standard = defaultCleanupSettings();
+    const activeQuery = { page: 1, pageSize: 50, rule: "all", state: "none" } as const;
+    seedCleanupFacts(cleanupDbPath, cleanupNow, [
+      { mediaId: cleanupId("Cleanup Never Opened"), sizeBytes: 3 * GIB, addedAtMs: cleanupNow - 45 * DAY_MS },
+      { mediaId: cleanupId("Cleanup Glanced"), sizeBytes: 3 * GIB, addedAtMs: cleanupNow - 60 * DAY_MS, history: { openCount: 2, effectiveWatchCount: 0, completedCount: 0, totalPlayedSec: 40, lastOpenedAtMs: cleanupNow - 40 * DAY_MS } },
+      { mediaId: cleanupId("Cleanup Few Opens"), sizeBytes: 6 * GIB, addedAtMs: cleanupNow - 60 * DAY_MS, history: { openCount: 2, effectiveWatchCount: 1, completedCount: 0, totalPlayedSec: 1_000, lastOpenedAtMs: cleanupNow - 100 * DAY_MS } },
+      { mediaId: cleanupId("Cleanup Low Return"), sizeBytes: 6 * GIB, addedAtMs: cleanupNow - 60 * DAY_MS, history: { openCount: 3, effectiveWatchCount: 1, completedCount: 0, totalPlayedSec: 300, lastOpenedAtMs: cleanupNow - 10 * DAY_MS } },
+      { mediaId: cleanupId("Cleanup Low Revisit"), sizeBytes: 6 * GIB, addedAtMs: cleanupNow - 60 * DAY_MS, history: { openCount: 2, effectiveWatchCount: 2, completedCount: 1, totalPlayedSec: 2_000, lastOpenedAtMs: cleanupNow - 200 * DAY_MS } },
+      { mediaId: cleanupId("Cleanup Recent Control"), sizeBytes: 3 * GIB, addedAtMs: cleanupNow - 60 * DAY_MS, history: { openCount: 1, effectiveWatchCount: 1, completedCount: 0, totalPlayedSec: 1_000, lastOpenedAtMs: cleanupNow - 5 * DAY_MS } },
+      { mediaId: cleanupId("Cleanup Protected"), sizeBytes: Math.floor(2.8 * GIB), addedAtMs: cleanupNow - 5 * DAY_MS },
+    ]);
+
+    const active = await cleanupDb.listCleanupQueue(activeQuery, standard);
+    assert.equal(active.totalCount, 5, "only the five rule fixtures are cleanup candidates");
+    assert.deepEqual(active.candidates.map((candidate) => candidate.rule), ["C", "D", "A", "B", "E"], "candidates sort C → D → A → B → E");
+    assert.deepEqual(active.candidates.map((candidate) => candidate.item.title), [
+      "Cleanup Few Opens",
+      "Cleanup Low Return",
+      "Cleanup Never Opened",
+      "Cleanup Glanced",
+      "Cleanup Low Revisit",
+    ]);
+    assert.equal(active.totalBytes, 24 * GIB, "the summary adds only current candidate sizes");
+    assert.equal(active.relativeLargeBytes, 3 * GIB, "a 25-file library enables the relative-large percentile");
+    assert.equal(active.candidates[2].viewing, undefined, "a never-played candidate has no fabricated viewing record");
+    assert.equal(active.candidates[3].viewing?.openCount, 2, "a glanced candidate carries its real open count");
+    assert.ok(active.candidates.every((candidate) => candidate.cleanupState === "none"));
+    assert.ok(active.candidates.every((candidate) => candidate.addedAtMs > 0));
+    assert.equal(JSON.stringify(active).includes(cleanupRoot), false, "the cleanup queue never exposes a source root");
+    for (const key of Object.keys(active.candidates[0].item)) assert.doesNotMatch(key, /path|root|relative/i, `cleanup item must not expose ${key}`);
+    assert.equal((await stat(join(cleanupRoot, "Cleanup Never Opened.mkv"))).isFile(), true, "reading candidates never deletes a source file");
+
+    const onlyC = await cleanupDb.listCleanupQueue({ ...activeQuery, rule: "C" }, standard);
+    assert.equal(onlyC.totalCount, 1);
+    assert.equal(onlyC.candidates[0].item.title, "Cleanup Few Opens");
+
+    const withoutA = await cleanupDb.listCleanupQueue(activeQuery, { ...standard, rules: { ...standard.rules, A: false } });
+    assert.equal(withoutA.totalCount, 4, "closing rule A removes never-opened candidates");
+    assert.equal(withoutA.candidates.some((candidate) => candidate.item.title === "Cleanup Never Opened"), false);
+
+    const aggressive = await cleanupDb.listCleanupQueue(activeQuery, { ...standard, preset: "aggressive", thresholds: { ...CLEANUP_PRESETS.aggressive } });
+    assert.equal(aggressive.totalCount, 5, "the aggressive preset keeps the seeded candidates");
+    const strict = await cleanupDb.listCleanupQueue(activeQuery, {
+      ...standard,
+      preset: "custom",
+      thresholds: { ...standard.thresholds, largeBytes: 8 * GIB, veryLargeBytes: 8 * GIB, hugeBytes: 8 * GIB },
+    });
+    assert.equal(strict.totalCount, 0, "a custom size threshold changes the candidate set on the next query");
+
+    const neverOpenedId = cleanupId("Cleanup Never Opened");
+    const glancedId = cleanupId("Cleanup Glanced");
+    const fewOpensId = cleanupId("Cleanup Few Opens");
+    const lowReturnId = cleanupId("Cleanup Low Return");
+    const lowRevisitId = cleanupId("Cleanup Low Revisit");
+    await cleanupDb.setCleanupState({ mediaId: neverOpenedId, state: "snooze" }, standard.keepDays, standard.snoozeDays);
+    await cleanupDb.setCleanupState({ mediaId: glancedId, state: "keep" }, standard.keepDays, standard.snoozeDays);
+    assert.equal((await cleanupDb.getDetail(neverOpenedId))?.viewing, undefined, "a cleanup mark does not fabricate a viewing record");
+    const afterMarks = await cleanupDb.listCleanupQueue(activeQuery, standard);
+    assert.equal(afterMarks.totalCount, 3, "snoozed and kept files leave the active queue");
+    const snoozed = await cleanupDb.listCleanupQueue({ ...activeQuery, state: "snooze" }, standard);
+    assert.equal(snoozed.totalCount, 1);
+    assert.equal(snoozed.candidates[0].cleanupState, "snooze");
+    assert.ok((snoozed.candidates[0].cleanupUntilMs ?? 0) > cleanupNow + 29 * DAY_MS, "snooze uses the configured day count");
+    const kept = await cleanupDb.listCleanupQueue({ ...activeQuery, state: "keep" }, standard);
+    assert.equal(kept.totalCount, 1);
+    assert.equal(kept.candidates[0].item.title, "Cleanup Glanced");
+    assert.ok((kept.candidates[0].cleanupUntilMs ?? 0) > cleanupNow + 179 * DAY_MS, "keep uses the configured day count");
+
+    await cleanupDb.setCleanupState({ mediaId: fewOpensId, state: "delete-candidate" }, standard.keepDays, standard.snoozeDays);
+    await cleanupDb.setCleanupState({ mediaId: lowReturnId, state: "delete-candidate" }, standard.keepDays, standard.snoozeDays);
+    const queued = await cleanupDb.listCleanupQueue(activeQuery, standard);
+    assert.equal(queued.totalCount, 1, "delete candidates leave the active queue");
+    assert.equal(queued.deleteCount, 2);
+    assert.equal(queued.deleteBytes, 12 * GIB);
+    assert.equal(queued.deleteQueue[0].item.title, "Cleanup Few Opens", "the delete list sorts by releasable space");
+    assert.equal(queued.deleteQueue.every((entry) => entry.cleanupState === "delete-candidate"), true);
+    await cleanupDb.setCleanupState({ mediaId: lowReturnId, state: "none" }, standard.keepDays, standard.snoozeDays);
+    const reset = await cleanupDb.listCleanupQueue(activeQuery, standard);
+    assert.equal(reset.deleteCount, 1, "clearing a delete mark returns the file to the active queue");
+    assert.equal(reset.candidates.some((candidate) => candidate.item.title === "Cleanup Low Return"), true);
+    await cleanupDb.setCleanupState({ mediaId: lowRevisitId, state: "delete-candidate" }, standard.keepDays, standard.snoozeDays);
+    assert.equal((await cleanupDb.listCleanupQueue(activeQuery, standard)).deleteCount, 2);
+
+    await assert.rejects(
+      () => cleanupDb.setCleanupState({ mediaId: "media_123e4567-e89b-42d3-a456-426614174000", state: "keep" }, 180, 30),
+      /媒体不存在/,
+      "an unknown media id cannot be marked",
+    );
+    await assert.rejects(
+      () => cleanupDb.setCleanupState({ mediaId: neverOpenedId, state: "deleted" as never }, 180, 30),
+      /状态无效/,
+      "an unknown cleanup state is rejected",
+    );
+
+    await cleanupDb.close();
+    const cleanupReopened = new LocalLibraryDatabase({ dbPath: cleanupDbPath, workerPath });
+    await cleanupReopened.start();
+    try {
+      const persistedSnooze = await cleanupReopened.listCleanupQueue({ ...activeQuery, state: "snooze" }, standard);
+      assert.equal(persistedSnooze.candidates[0]?.item.title, "Cleanup Never Opened", "snooze marks survive a worker restart");
+      assert.equal((await cleanupReopened.listCleanupQueue({ ...activeQuery, state: "keep" }, standard)).candidates[0]?.item.title, "Cleanup Glanced");
+      const persistedDelete = await cleanupReopened.listCleanupQueue(activeQuery, standard);
+      assert.equal(persistedDelete.deleteCount, 2, "delete candidates survive a worker restart");
+      assert.equal(persistedDelete.candidates.some((candidate) => candidate.item.title === "Cleanup Never Opened"), false);
+      assert.equal(persistedDelete.candidates.every((candidate) => candidate.cleanupState === "none"), true);
+    } finally {
+      await cleanupReopened.close();
+    }
+
+    // The delete list only ever contains files that are still on disk: a
+    // scan-confirmed missing file drops out of the list.
+    const cleanupMissingRoot = join(profile, "cleanup-missing-fixture");
+    await mkdir(cleanupMissingRoot, { recursive: true });
+    const cleanupMissingPath = join(cleanupMissingRoot, "Cleanup Missing.mkv");
+    await writeFile(cleanupMissingPath, Buffer.from("cleanup missing fixture"));
+    const cleanupMissingDb = new LocalLibraryDatabase({ dbPath: join(profile, "cleanup-missing.sqlite"), workerPath });
+    await cleanupMissingDb.start();
+    try {
+      const missingCleanupScan = await cleanupMissingDb.scanFolder(cleanupMissingRoot);
+      const missingCleanupItem = (await cleanupMissingDb.list({ page: 1, pageSize: 10, sourceId: missingCleanupScan.sourceId })).items[0];
+      assert.ok(missingCleanupItem);
+      await cleanupMissingDb.setCleanupState({ mediaId: missingCleanupItem.mediaId, state: "delete-candidate" }, 180, 30);
+      assert.equal((await cleanupMissingDb.listCleanupQueue(activeQuery, standard)).deleteCount, 1);
+      await rm(cleanupMissingPath, { force: true });
+      await cleanupMissingDb.scanFolder(cleanupMissingRoot);
+      const missingQueue = await cleanupMissingDb.listCleanupQueue(activeQuery, standard);
+      assert.equal(missingQueue.deleteCount, 0, "the delete list drops scan-confirmed missing files");
+      assert.equal(missingQueue.totalCount, 0, "missing files never appear as current candidates");
+    } finally {
+      await cleanupMissingDb.close();
+    }
 
     // Crash recovery: a session left open by a dead process is settled from its
     // last heartbeat as interrupted, not lost.

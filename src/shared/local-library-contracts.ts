@@ -1,3 +1,10 @@
+import type {
+  LocalCleanupQueueQuery,
+  LocalCleanupQueueResult,
+  LocalCleanupRevealResult,
+  LocalCleanupStateInput,
+} from "./cleanup-contracts";
+
 /**
  * Shared local-library contracts. Renderer-facing records intentionally omit
  * absolute paths and source-relative paths; only main/utility-process owners
@@ -333,6 +340,12 @@ export interface LocalLibraryApi {
   rescanAll(): Promise<LocalScanResult[]>;
   scanFolder(): Promise<LocalScanResult>;
   cancelScan(scanId: string): Promise<boolean>;
+  /** Cleanup queue for current on-disk files, evaluated with saved preferences. */
+  getCleanupQueue(query?: Partial<LocalCleanupQueueQuery>): Promise<LocalCleanupQueueResult>;
+  /** Mark one current file keep/snooze/delete-candidate (or clear the mark). */
+  setCleanupState(input: LocalCleanupStateInput): Promise<LocalCleanupQueueResult>;
+  /** Reveal the file in Explorer. Main resolves the path; no path reaches the renderer. */
+  revealCleanupMedia(mediaId: string): Promise<LocalCleanupRevealResult>;
   onScanProgress(listener: (progress: LocalScanProgress) => void): () => void;
   onState(listener: (state: LocalLibraryState) => void): () => void;
 }

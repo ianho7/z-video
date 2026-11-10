@@ -1,6 +1,7 @@
 import { ipcMain } from "electron";
 
 import { isLocalLibrarySort } from "../shared/app-preferences-contracts";
+import { parseCleanupSettings } from "../shared/cleanup-contracts";
 import type { LocalLibrarySort } from "../shared/local-library-contracts";
 import { IPC_CHANNELS } from "../shared/ipc-channels";
 import { recordUiOperation } from "./diagnostics";
@@ -15,9 +16,14 @@ export function registerAppPreferencesIpcHandlers(store: AppPreferencesStore): (
     if (!isLocalLibrarySort(value)) throw new Error("本地片库排序条件无效");
     return store.setSort(value as LocalLibrarySort);
   }));
+  ipcMain.handle(IPC_CHANNELS.appPreferencesSetCleanup, (_event, value: unknown) => withUiOperation("app-preferences.set-cleanup", async () => {
+    const settings = parseCleanupSettings(value);
+    return store.setCleanup(settings);
+  }));
   return () => {
     ipcMain.removeHandler(IPC_CHANNELS.appPreferencesGet);
     ipcMain.removeHandler(IPC_CHANNELS.appPreferencesSetSort);
+    ipcMain.removeHandler(IPC_CHANNELS.appPreferencesSetCleanup);
   };
 }
 

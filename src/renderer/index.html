@@ -63,6 +63,46 @@
           <div class="dialog-actions"><button type="button" class="secondary-button" id="offline-source-keep" autofocus>暂时断开（保留记录）</button><button type="button" class="destructive-button" id="offline-source-delete">已删除（清理记录）</button></div>
           <p class="dialog-foot"><span class="key">Esc</span> 暂时保留记录并关闭。</p>
         </dialog>
+        <dialog id="cleanup-settings-dialog" class="cleanup-settings-dialog" aria-labelledby="cleanup-settings-title">
+          <div class="cleanup-settings-head"><div><p class="eyebrow">RULES</p><h2 id="cleanup-settings-title">整理规则</h2></div><button id="cleanup-settings-close" class="secondary-button" type="button">关闭</button></div>
+          <p class="dialog-lead">阈值只影响整理候选，不改变已经记录的观看数据。修改在下次整理查询生效。</p>
+          <div class="cleanup-settings-body">
+            <section class="cleanup-setting-section">
+              <h3>预设</h3>
+              <div id="cleanup-preset-buttons" class="segmented-control" role="group" aria-label="阈值预设"></div>
+              <p id="cleanup-settings-summary" class="cleanup-setting-note"></p>
+            </section>
+            <section class="cleanup-setting-section">
+              <h3>规则开关</h3>
+              <div id="cleanup-rule-toggles" class="cleanup-toggle-list"></div>
+            </section>
+            <section class="cleanup-setting-section">
+              <h3>阈值</h3>
+              <div id="cleanup-threshold-fields" class="cleanup-threshold-grid"></div>
+            </section>
+            <section class="cleanup-setting-section">
+              <h3>稍后与保留</h3>
+              <div id="cleanup-day-fields" class="cleanup-threshold-grid"></div>
+            </section>
+          </div>
+          <p id="cleanup-preview" class="cleanup-preview" role="status" aria-live="polite"></p>
+          <p id="cleanup-settings-error" class="dialog-error" role="alert" hidden></p>
+          <div class="dialog-actions">
+            <button id="cleanup-settings-defaults" class="secondary-button" type="button">恢复默认</button>
+            <button id="cleanup-settings-cancel" class="secondary-button" type="button">取消</button>
+            <button id="cleanup-settings-save" class="primary-button" type="button">保存规则</button>
+          </div>
+          <p class="dialog-foot"><span class="key">Esc</span> 取消修改并关闭。</p>
+        </dialog>
+        <dialog id="cleanup-delete-dialog" class="cleanup-delete-dialog" aria-labelledby="cleanup-delete-title">
+          <h2 id="cleanup-delete-title">待删清单</h2>
+          <p id="cleanup-delete-dialog-summary" class="dialog-lead"></p>
+          <ul id="cleanup-delete-list" class="cleanup-delete-list"></ul>
+          <p id="cleanup-delete-message" class="cleanup-message" role="status" aria-live="polite"></p>
+          <p class="cleanup-delete-note">应用不会自动删除文件。请在资源管理器中确认后手动删除；删除后重新扫描，观看记录会一起消失。</p>
+          <div class="dialog-actions"><button id="cleanup-delete-close" class="secondary-button" type="button" autofocus>关闭</button></div>
+          <p class="dialog-foot"><span class="key">Esc</span> 关闭清单。</p>
+        </dialog>
         <section class="library-content" aria-labelledby="library-title">
           <div class="content-heading">
             <div>
@@ -140,6 +180,7 @@
                 <button id="library-sort-trigger" class="app-menu-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="library-sort-options" aria-labelledby="library-sort-label library-sort-value" data-value="recent"><span id="library-sort-label" class="app-menu-label">排序</span><span id="library-sort-value" class="app-menu-value">最近观看</span><svg class="app-menu-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
                 <div id="library-sort-options" class="app-menu-popover sort-menu-popover" role="listbox" aria-labelledby="library-sort-label" hidden></div>
               </div>
+              <button id="cleanup-entry" class="secondary-button cleanup-entry" type="button">整理</button>
             </div>
             <div id="library-offline-notice" class="library-offline" role="status" hidden>
               <span id="library-offline-text"></span>
@@ -168,6 +209,36 @@
               <details id="empty-formats" class="tech-details" hidden><summary>查看支持的格式</summary><p>支持 MP4、MKV、AVI、MOV、WebM、M4V、TS、M2TS；同名 NFO、海报和背景图会一起读取，不会移动或改名文件。</p></details>
             </div>
             <nav id="library-pagination" class="library-pagination" aria-label="片库分页"></nav>
+          </section>
+
+          <section id="cleanup-section" class="cleanup-section" hidden aria-labelledby="cleanup-title">
+            <div class="cleanup-heading">
+              <div>
+                <p class="eyebrow">CLEANUP</p>
+                <h1 id="cleanup-title" tabindex="-1">整理</h1>
+                <p id="cleanup-summary" class="cleanup-summary" role="status" aria-live="polite"></p>
+                <p class="cleanup-note">根据当前观看记录和阈值列出候选；只读取，不删除、不移动、不改名任何文件。</p>
+              </div>
+              <div class="cleanup-heading-actions">
+                <button id="cleanup-settings-button" class="secondary-button" type="button">规则</button>
+                <button id="cleanup-back" class="secondary-button" type="button">返回片库</button>
+              </div>
+            </div>
+            <div class="cleanup-filters">
+              <div id="cleanup-rule-filters" class="segmented-control" role="group" aria-label="规则筛选"></div>
+              <div id="cleanup-state-filters" class="segmented-control" role="group" aria-label="清理状态筛选"></div>
+            </div>
+            <p id="cleanup-message" class="cleanup-message" role="status" aria-live="polite"></p>
+            <div id="cleanup-candidates" class="cleanup-candidates" role="list" aria-live="polite"></div>
+            <div id="cleanup-empty" class="empty-state" hidden>
+              <h2 id="cleanup-empty-title">当前没有候选</h2>
+              <p id="cleanup-empty-message">可以调整规则或阈值后再看；也可以返回片库继续浏览。</p>
+            </div>
+            <div id="cleanup-queue-bar" class="cleanup-queue-bar">
+              <p id="cleanup-delete-summary"></p>
+              <button id="cleanup-view-delete" class="secondary-button" type="button">查看清单</button>
+            </div>
+            <div id="cleanup-pagination" class="library-pagination" aria-label="整理候选分页"></div>
           </section>
 
           <section id="media-detail" class="media-detail" hidden aria-labelledby="media-detail-title">

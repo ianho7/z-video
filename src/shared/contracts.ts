@@ -60,6 +60,21 @@ export type {
 } from "./local-library-contracts";
 export type { LocalPlaybackApi, LocalPlaybackControlCommand, LocalPlaybackEvent, LocalPlaybackOpenOptions } from "./local-playback-contracts";
 export type { AppPreferences, AppPreferencesApi } from "./app-preferences-contracts";
+export type {
+  CleanupPreset,
+  CleanupRuleId,
+  CleanupRuleToggles,
+  CleanupSettings,
+  CleanupState,
+  CleanupThresholds,
+  LocalCleanupCandidate,
+  LocalCleanupQueue,
+  LocalCleanupQueueItem,
+  LocalCleanupQueueQuery,
+  LocalCleanupQueueResult,
+  LocalCleanupRevealResult,
+  LocalCleanupStateInput,
+} from "./cleanup-contracts";
 
 /**
  * Renderer-safe contracts shared by the Electron main, preload and renderer.
