@@ -21,6 +21,7 @@ import { renderSources } from "./views/sources.js";
 import { episodeRows, renderMovieFileInfo, renderSeasonTabs, renderViewingRecord } from "./views/detail.js";
 import { renderContinueCards } from "./views/home.js";
 import { cleanupSettingsSummary, renderCleanupCandidate, renderCleanupDeleteItem } from "./views/cleanup.js";
+import { reviewFactsText } from "./views/review.js";
 import { biscuitPath, wavePath } from "./shapes.js";
 import type {
   LocalArtworkReference,
@@ -36,6 +37,7 @@ import type {
   LocalPlaybackState,
   LocalScanProgress,
   LocalScanResult,
+  LocalViewingHistory,
 } from "../shared/local-library-contracts";
 import { isLocalLibrarySort } from "../shared/app-preferences-contracts.js";
 import {
@@ -53,6 +55,7 @@ import {
   type CleanupSettings,
   type CleanupState,
   type CleanupThresholds,
+  type LocalCleanupCandidate,
   type LocalCleanupQueue,
   type LocalCleanupQueueQuery,
 } from "../shared/cleanup-contracts.js";
@@ -213,6 +216,15 @@ const cleanupDeleteDialog = document.querySelector<HTMLDialogElement>("#cleanup-
 const cleanupDeleteDialogSummary = document.querySelector<HTMLElement>("#cleanup-delete-dialog-summary");
 const cleanupDeleteList = document.querySelector<HTMLElement>("#cleanup-delete-list");
 const cleanupDeleteMessage = document.querySelector<HTMLElement>("#cleanup-delete-message");
+const reviewDecisionDialog = document.querySelector<HTMLDialogElement>("#review-decision-dialog");
+const reviewDecisionTitle = document.querySelector<HTMLElement>("#review-decision-title");
+const reviewDecisionFacts = document.querySelector<HTMLElement>("#review-decision-facts");
+const reviewDecisionError = document.querySelector<HTMLElement>("#review-decision-error");
+const reviewKeepButton = document.querySelector<HTMLButtonElement>("#review-keep");
+const reviewSnoozeButton = document.querySelector<HTMLButtonElement>("#review-snooze");
+const reviewDeleteButton = document.querySelector<HTMLButtonElement>("#review-delete");
+const reviewBackButton = document.querySelector<HTMLButtonElement>("#review-back");
+const reviewRetryButton = document.querySelector<HTMLButtonElement>("#review-retry");
 let removingSourceId: string | undefined;
 let offlineSourceId: string | undefined;
 let sourceDialogBusy = false;
@@ -793,14 +805,30 @@ function showPlayer(visible: boolean): void {
   updateScanUi();
 }
 
-type PlayerOrigin = "detail" | "home";
+type PlayerOrigin = "detail" | "home" | "cleanup";
 let playerOrigin: PlayerOrigin = "detail";
 let playerOriginScroll = 0;
 let playerReturnToDetail = false;
 let playerUiRevision = 0;
 let playerOverlayFocusId: string | undefined;
 
+/**
+ * A3 review mode: one candidate opened from the cleanup queue. The snapshot is
+ * the A1 ledger record carried by the queue card; the renderer never derives
+ * counts or accumulated time from playback events.
+ */
+interface ReviewTarget {
+  mediaId: `media_${string}`;
+  title: string;
+  viewing?: LocalViewingHistory;
+  returnQuery: LocalCleanupQueueQuery;
+}
+let reviewTarget: ReviewTarget | undefined;
+let reviewBusy = false;
+let reviewPendingState: CleanupState | undefined;
+
 function playerOriginLabel(origin: PlayerOrigin = playerOrigin): string {
+  if (origin === "cleanup") return "返回整理";
   return origin === "detail" ? "返回详情" : "返回首页";
 }
 
@@ -813,9 +841,23 @@ function setPlayerOverlayFocus(id: string | undefined): void {
   sendOverlayState();
 }
 
-/** Remember whether playback started from the detail view or straight from home. */
+/** A3: the strip lives in the mirrored player heading, so the overlay sees it too. */
+function updateReviewBar(): void {
+  const bar = document.getElementById("player-review-bar");
+  const facts = document.getElementById("player-review-facts");
+  if (!bar || !facts) return;
+  const target = reviewTarget;
+  bar.hidden = !target || playerView?.hidden !== false;
+  facts.textContent = target ? reviewFactsText(target.viewing, Date.now()) : "";
+  if (playerView?.hidden === false) {
+    markPlayerUiStructureChanged();
+    sendOverlayState();
+  }
+}
+
+/** Remember whether playback started from the detail view, home or cleanup. */
 function recordPlayerOrigin(): void {
-  playerOrigin = detail?.hidden === false ? "detail" : "home";
+  playerOrigin = reviewTarget ? "cleanup" : detail?.hidden === false ? "detail" : "home";
   playerOriginScroll = document.scrollingElement?.scrollTop ?? window.scrollY;
   const label = playerOriginLabel();
   const closeLabel = document.getElementById("player-close-label");
@@ -1268,7 +1310,7 @@ function showPlaybackEnded(): void {
   if (playerPlayNext) playerPlayNext.hidden = !next;
   if (playerCancelNext) playerCancelNext.hidden = !next;
   if (playerReplay) playerReplay.hidden = Boolean(next);
-  if (playerReturnList) playerReturnList.textContent = movie ? playerOriginLabel() : "返回详情";
+  if (playerReturnList) playerReturnList.textContent = reviewTarget || movie ? playerOriginLabel() : "返回详情";
   if (playerCountdown) playerCountdown.textContent = next ? "10 秒后自动播放下一集" : "";
   if (playerCountdownAnnouncement) playerCountdownAnnouncement.textContent = next ? `10 秒后播放下一集：${episodeWithTitle(next)}。` : "";
   markPlayerUiStructureChanged();
@@ -1295,6 +1337,20 @@ function handlePlayerClosed(): void {
   if (playerSurfaceMessage) playerSurfaceMessage.textContent = "正在准备原生播放器…";
   activePlaybackTitle = "";
   if (playerCurrentTitle) playerCurrentTitle.textContent = "";
+  reviewPendingState = undefined;
+  if (reviewTarget) {
+    // A3: closing an inspection never falls back to detail/home. The cleanup
+    // queue is still underneath; closing asks for the keep/snooze/delete mark.
+    activeDetail = undefined;
+    activeDetailPlayback = undefined;
+    selectedMediaId = undefined;
+    selectedSeason = undefined;
+    playerReturnToDetail = false;
+    if (detail) detail.hidden = true;
+    updateReviewBar();
+    openReviewDecision();
+    return;
+  }
   const returnKind: PlayerOrigin = playerReturnToDetail ? "detail" : playerOrigin;
   const mediaId = selectedMediaId;
   playerReturnToDetail = false;
@@ -2102,6 +2158,142 @@ async function setCleanupMark(mediaId: string, state: CleanupState): Promise<voi
   }
 }
 
+function reviewMarkNotice(target: ReviewTarget, state: CleanupState): string {
+  if (state === "keep") return `已标记保留《${target.title}》；${cleanupSettings.keepDays} 天内不会再出现在候选里。文件没有被移动或删除。`;
+  if (state === "snooze") return `已标记稍后《${target.title}》；${cleanupSettings.snoozeDays} 天内不再出现。文件没有被移动或删除。`;
+  return `已把《${target.title}》加入待删清单。应用不会删除文件，请在资源管理器中确认后手动删除。`;
+}
+
+function setReviewDialogBusy(busy: boolean): void {
+  for (const button of [reviewKeepButton, reviewSnoozeButton, reviewDeleteButton, reviewBackButton, reviewRetryButton]) {
+    if (button) button.disabled = busy;
+  }
+  reviewDecisionDialog?.setAttribute("aria-busy", busy ? "true" : "false");
+}
+
+function focusCleanupCard(mediaId: string): boolean {
+  const card = document.querySelector<HTMLElement>(`#cleanup-candidates [data-cleanup-media-id="${cssEscape(mediaId)}"]`);
+  if (!card) return false;
+  card.scrollIntoView({ block: "center" });
+  card.focus({ preventScroll: true });
+  return true;
+}
+
+function openReviewDecision(): void {
+  const target = reviewTarget;
+  if (!target) return;
+  if (reviewDecisionTitle) reviewDecisionTitle.textContent = `《${target.title}》要保留吗？`;
+  if (reviewDecisionFacts) reviewDecisionFacts.textContent = reviewFactsText(target.viewing, Date.now());
+  if (reviewDecisionError) {
+    reviewDecisionError.textContent = "";
+    reviewDecisionError.hidden = true;
+  }
+  if (reviewRetryButton) reviewRetryButton.hidden = true;
+  reviewPendingState = undefined;
+  reviewBusy = false;
+  setReviewDialogBusy(false);
+  if (!reviewDecisionDialog) return;
+  if (!reviewDecisionDialog.open) reviewDecisionDialog.showModal();
+  reviewKeepButton?.focus({ preventScroll: true });
+}
+
+/** Escape or “返回队列”: keep the old mark and focus the candidate that started the check. */
+function returnToReviewQueue(): void {
+  const target = reviewTarget;
+  reviewTarget = undefined;
+  reviewBusy = false;
+  reviewPendingState = undefined;
+  if (reviewDecisionError) {
+    reviewDecisionError.textContent = "";
+    reviewDecisionError.hidden = true;
+  }
+  if (reviewDecisionDialog?.open) reviewDecisionDialog.close();
+  if (!target) return;
+  // Keep the card DOM that opened the review. This playback has just changed
+  // the A1 facts (open count / last-open time), so a reload could legitimately
+  // drop the candidate; focus would then have nowhere to return. The queue
+  // recalculates on the next filter/page/refresh action.
+  cleanupQuery = { ...target.returnQuery };
+  renderCleanupFilters();
+  if (cleanupMessage) cleanupMessage.textContent = "已返回整理队列；没有修改标记。本次播放已记入观看记录，候选数字会在下次刷新时重算。";
+  if (!focusCleanupCard(target.mediaId)) cleanupCandidates?.querySelector<HTMLElement>("[data-cleanup-action]")?.focus();
+}
+
+/** Persist one close-time decision, then show the marked state with the card focused. */
+async function markReviewDecision(state: CleanupState): Promise<void> {
+  const target = reviewTarget;
+  if (!target || reviewBusy) return;
+  reviewBusy = true;
+  reviewPendingState = state;
+  setReviewDialogBusy(true);
+  if (reviewDecisionError) {
+    reviewDecisionError.textContent = "";
+    reviewDecisionError.hidden = true;
+  }
+  try {
+    await window.zVideo.localLibrary.setCleanupState({ mediaId: target.mediaId, state });
+    reviewTarget = undefined;
+    reviewPendingState = undefined;
+    if (reviewDecisionDialog?.open) reviewDecisionDialog.close();
+    setReviewDialogBusy(false);
+    cleanupQuery = { ...target.returnQuery, rule: "all", state, page: 1 };
+    renderCleanupFilters();
+    await loadCleanupQueue();
+    if (cleanupMessage) cleanupMessage.textContent = reviewMarkNotice(target, state);
+    focusCleanupCard(target.mediaId);
+  } catch (error) {
+    if (reviewDecisionError) {
+      reviewDecisionError.textContent = error instanceof Error ? error.message : "标记保存失败，请重试。";
+      reviewDecisionError.hidden = false;
+    }
+    if (reviewRetryButton) reviewRetryButton.hidden = false;
+    setReviewDialogBusy(false);
+    // Keep the chosen decision under the keyboard so Enter retries directly.
+    const chosen = state === "keep" ? reviewKeepButton : state === "snooze" ? reviewSnoozeButton : reviewDeleteButton;
+    chosen?.focus({ preventScroll: true });
+  } finally {
+    reviewBusy = false;
+  }
+}
+
+/** Open the candidate through the only playback bridge; the review header uses A1 facts. */
+async function openReviewMedia(): Promise<void> {
+  const target = reviewTarget;
+  if (!target) return;
+  recordPlayerOrigin();
+  activePlaybackTitle = target.title;
+  showPlayer(true);
+  updateReviewBar();
+  setPlayerStatus("正在打开检查播放…");
+  try {
+    await window.zVideo.localPlayback.open(target.mediaId);
+  } catch (error) {
+    showPlayer(false);
+    updateReviewBar();
+    setMessage(error instanceof Error ? error.message : "检查播放失败，请重试。", true);
+    openReviewDecision();
+  }
+}
+
+function startReview(candidate: LocalCleanupCandidate): void {
+  if (reviewTarget || playerView?.hidden === false || cleanupBusy) return;
+  if (!cleanupVisible) return;
+  reviewTarget = {
+    mediaId: candidate.item.mediaId,
+    title: candidate.item.title,
+    ...(candidate.viewing ? { viewing: candidate.viewing } : {}),
+    returnQuery: { ...cleanupQuery },
+  };
+  reviewPendingState = undefined;
+  void openReviewMedia();
+}
+
+function openReviewForMedia(mediaId: string | undefined): void {
+  if (!mediaId) return;
+  const candidate = cleanupQueue?.candidates.find((entry) => entry.item.mediaId === mediaId);
+  if (candidate) startReview(candidate);
+}
+
 function cleanupFieldDisplay(field: (typeof CLEANUP_THRESHOLD_FIELDS)[number], value: number): string {
   if (field.displayScale === 1) return String(value);
   const display = value * field.displayScale;
@@ -2333,9 +2525,13 @@ async function revealCleanupMedia(mediaId: string): Promise<void> {
 
 function cleanupCardAction(element: HTMLElement): void {
   const card = element.closest<HTMLElement>("[data-cleanup-media-id]");
-  const action = element.dataset.cleanupAction as "keep" | "snooze" | "delete" | "none" | undefined;
+  const action = element.dataset.cleanupAction as "review" | "keep" | "snooze" | "delete" | "none" | undefined;
   const mediaId = card?.dataset.cleanupMediaId;
   if (!mediaId || !action) return;
+  if (action === "review") {
+    openReviewForMedia(mediaId);
+    return;
+  }
   const state: CleanupState = action === "delete" ? "delete-candidate" : action;
   void setCleanupMark(mediaId, state);
 }
@@ -3341,8 +3537,9 @@ document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   if (removeDialog?.open) { event.preventDefault(); removeDialog.close(); }
   else if (offlineDialog?.open) { event.preventDefault(); offlineDialog.close(); }
+  else if (reviewDecisionDialog?.open) { event.preventDefault(); returnToReviewQueue(); }
   else if (cleanupSettingsDialog?.open || cleanupDeleteDialog?.open) { /* the native dialog consumes Escape */ }
-  else if (cleanupVisible) { event.preventDefault(); hideCleanup(); }
+  else if (cleanupVisible && playerView?.hidden !== false) { event.preventDefault(); hideCleanup(); }
 });
 libraryGrid?.addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-media-id]");
@@ -3408,10 +3605,14 @@ playerCancelNext?.addEventListener("click", () => { clearNextTimer(); if (player
 playerReplay?.addEventListener("click", () => { resetPlaybackEndedPanel(); void openSelectedLocalMedia(true); });
 playerReturnList?.addEventListener("click", () => {
   clearNextTimer();
-  playerReturnToDetail = !currentItemIsMovie();
+  playerReturnToDetail = !reviewTarget && !currentItemIsMovie();
   void sendLocalPlaybackCommand({ type: "close" });
 });
-playerErrorRetry?.addEventListener("click", () => { hidePlayerError(); void openSelectedLocalMedia(); });
+playerErrorRetry?.addEventListener("click", () => {
+  hidePlayerError();
+  if (reviewTarget) void openReviewMedia();
+  else void openSelectedLocalMedia();
+});
 playerErrorBack?.addEventListener("click", () => { clearNextTimer(); void sendLocalPlaybackCommand({ type: "close" }); });
 for (const [selector, offset] of [["#player-back-10", -10], ["#player-forward-10", 10]] as const) {
   document.querySelector<HTMLButtonElement>(selector)?.addEventListener("click", () => {
@@ -3521,6 +3722,21 @@ cleanupCandidates?.addEventListener("click", (event) => {
   const target = (event.target as HTMLElement).closest<HTMLElement>("[data-cleanup-action]");
   if (target) cleanupCardAction(target);
 });
+cleanupCandidates?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  if (event.defaultPrevented) return;
+  const target = event.target as HTMLElement | null;
+  const actionButton = target?.closest<HTMLElement>("[data-cleanup-action]");
+  if (actionButton) {
+    event.preventDefault();
+    cleanupCardAction(actionButton);
+    return;
+  }
+  const card = target?.closest<HTMLElement>("[data-cleanup-media-id]");
+  if (!card) return;
+  event.preventDefault();
+  openReviewForMedia(card.dataset.cleanupMediaId);
+});
 cleanupPagination?.addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-cleanup-page]");
   const page = Number(button?.dataset.cleanupPage);
@@ -3559,6 +3775,26 @@ cleanupDeleteList?.addEventListener("click", (event) => {
   if (!target) return;
   if (target.dataset.cleanupReveal) void revealCleanupMedia(target.dataset.cleanupReveal);
   else if (target.dataset.cleanupUnmark) void setCleanupMark(target.dataset.cleanupUnmark, "none");
+});
+/* A3 · close-time review decision. */
+reviewKeepButton?.addEventListener("click", () => { void markReviewDecision("keep"); });
+reviewSnoozeButton?.addEventListener("click", () => { void markReviewDecision("snooze"); });
+reviewDeleteButton?.addEventListener("click", () => { void markReviewDecision("delete-candidate"); });
+reviewBackButton?.addEventListener("click", () => returnToReviewQueue());
+reviewRetryButton?.addEventListener("click", () => {
+  if (reviewPendingState) void markReviewDecision(reviewPendingState);
+});
+reviewDecisionDialog?.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  returnToReviewQueue();
+});
+reviewDecisionDialog?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  if (event.defaultPrevented || reviewBusy) return;
+  const active = document.activeElement;
+  if (!(active instanceof HTMLButtonElement) || !reviewDecisionDialog?.contains(active) || active.disabled) return;
+  event.preventDefault();
+  active.click();
 });
 window.zVideo.localLibrary.onState(renderState);
 window.zVideo.localLibrary.onScanProgress(renderScanProgress);

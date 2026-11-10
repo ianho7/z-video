@@ -69,6 +69,15 @@ B4a adds optional `detail.episodePlayback`: the saved `LocalPlaybackState` for e
 - `app-preferences:set-cleanup` validates and persists the complete cleanup settings. `app-preferences:get` now includes `cleanup`; older preference files without it default to the standard preset.
 - The cleanup result's effective-watch and completion threshold fields are part of the saved preset/settings snapshot. The A1 ledger keeps its fixed contract (30 seconds + 3% effective, 90% completion) so adjusting cleanup rules never rewrites recorded history; the A–E rules consume the recorded counters.
 
+### A3 review-mode contract
+
+- Review mode is not a new route, IPC channel, or DTO. A cleanup candidate's own `LocalViewingHistory` (already part of `LocalCleanupCandidate`) supplies the strip's facts; the renderer must not derive counts or accumulated played time from playback events. "第 N 次打开" names the open currently in progress, so it is the recorded `openCount` plus this one open; `totalPlayedSec` and `lastOpenedAtMs` are shown verbatim.
+- A review starts only from a cleanup candidate's `打开检查` action (or the focused card plus Enter/Space). Normal detail/home playback never shows the strip. The strip shares the mirrored player heading, so the existing sandboxed overlay mirrors it without a new overlay contract; it sits above the playback controls and must stay inside a 900×640 window.
+- Closing a review attempt always returns to the cleanup queue and opens one decision: `保留` / `稍后` / `待删` / `返回队列`. The mark is written through the existing `local-library:cleanup-set-state` owner path (same `media_history.cleanup_state` persistence and same snooze/keep windows). `待删` only joins the delete list; the app never deletes, moves, or renames a file. `返回队列` and Escape write no mark.
+- A successful decision shows the marked-state filter so the original candidate card stays visible; keyboard focus returns to that card. A failed mark keeps the decision open with a retry; a failed playback open returns to the same decision instead of losing the review.
+- Review facts and decision copy never carry a path, filename other than the already-safe renderer title, raw session row, or root.
+- No schema, DTO, IPC channel, or cleanup-rule change is introduced by A3.
+
 ## Work-level (Collection) read contract
 
 B1 adds one renderer-safe work list without changing schema v2. `local-library:list-collections` validates a bounded `LocalCollectionQuery` and returns `LocalCollectionListResult` (`state` plus `LocalCollectionPage`):

@@ -17,6 +17,7 @@ let failNextCollectionList = false;
 let failNextSourceRemove = false;
 let delayNextDetail = false;
 let failNextDetail = false;
+let failNextCleanupSetState = false;
 const originalIpcHandle = ipcMain.handle.bind(ipcMain);
 ipcMain.handle = (channel, listener) => originalIpcHandle(channel, async (event, ...args) => {
   if ((channel === IPC_CHANNELS.localLibraryList || channel === IPC_CHANNELS.localLibraryListCollections) && delayNextLibraryList) {
@@ -38,6 +39,10 @@ ipcMain.handle = (channel, listener) => originalIpcHandle(channel, async (event,
   if (channel === IPC_CHANNELS.localLibraryGet && failNextDetail) {
     failNextDetail = false;
     throw new Error("详情读取失败（测试夹具）");
+  }
+  if (channel === IPC_CHANNELS.localLibraryCleanupSetState && failNextCleanupSetState) {
+    failNextCleanupSetState = false;
+    throw new Error("标记保存失败（测试夹具）");
   }
   return listener(event, ...args);
 });
@@ -88,6 +93,15 @@ async function createFixture(profile: string): Promise<string> {
 
 function evaluate<T = any>(window: BrowserWindow, script: string): Promise<T> {
   return window.webContents.executeJavaScript(script, true) as Promise<T>;
+}
+
+/** Key delivery to the focused control, exercising the app's keydown contract. */
+async function pressKey(window: BrowserWindow, key: "Enter" | "Escape" | " "): Promise<void> {
+  await evaluate(window, `(() => {
+    const target = document.activeElement instanceof HTMLElement ? document.activeElement : document;
+    target.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true, cancelable: true }));
+    return true;
+  })()`);
 }
 
 async function waitFor<T>(label: string, read: () => Promise<T>, predicate: (value: T) => boolean, timeoutMs = 10_000): Promise<T> {
@@ -504,6 +518,7 @@ async function run(): Promise<void> {
     const detailOriginClose = await evaluate(window, "(() => { const button = document.querySelector('#player-close-button'); return { text: button?.textContent?.trim() || '', label: button?.getAttribute('aria-label') || '' }; })()");
     assert.match(detailOriginClose.text, /返回详情/, "the player close control names the detail origin");
     assert.equal(detailOriginClose.label, "返回详情", "the player close control reads out the detail return target");
+    assert.equal(await evaluate(window, "document.querySelector('#player-review-bar')?.hidden"), true, "normal detail playback never shows the review strip");
     await evaluate(window, "window.zVideo.localPlayback.command({ type: 'seek', positionSec: 5 })");
     await new Promise((resolve) => setTimeout(resolve, 400));
     await evaluate(window, "document.querySelector('#player-close-button')?.click()");
@@ -1692,7 +1707,14 @@ async function run(): Promise<void> {
       "Cleanup Recent Control",
       "Cleanup Protected",
     ];
-    for (const title of cleanupTitles) await writeFile(join(cleanupRoot, `${title}.mkv`), Buffer.from(`cleanup ui fixture ${title}`));
+    // The candidates opened in A3 review mode need a real playable file; the
+    // remaining fixtures stay tiny placeholders because the queue only reads
+    // their indexed facts.
+    const playableCleanupTitles = new Set(["Cleanup Never Opened", "Cleanup Few Opens", "Cleanup Low Return", "Cleanup Low Revisit"]);
+    for (const title of cleanupTitles) {
+      if (playableCleanupTitles.has(title)) await copyFile(join(process.cwd(), "assets", "test_video.mp4"), join(cleanupRoot, `${title}.mp4`));
+      else await writeFile(join(cleanupRoot, `${title}.mkv`), Buffer.from(`cleanup ui fixture ${title}`));
+    }
     for (let index = 0; index < 18; index += 1) await writeFile(join(cleanupRoot, `Cleanup Extra ${index}.mkv`), Buffer.from(`cleanup extra ${index}`));
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [cleanupRoot] });
     await evaluate(window, "document.querySelector('#choose-folder-button')?.click()");
@@ -1910,7 +1932,7 @@ async function run(): Promise<void> {
     const keepFilter = await waitFor("keep state filter", readCleanup, (value) => value.cards.length === 1 && value.cards[0].state === "keep");
     assert.equal(keepFilter.cards[0].title, "Cleanup Never Opened");
     assert.equal(keepFilter.cards[0].state, "keep");
-    assert.deepEqual(keepFilter.cards[0].actions, ["none"]);
+    assert.deepEqual(keepFilter.cards[0].actions, ["review", "none"]);
     await evaluate(window, `document.querySelector('#cleanup-state-filters [data-cleanup-state="snooze"]')?.click()`);
     const snoozeFilter = await waitFor("snooze state filter", readCleanup, (value) => value.cards.length === 1 && value.cards[0].state === "snooze");
     assert.equal(snoozeFilter.cards[0].title, "Cleanup Glanced");
@@ -1962,7 +1984,7 @@ async function run(): Promise<void> {
       await evaluate(window, `document.querySelector('#cleanup-delete-list [data-cleanup-reveal="${fewOpensId}"]')?.click()`);
       await waitFor("reveal message", () => evaluate(window, "document.querySelector('#cleanup-delete-message')?.textContent || ''"), (value) => /资源管理器/.test(value));
       assert.equal(revealedPaths.length, 1);
-      assert.equal(revealedPaths[0], join(cleanupRoot, "Cleanup Few Opens.mkv"), "main resolves the private path for Explorer");
+      assert.equal(revealedPaths[0], join(cleanupRoot, "Cleanup Few Opens.mp4"), "main resolves the private path for Explorer");
     } else {
       // The native shell module is frozen on this runtime; prove the bridge returns a safe result instead.
       const revealResult = await evaluate(window, `window.zVideo.localLibrary.revealCleanupMedia(${JSON.stringify(fewOpensId)})`);
@@ -1973,8 +1995,221 @@ async function run(): Promise<void> {
     assert.equal(afterUnmark.cards.some((card) => card.mediaId === lowReturnId), true);
     await evaluate(window, "document.querySelector('#cleanup-delete-close')?.click()");
     await waitFor("delete dialog closed", () => evaluate(window, "document.querySelector('#cleanup-delete-dialog')?.open"), (value) => value === false);
-    assert.equal((await stat(join(cleanupRoot, "Cleanup Never Opened.mkv"))).isFile(), true, "cleanup never deletes a source file");
-    assert.equal((await stat(join(cleanupRoot, "Cleanup Few Opens.mkv"))).isFile(), true, "a delete-candidate stays on disk");
+    assert.equal((await stat(join(cleanupRoot, "Cleanup Never Opened.mp4"))).isFile(), true, "cleanup never deletes a source file");
+    assert.equal((await stat(join(cleanupRoot, "Cleanup Few Opens.mp4"))).isFile(), true, "a delete-candidate stays on disk");
+
+    // A3 · review mode from the cleanup queue. The A2 marks are cleared through
+    // the same state filters, then a candidate is opened through the real
+    // playback bridge, closed, and marked. Review facts come from the seeded A1
+    // rows (open count, accumulated played seconds, last-open time); the
+    // renderer only names the open currently in progress.
+    const readReviewDecision = () => evaluate<{
+      open: boolean;
+      title: string;
+      facts: string;
+      note: string;
+      error: string;
+      retryHidden: boolean;
+      focusedId: string;
+      actions: string[];
+      viewport: { width: number; height: number };
+      rect: { left: number; right: number; top: number; bottom: number } | null;
+    }>(window, `(() => {
+      const dialog = document.querySelector('#review-decision-dialog');
+      const box = dialog?.getBoundingClientRect();
+      return {
+        open: dialog?.open === true,
+        title: document.querySelector('#review-decision-title')?.textContent || '',
+        facts: document.querySelector('#review-decision-facts')?.textContent || '',
+        note: document.querySelector('#review-decision-note')?.textContent || '',
+        error: document.querySelector('#review-decision-error')?.hidden === false ? document.querySelector('#review-decision-error')?.textContent || '' : '',
+        retryHidden: document.querySelector('#review-retry')?.hidden !== false,
+        focusedId: document.activeElement instanceof HTMLElement ? document.activeElement.id : '',
+        actions: [...(dialog?.querySelectorAll('.dialog-actions button') ?? [])].filter((button) => !button.hidden).map((button) => button.textContent || ''),
+        viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight },
+        rect: box ? { left: box.left, right: box.right, top: box.top, bottom: box.bottom } : null,
+      };
+    })()`);
+    const readReviewPlayer = () => evaluate<{
+      player: boolean;
+      ready: boolean;
+      barHidden: boolean;
+      facts: string;
+      scope: string;
+      closeText: string;
+      closeLabel: string;
+      cleanupHidden: boolean;
+      detailHidden: boolean;
+    }>(window, `(() => ({
+      player: document.querySelector('[data-view="player"]')?.hidden === false,
+      ready: document.querySelector('#player-toggle-button')?.disabled === false,
+      barHidden: document.querySelector('#player-review-bar')?.hidden !== false,
+      facts: document.querySelector('#player-review-facts')?.textContent || '',
+      scope: document.querySelector('.player-review-scope')?.textContent || '',
+      closeText: document.querySelector('#player-close-button')?.textContent?.trim() || '',
+      closeLabel: document.querySelector('#player-close-button')?.getAttribute('aria-label') || '',
+      cleanupHidden: document.querySelector('#cleanup-section')?.hidden !== false,
+      detailHidden: document.querySelector('#media-detail')?.hidden !== false,
+    }))()`);
+    const findOverlayWindow = async (): Promise<BrowserWindow> => {
+      const end = Date.now() + 10_000;
+      while (Date.now() < end) {
+        const overlay = BrowserWindow.getAllWindows().find((candidate) => candidate !== window && !candidate.isDestroyed() && candidate.webContents.getURL().endsWith("/overlay.html"));
+        if (overlay) return overlay;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      throw new Error("the player overlay window did not appear for review mode");
+    };
+    const resetCleanupMarks = async (): Promise<void> => {
+      const expected: Array<{ state: "keep" | "snooze" | "delete-candidate"; count: number }> = [
+        { state: "keep", count: 1 },
+        { state: "snooze", count: 1 },
+        { state: "delete-candidate", count: 1 },
+      ];
+      for (const entry of expected) {
+        await evaluate(window, `document.querySelector('#cleanup-state-filters [data-cleanup-state="${entry.state}"]')?.click()`);
+        await waitFor(`cleanup ${entry.state} filter for review setup`, readCleanup, (value) => value.stateFilters.find((filter) => filter.value === entry.state)?.pressed === true && value.cards.length === entry.count && value.cards.every((card) => card.state === entry.state));
+        await evaluate(window, `document.querySelector('#cleanup-candidates [data-cleanup-action="none"]')?.click()`);
+        await waitFor(`cleanup ${entry.state} mark cleared`, readCleanup, (value) => value.cards.length === 0);
+      }
+      await evaluate(window, `document.querySelector('#cleanup-state-filters [data-cleanup-state="none"]')?.click()`);
+      await waitFor("active cleanup queue restored for review", readCleanup, (value) => value.cards.length === 5);
+    };
+    await resetCleanupMarks();
+
+    // Keyboard opens the candidate; the strip names the current (fourth) open and
+    // reuses the A1 totals instead of deriving them from this playback.
+    await evaluate(window, `document.querySelector('[data-cleanup-media-id="${fewOpensId}"] [data-cleanup-action="review"]')?.focus()`);
+    assert.equal(await evaluate(window, "document.activeElement?.dataset.cleanupAction"), "review", "the review action is keyboard focusable");
+    await pressKey(window, "Enter");
+    const reviewPlayer = await waitFor("review playback opened from the cleanup queue", readReviewPlayer, (value) => value.player && value.ready);
+    assert.equal(reviewPlayer.barHidden, false, "review playback shows the inspection strip");
+    assert.equal(reviewPlayer.facts, "第 3 次打开 · 累计 16 分钟 · 上次 100 天前", `the strip uses the A1 open count/total/last-open snapshot: ${reviewPlayer.facts}`);
+    assert.match(reviewPlayer.scope, /不会删除文件/, "the strip states the action scope: marks never delete files");
+    assert.match(reviewPlayer.closeText, /返回整理/, "review playback names the cleanup queue as its return target");
+    assert.equal(reviewPlayer.closeLabel, "返回整理");
+    assert.equal(reviewPlayer.cleanupHidden, false, "the cleanup queue stays underneath the review player");
+    assert.equal(reviewPlayer.detailHidden, true, "review playback does not open a detail page");
+    const overlayReview = await findOverlayWindow();
+    const readOverlayReview = () => overlayReview.webContents.executeJavaScript(`(() => ({
+      facts: document.querySelector('#player-review-facts')?.textContent || '',
+      barHidden: document.querySelector('#player-review-bar')?.hidden !== false,
+    }))()`);
+    await waitFor("overlay mirrors the review strip", readOverlayReview, (value: { facts: string; barHidden: boolean }) => value.barHidden === false && value.facts.length > 0);
+    assert.equal((await readOverlayReview()).facts, reviewPlayer.facts, "the sandboxed overlay mirrors the same A1 facts");
+
+    await evaluate(window, "window.zVideo.localPlayback.command({ type: 'seek', positionSec: 5 })");
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await evaluate(window, "document.querySelector('#player-close-button')?.click()");
+    const keepDecision = await waitFor("review decision after close", readReviewDecision, (value) => value.open === true);
+    assert.equal(keepDecision.title, "《Cleanup Few Opens》要保留吗？");
+    assert.equal(keepDecision.facts, "第 3 次打开 · 累计 16 分钟 · 上次 100 天前", "the close-time decision repeats the A1 facts");
+    assert.match(keepDecision.note, /不会删除、移动或改名文件/, "the decision explains that marking only changes cleanup state");
+    assert.deepEqual(keepDecision.actions, ["保留", "稍后", "待删", "返回队列"]);
+    assert.equal(keepDecision.focusedId, "review-keep", "the first decision receives keyboard focus");
+    await pressKey(window, "Enter");
+    const keptFromReview = await waitFor(
+      "keep decision saved from the keyboard",
+      async () => ({ decision: await readReviewDecision(), cleanup: await readCleanup(), focused: await evaluate(window, "document.activeElement?.dataset.cleanupMediaId || ''") }),
+      (value) => value.decision.open === false && value.focused === fewOpensId && value.cleanup.cards.some((card) => card.mediaId === fewOpensId && card.state === "keep"),
+    );
+    assert.equal(keptFromReview.focused, fewOpensId, "focus returns to the inspected candidate card");
+    assert.match(keptFromReview.cleanup.message, /已标记保留/);
+    assert.equal(await evaluate(window, `window.zVideo.localLibrary.getCleanupQueue({ state: "keep" }).then((result) => result.queue.candidates.find((candidate) => candidate.item.mediaId === ${JSON.stringify(fewOpensId)})?.cleanupState || "")`), "keep", "the review decision is persisted in the ledger");
+
+    // Snooze and delete decisions follow the same close-time path.
+    await evaluate(window, `document.querySelector('#cleanup-state-filters [data-cleanup-state="none"]')?.click()`);
+    await waitFor("active queue after keep decision", readCleanup, (value) => value.cards.length === 4);
+    await evaluate(window, `document.querySelector('[data-cleanup-media-id="${lowReturnId}"] [data-cleanup-action="review"]')?.click()`);
+    const snoozePlayer = await waitFor("review playback for snooze", readReviewPlayer, (value) => value.player && value.ready);
+    assert.equal(snoozePlayer.facts, "第 4 次打开 · 累计 5 分钟 · 上次 10 天前");
+    await evaluate(window, "document.querySelector('#player-close-button')?.click()");
+    await waitFor("snooze decision open", readReviewDecision, (value) => value.open === true && value.focusedId === "review-keep");
+    await evaluate(window, "document.querySelector('#review-snooze')?.click()");
+    const snoozedFromReview = await waitFor(
+      "snooze decision saved",
+      async () => ({ decision: await readReviewDecision(), cleanup: await readCleanup(), focused: await evaluate(window, "document.activeElement?.dataset.cleanupMediaId || ''") }),
+      (value) => value.decision.open === false && value.focused === lowReturnId && value.cleanup.cards.some((card) => card.mediaId === lowReturnId && card.state === "snooze"),
+    );
+    assert.equal(snoozedFromReview.focused, lowReturnId, "focus returns to the snoozed candidate card");
+    assert.match(snoozedFromReview.cleanup.message, /已标记稍后/);
+
+    // A failed mark keeps the dialog open with an explicit retry; retry persists.
+    await evaluate(window, `document.querySelector('#cleanup-state-filters [data-cleanup-state="none"]')?.click()`);
+    await waitFor("active queue after snooze decision", readCleanup, (value) => value.cards.length === 3);
+    await evaluate(window, `document.querySelector('[data-cleanup-media-id="${lowRevisitId}"] [data-cleanup-action="review"]')?.click()`);
+    const deletePlayer = await waitFor("review playback for delete", readReviewPlayer, (value) => value.player && value.ready);
+    assert.equal(deletePlayer.facts, "第 3 次打开 · 累计 33 分钟 · 上次 200 天前");
+    await evaluate(window, "document.querySelector('#player-close-button')?.click()");
+    await waitFor("delete decision open", readReviewDecision, (value) => value.open === true);
+    failNextCleanupSetState = true;
+    await evaluate(window, "document.querySelector('#review-delete')?.click()");
+    const failedDelete = await waitFor("review mark failure", readReviewDecision, (value) => value.open === true && value.error.length > 0);
+    assert.match(failedDelete.error, /标记保存失败/);
+    assert.equal(failedDelete.retryHidden, false, "a failed mark exposes an explicit retry");
+    assert.equal(failedDelete.focusedId, "review-delete", "a failed mark keeps the chosen action as the control to retry");
+    await evaluate(window, "document.querySelector('#review-retry')?.click()");
+    const deletedFromReview = await waitFor(
+      "delete decision saved after retry",
+      async () => ({ decision: await readReviewDecision(), cleanup: await readCleanup(), focused: await evaluate(window, "document.activeElement?.dataset.cleanupMediaId || ''") }),
+      (value) => value.decision.open === false && value.focused === lowRevisitId && value.cleanup.cards.some((card) => card.mediaId === lowRevisitId && card.state === "delete-candidate"),
+    );
+    assert.equal(deletedFromReview.focused, lowRevisitId, "focus returns to the delete-marked candidate card");
+    assert.match(deletedFromReview.cleanup.deleteSummary, /待删清单 1 项 · 6\.0 GB/);
+    assert.equal((await stat(join(cleanupRoot, "Cleanup Low Revisit.mp4"))).isFile(), true, "review marking still never deletes a source file");
+
+    // Escape returns to the queue without touching the mark, and 900×640 keeps
+    // the mirrored strip above (not over) the controls and the dialog unclipped.
+    await evaluate(window, `document.querySelector('#cleanup-state-filters [data-cleanup-state="none"]')?.click()`);
+    await waitFor("active queue before review return", readCleanup, (value) => value.cards.length === 2);
+    await evaluate(window, `document.querySelector('[data-cleanup-media-id="${neverOpenedId}"] [data-cleanup-action="review"]')?.click()`);
+    const returnPlayer = await waitFor("review playback for keyboard return", readReviewPlayer, (value) => value.player && value.ready);
+    assert.equal(returnPlayer.facts, "首次打开 · 尚无播放记录", "a never-opened candidate does not invent history");
+    window.setSize(900, 640);
+    await waitFor("overlay review strip at 900x640", async () => {
+      const layout = await overlayReview.webContents.executeJavaScript(`(() => {
+        const bar = document.querySelector('#player-review-bar')?.getBoundingClientRect();
+        const heading = document.querySelector('.player-heading')?.getBoundingClientRect();
+        const controls = document.querySelector('.player-controls')?.getBoundingClientRect();
+        return {
+          viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight },
+          bar: bar ? { left: bar.left, right: bar.right, top: bar.top, bottom: bar.bottom } : null,
+          heading: heading ? { left: heading.left, right: heading.right, top: heading.top, bottom: heading.bottom } : null,
+          controls: controls ? { left: controls.left, right: controls.right, top: controls.top, bottom: controls.bottom } : null,
+          overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        };
+      })()`);
+      return layout.viewport.width <= 905 && layout.bar !== null ? layout : false;
+    }, (layout) => Boolean(layout));
+    const reviewLayout = await overlayReview.webContents.executeJavaScript(`(() => {
+      const bar = document.querySelector('#player-review-bar')?.getBoundingClientRect();
+      const controls = document.querySelector('.player-controls')?.getBoundingClientRect();
+      const heading = document.querySelector('.player-heading')?.getBoundingClientRect();
+      return {
+        viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight },
+        bar: bar ? { left: bar.left, right: bar.right, top: bar.top, bottom: bar.bottom } : null,
+        heading: heading ? { left: heading.left, right: heading.right, top: heading.top, bottom: heading.bottom } : null,
+        controls: controls ? { left: controls.left, right: controls.right, top: controls.top, bottom: controls.bottom } : null,
+        overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      };
+    })()`);
+    assert.ok(reviewLayout.overflowX <= 1, `the 900x640 review strip does not overflow horizontally: ${reviewLayout.overflowX}`);
+    assert.ok(reviewLayout.bar && reviewLayout.bar.left >= 0 && reviewLayout.bar.right <= reviewLayout.viewport.width + 1 && reviewLayout.bar.top >= 0, `the 900x640 review strip is inside the overlay: ${JSON.stringify(reviewLayout.bar)}`);
+    assert.ok(reviewLayout.bar && reviewLayout.controls && reviewLayout.bar.bottom <= reviewLayout.controls.top, `the 900x640 review strip never covers playback controls: ${JSON.stringify(reviewLayout)}`);
+    await evaluate(window, "document.querySelector('#player-close-button')?.click()");
+    const compactReviewDecision = await waitFor("review decision at 900x640", readReviewDecision, (value) => value.open === true && value.viewport.width <= 900);
+    assert.ok(compactReviewDecision.rect && compactReviewDecision.rect.left >= 0 && compactReviewDecision.rect.right <= compactReviewDecision.viewport.width + 1 && compactReviewDecision.rect.top >= 0 && compactReviewDecision.rect.bottom <= compactReviewDecision.viewport.height + 1, `the 900x640 review decision is not clipped: ${JSON.stringify(compactReviewDecision)}`);
+    await pressKey(window, "Escape");
+    const returnedFromReview = await waitFor(
+      "Escape returns to the cleanup queue",
+      async () => ({ decision: await readReviewDecision(), cleanup: await readCleanup(), focused: await evaluate(window, "document.activeElement?.dataset.cleanupMediaId || ''") }),
+      (value) => value.decision.open === false && value.focused === neverOpenedId && value.cleanup.cards.length === 2,
+    );
+    assert.equal(returnedFromReview.focused, neverOpenedId, "Escape returns focus to the original candidate card");
+    assert.match(returnedFromReview.cleanup.message, /没有修改标记/);
+    assert.equal(returnedFromReview.cleanup.cards.find((card) => card.mediaId === neverOpenedId)?.state, "none", "Escape never writes a review mark");
+    window.setSize(1040, 720);
+    await waitFor("default size restored after review checks", () => evaluate(window, "document.documentElement.clientWidth"), (width) => Number(width) > 1000);
 
     // 900×640 keeps the queue, reasons, delete list and settings inside the window.
     window.setSize(900, 640);
