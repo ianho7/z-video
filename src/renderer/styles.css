@@ -707,3 +707,27 @@ dialog.cleanup-delete-dialog { width: min(640px, 94vw); max-height: calc(100vh -
   .cleanup-card { padding: 12px 14px; }
   .cleanup-card-reason { font-size: 11px; }
 }
+
+/* A3 · review mode: one top strip over the native video, then a close-time
+   decision dialog back in the cleanup queue. The strip shares the player
+   heading, so the sandboxed overlay mirrors it without a second contract. */
+.player-heading { flex: 0 0 auto; min-height: 72px; flex-wrap: wrap; row-gap: 6px; }
+.player-heading .player-now-playing { flex: 1 1 220px; min-width: 0; }
+.player-review-bar { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; min-width: 0; padding: 8px 14px; border-radius: 14px; color: var(--text); background: #141619; font-size: 13px; line-height: 1.5; }
+.player-review-bar[hidden] { display: none; }
+.player-review-kicker { flex: none; color: var(--lavender); font-size: 11px; font-weight: 900; letter-spacing: .06em; }
+.player-review-facts { min-width: 0; overflow-wrap: anywhere; font-weight: 800; }
+.player-review-scope { min-width: 0; color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
+.cleanup-review-button { color: var(--lavender); }
+.cleanup-card:focus { outline: 3px solid var(--lavender); outline-offset: 3px; }
+dialog.review-decision-dialog { width: min(620px, 94vw); max-height: calc(100vh - 48px); overflow: auto; }
+.review-decision-dialog h2 { margin: 6px 0 8px; overflow-wrap: anywhere; font-size: 24px; font-weight: 900; }
+.review-decision-facts { margin: 0; overflow-wrap: anywhere; color: var(--text); font: 900 17px var(--font-ui); }
+.review-decision-note { margin: 10px 0 0; color: var(--text-muted); font-size: 12px; line-height: 1.7; }
+.review-decision-actions { flex-wrap: wrap; justify-content: flex-start; }
+.review-decision-actions button { min-height: 44px; padding-inline: 16px; border-radius: var(--r-pill); }
+@media (max-height: 700px) {
+  .player-review-bar { padding-block: 6px; }
+  .review-decision-dialog { padding: 22px 24px; }
+  .review-decision-dialog h2 { font-size: 21px; }
+}

@@ -132,15 +132,17 @@ export function renderCleanupCandidate(options: CleanupCardOptions): HTMLElement
 
   const actions = document.createElement("div");
   actions.className = "cleanup-card-actions";
-  const addAction = (action: "keep" | "snooze" | "delete" | "none", label: string) => {
+  const addAction = (action: "review" | "keep" | "snooze" | "delete" | "none", label: string) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = action === "delete" ? "secondary-button cleanup-delete-button" : "secondary-button";
+    button.className = action === "delete" ? "secondary-button cleanup-delete-button" : action === "review" ? "secondary-button cleanup-review-button" : "secondary-button";
     button.dataset.cleanupAction = action;
     button.textContent = label;
     button.setAttribute("aria-label", `${label}《${item.title}》`);
     actions.append(button);
   };
+  card.tabIndex = -1;
+  addAction("review", "打开检查");
   if (candidate.cleanupState === "none") {
     addAction("keep", "保留");
     addAction("snooze", "稍后");
