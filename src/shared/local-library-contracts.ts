@@ -4,7 +4,7 @@
  * may resolve those values.
  */
 
-export const LOCAL_LIBRARY_SCHEMA_VERSION = 2 as const;
+export const LOCAL_LIBRARY_SCHEMA_VERSION = 3 as const;
 
 export const LOCAL_LIBRARY_SCHEMA_TABLES = [
   "sources",
@@ -13,6 +13,8 @@ export const LOCAL_LIBRARY_SCHEMA_TABLES = [
   "artwork",
   "playback_state",
   "scan_runs",
+  "viewing_sessions",
+  "media_history",
 ] as const;
 
 export type LocalLibrarySchemaTable = (typeof LOCAL_LIBRARY_SCHEMA_TABLES)[number];
@@ -80,6 +82,11 @@ export interface LocalMediaDetail {
    * ever part of this list.
    */
   episodePlayback?: LocalPlaybackState[];
+  /**
+   * Aggregated viewing ledger for the selected file. Omitted until the file has
+   * at least one recorded session; never carries a title, filename, or path.
+   */
+  viewing?: LocalViewingHistory;
 }
 
 export interface LocalContinueWatchingItem {
@@ -106,6 +113,74 @@ export interface LocalPlaybackState {
 }
 
 export type LocalPlaybackUpdate = Omit<LocalPlaybackState, "mediaId" | "updatedAtMs"> & { updatedAtMs?: number };
+
+export const EFFECTIVE_WATCH_MIN_SEC = 30 as const;
+export const EFFECTIVE_WATCH_MIN_PERCENT = 3 as const;
+export const COMPLETION_PERCENT = 90 as const;
+
+export type LocalViewingCloseReason = "ended" | "user-close" | "error" | "app-quit" | "interrupted";
+
+/** One recorded playback attempt. Main/worker only; never sent to the renderer. */
+export interface LocalViewingSessionStartInput {
+  mediaId: `media_${string}`;
+  startedAtMs: number;
+  startPositionSec: number;
+}
+
+export interface LocalViewingSessionHeartbeatInput {
+  sessionId: string;
+  playedSec: number;
+  wallSec: number;
+  endPositionSec: number;
+  durationSec?: number;
+  pauseCount: number;
+  seekCount: number;
+  speed: number;
+  heartbeatAtMs: number;
+}
+
+export interface LocalViewingSessionFinishInput extends LocalViewingSessionHeartbeatInput {
+  mediaId: `media_${string}`;
+  endedAtMs: number;
+  completed: boolean;
+  closeReason: LocalViewingCloseReason;
+}
+
+/**
+ * Renderer-safe aggregate for one current media file. Every field is a count or
+ * a renderer-safe value; the DTO never exposes a title, filename, or path.
+ */
+export interface LocalViewingHistory {
+  mediaId: `media_${string}`;
+  openCount: number;
+  effectiveWatchCount: number;
+  completedCount: number;
+  inspectionOpenCount: number;
+  totalPlayedSec: number;
+  firstSeenAtMs: number;
+  lastOpenedAtMs: number;
+  lastPlayedAtMs?: number;
+  lastSessionPlayedSec: number;
+  lastSessionWallSec: number;
+  lastPositionSec: number;
+  lastDurationSec?: number;
+  updatedAtMs: number;
+}
+
+/** Effective watch = at least 30 seconds and at least 3% of a known duration. */
+export function isEffectiveWatch(playedSec: number, durationSec?: number): boolean {
+  if (!Number.isFinite(playedSec) || playedSec < EFFECTIVE_WATCH_MIN_SEC) return false;
+  if (durationSec === undefined || !Number.isFinite(durationSec) || durationSec <= 0) return true;
+  return playedSec * 100 >= durationSec * EFFECTIVE_WATCH_MIN_PERCENT;
+}
+
+/** Completion = the player reported the end, or 90% plus at least 30 played seconds. */
+export function isCompletedWatch(playedSec: number, durationSec: number | undefined, endPositionSec: number): boolean {
+  if (!Number.isFinite(playedSec) || playedSec < EFFECTIVE_WATCH_MIN_SEC) return false;
+  if (durationSec === undefined || !Number.isFinite(durationSec) || durationSec <= 0) return false;
+  if (!Number.isFinite(endPositionSec) || endPositionSec <= 0) return false;
+  return endPositionSec * 100 >= durationSec * COMPLETION_PERCENT;
+}
 
 export interface LocalPlaybackTarget {
   mediaId: `media_${string}`;

@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { isLocalPlaybackControlCommand, isLocalPlaybackOpenOptions, type LocalPlaybackEvent, type LocalPlaybackStore } from "../src/shared/local-playback-contracts";
-import type { LocalPlaybackState } from "../src/shared/local-library-contracts";
+import type { LocalPlaybackState, LocalViewingCloseReason } from "../src/shared/local-library-contracts";
 import { LocalPlaybackCoordinator, type PlayerEngine, type PlayerEngineEvent } from "../src/main/player";
+import type { ViewingLedger } from "../src/main/app-viewing-ledger";
 
 const mediaOne = "media_11111111-1111-4111-8111-111111111111" as const;
 const mediaTwo = "media_22222222-2222-4222-8222-222222222222" as const;
@@ -60,8 +61,49 @@ function createCoordinator(
   store: MemoryPlaybackStore,
   events: LocalPlaybackEvent[],
   fullscreenCalls: boolean[] = [],
+  ledger?: ViewingLedger,
 ): LocalPlaybackCoordinator {
-  return new LocalPlaybackCoordinator(engine, (event) => events.push(event), (enabled) => fullscreenCalls.push(enabled), store);
+  return new LocalPlaybackCoordinator(engine, (event) => events.push(event), (enabled) => fullscreenCalls.push(enabled), store, Date.now, ledger);
+}
+
+class FakeViewingLedger implements ViewingLedger {
+  readonly begins: Array<{ mediaId: string; startPositionSec: number }> = [];
+  readonly playing: boolean[] = [];
+  readonly positions: Array<{ positionSec: number; durationSec?: number }> = [];
+  readonly finishes: Array<{ reason: LocalViewingCloseReason; positionSec: number; durationSec?: number }> = [];
+  pauseCount = 0;
+  seekCount = 0;
+  speeds: number[] = [];
+
+  begin(mediaId: `media_${string}`, startPositionSec: number): void {
+    this.begins.push({ mediaId, startPositionSec });
+  }
+
+  setPlaying(playing: boolean): void {
+    this.playing.push(playing);
+  }
+
+  observePosition(positionSec: number, durationSec?: number): void {
+    this.positions.push({ positionSec, ...(durationSec === undefined ? {} : { durationSec }) });
+  }
+
+  countPause(): void {
+    this.pauseCount += 1;
+  }
+
+  countSeek(): void {
+    this.seekCount += 1;
+  }
+
+  setSpeed(speed: number): void {
+    this.speeds.push(speed);
+  }
+
+  async heartbeat(): Promise<void> {}
+
+  async finish(reason: LocalViewingCloseReason, positionSec: number, durationSec?: number): Promise<void> {
+    this.finishes.push({ reason, positionSec, ...(durationSec === undefined ? {} : { durationSec }) });
+  }
 }
 
 test("local playback resolves by opaque mediaId, restores state, and flushes observed native progress", async () => {
@@ -318,4 +360,70 @@ test("local close and native shutdown leave fullscreen disabled", async () => {
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(fullscreenCalls, [false]);
   assert.equal(events.at(-1)?.type, "closed");
+});
+
+test("local playback records a viewing session with observed positions, pause/seek counts, and the ended reason", async () => {
+  const engine = new FakeLocalEngine();
+  const store = new MemoryPlaybackStore();
+  store.paths.set(mediaOne, "first.mp4");
+  store.states.set(mediaOne, { mediaId: mediaOne, positionSec: 12, durationSec: 300, watched: false, updatedAtMs: 1 });
+  const ledger = new FakeViewingLedger();
+  const coordinator = createCoordinator(engine, store, [], [], ledger);
+
+  await coordinator.open(mediaOne);
+  assert.deepEqual(ledger.begins, [{ mediaId: mediaOne, startPositionSec: 12 }]);
+  engine.starts[0].onEvent({ type: "ready", durationSec: 300 });
+  engine.starts[0].onEvent({ type: "state", state: "playing" });
+  engine.starts[0].onEvent({ type: "position", positionSec: 20, durationSec: 300 });
+  engine.starts[0].onEvent({ type: "settings", volume: 80, muted: false, speed: 1.5 });
+  await coordinator.handle({ type: "pause" });
+  await coordinator.handle({ type: "seek", positionSec: 200 });
+  engine.starts[0].onEvent({ type: "position", positionSec: 280, durationSec: 300 });
+  engine.starts[0].onEvent({ type: "state", state: "ended" });
+  await coordinator.close();
+
+  assert.equal(ledger.pauseCount, 1, "a user pause is counted once");
+  assert.equal(ledger.seekCount, 1, "a user seek is counted once");
+  assert.deepEqual(ledger.speeds, [1.5]);
+  assert.deepEqual(ledger.positions.at(-1), { positionSec: 280, durationSec: 300 });
+  assert.equal(ledger.finishes.length, 1);
+  assert.deepEqual(ledger.finishes[0], { reason: "ended", positionSec: 280, durationSec: 300 });
+  assert.equal(ledger.playing.at(-1), false, "ended leaves the ledger in a non-playing state");
+});
+
+test("a local load failure still closes its viewing session as an error", async () => {
+  const engine = new FakeLocalEngine();
+  const store = new MemoryPlaybackStore();
+  store.paths.set(mediaOne, "broken.mp4");
+  const ledger = new FakeViewingLedger();
+  engine.startError = new Error("decoder failed");
+  const coordinator = createCoordinator(engine, store, [], [], ledger);
+
+  await coordinator.open(mediaOne);
+  await coordinator.close();
+
+  assert.equal(ledger.begins.length, 1);
+  assert.equal(ledger.finishes.length, 1);
+  assert.equal(ledger.finishes[0]?.reason, "error");
+});
+
+test("switching local media and native close both finish the previous viewing session", async () => {
+  const engine = new FakeLocalEngine();
+  const store = new MemoryPlaybackStore();
+  store.paths.set(mediaOne, "first.mp4");
+  store.paths.set(mediaTwo, "second.mp4");
+  const ledger = new FakeViewingLedger();
+  const coordinator = createCoordinator(engine, store, [], [], ledger);
+
+  await coordinator.open(mediaOne);
+  engine.starts[0].onEvent({ type: "position", positionSec: 8, durationSec: 20 });
+  await coordinator.open(mediaTwo);
+  assert.deepEqual(ledger.finishes.map((entry) => entry.reason), ["user-close"]);
+  assert.equal(ledger.begins.length, 2);
+
+  engine.starts[1].onEvent({ type: "position", positionSec: 4, durationSec: 20 });
+  engine.starts[1].onEvent({ type: "closed" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(ledger.finishes.map((entry) => entry.reason), ["user-close", "user-close"]);
+  assert.equal(ledger.finishes.at(-1)?.positionSec, 4);
 });

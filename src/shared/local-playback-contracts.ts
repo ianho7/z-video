@@ -1,4 +1,11 @@
-import { isOpaqueMediaId, type LocalPlaybackState } from "./local-library-contracts.js";
+import {
+  isOpaqueMediaId,
+  type LocalPlaybackState,
+  type LocalViewingHistory,
+  type LocalViewingSessionFinishInput,
+  type LocalViewingSessionHeartbeatInput,
+  type LocalViewingSessionStartInput,
+} from "./local-library-contracts.js";
 
 export type LocalPlaybackMediaId = LocalPlaybackState["mediaId"];
 
@@ -56,6 +63,16 @@ export interface LocalPlaybackStore {
   resolveMediaPath(mediaId: LocalPlaybackMediaId): Promise<string | undefined>;
   getPlayback(mediaId: LocalPlaybackMediaId): Promise<LocalPlaybackState | undefined>;
   savePlayback(state: LocalPlaybackState): Promise<LocalPlaybackState>;
+}
+
+/**
+ * Optional viewing-ledger sink. The local-library owner implements it; player
+ * tests may omit it, in which case no viewing history is recorded.
+ */
+export interface LocalViewingSessionStore {
+  startViewingSession(input: LocalViewingSessionStartInput): Promise<{ sessionId: string }>;
+  heartbeatViewingSession(input: LocalViewingSessionHeartbeatInput): Promise<void>;
+  finishViewingSession(input: LocalViewingSessionFinishInput): Promise<LocalViewingHistory | undefined>;
 }
 
 export function isLocalPlaybackControlCommand(value: unknown): value is LocalPlaybackControlCommand {

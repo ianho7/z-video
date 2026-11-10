@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rename, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -14,6 +14,39 @@ function openSqlite(filePath: string): DatabaseSyncType {
   const sqlite = require("node:sqlite") as { DatabaseSync?: new (path: string) => DatabaseSyncType };
   if (typeof sqlite.DatabaseSync !== "function") throw new Error("node:sqlite is unavailable");
   return new sqlite.DatabaseSync(filePath);
+}
+
+interface RecordedSessionSeed {
+  startedAtMs: number;
+  playedSec: number;
+  wallSec: number;
+  endPositionSec: number;
+  durationSec?: number;
+  completed: boolean;
+  closeReason: "ended" | "user-close" | "error" | "app-quit" | "interrupted";
+}
+
+async function recordViewingSession(database: LocalLibraryDatabase, mediaId: `media_${string}`, seed: RecordedSessionSeed): Promise<void> {
+  const { sessionId } = await database.startViewingSession({ mediaId, startedAtMs: seed.startedAtMs, startPositionSec: 0 });
+  const heartbeat = {
+    sessionId,
+    playedSec: seed.playedSec,
+    wallSec: seed.wallSec,
+    endPositionSec: seed.endPositionSec,
+    ...(seed.durationSec === undefined ? {} : { durationSec: seed.durationSec }),
+    pauseCount: 1,
+    seekCount: 2,
+    speed: 1,
+    heartbeatAtMs: seed.startedAtMs + seed.wallSec * 1000,
+  };
+  await database.heartbeatViewingSession(heartbeat);
+  await database.finishViewingSession({
+    ...heartbeat,
+    mediaId,
+    endedAtMs: heartbeat.heartbeatAtMs,
+    completed: seed.completed,
+    closeReason: seed.closeReason,
+  });
 }
 
 async function run(): Promise<void> {
@@ -116,7 +149,7 @@ async function run(): Promise<void> {
     const state = await database.start();
     assert.equal(state.status, "ready");
     assert.equal(state.sqliteAvailable, true);
-    assert.equal(state.schemaVersion, 2);
+    assert.equal(state.schemaVersion, 3);
 
     const imported = await database.importFirstMovieInFolder(fixtureRoot);
     assert.equal(imported.status, "imported");
@@ -135,6 +168,52 @@ async function run(): Promise<void> {
     assert.equal(page.items.length, 1);
     assert.equal(Object.prototype.hasOwnProperty.call(page.items[0], "path"), false);
     assert.equal(await database.resolveMediaPath(imported.item.mediaId), moviePath);
+
+    const ownedMediaId = imported.item.mediaId;
+    await recordViewingSession(database, ownedMediaId, {
+      startedAtMs: 1_000,
+      playedSec: 400,
+      wallSec: 500,
+      endPositionSec: 1_200,
+      durationSec: 1_200,
+      completed: true,
+      closeReason: "ended",
+    });
+    await recordViewingSession(database, ownedMediaId, {
+      startedAtMs: 2_000,
+      playedSec: 5,
+      wallSec: 8,
+      endPositionSec: 5,
+      durationSec: 1_200,
+      completed: false,
+      closeReason: "user-close",
+    });
+    await recordViewingSession(database, ownedMediaId, {
+      startedAtMs: 3_000,
+      playedSec: 60,
+      wallSec: 70,
+      endPositionSec: 60,
+      durationSec: 1_200,
+      completed: false,
+      closeReason: "user-close",
+    });
+    const viewing = await database.getViewingHistory(ownedMediaId);
+    assert.ok(viewing, "finished sessions produce a viewing aggregate");
+    assert.equal(viewing.openCount, 3, "every session counts as one open");
+    assert.equal(viewing.effectiveWatchCount, 2, "400s and 60s are effective; 5s is an inspection open");
+    assert.equal(viewing.completedCount, 1, "only the ended session completes");
+    assert.equal(viewing.inspectionOpenCount, 1);
+    assert.equal(viewing.totalPlayedSec, 465);
+    assert.equal(viewing.lastOpenedAtMs, 3_000, "the newest session owns the last-open time");
+    assert.equal(viewing.lastSessionPlayedSec, 60);
+    assert.equal(viewing.lastSessionWallSec, 70);
+    assert.equal(viewing.lastPositionSec, 60);
+    assert.equal(viewing.lastDurationSec, 1_200);
+    assert.equal(JSON.stringify(viewing).includes(fixtureRoot), false, "viewing history never exposes the source root");
+    for (const key of Object.keys(viewing)) assert.doesNotMatch(key, /path|root|relative|title|file/i, `viewing history must not expose ${key}`);
+    const viewingDetail = await database.getDetail(ownedMediaId);
+    assert.deepEqual(viewingDetail?.viewing, viewing, "detail carries the same renderer-safe aggregate");
+    assert.equal(JSON.stringify(viewingDetail).includes(moviePath), false, "detail never leaks the media path through the viewing block");
 
     const rootScan = await database.scanFolder(rootScanRoot);
     assert.equal(rootScan.status, "completed");
@@ -525,6 +604,7 @@ async function run(): Promise<void> {
 
     const removedState = await database.removeSource(imported.item.sourceId);
     assert.equal(removedState.sources.some((source) => source.sourceId === imported.item.sourceId), false);
+    assert.equal(await database.getViewingHistory(imported.item.mediaId), undefined, "removing a source deletes its viewing history");
     assert.equal((await database.list({ page: 1, pageSize: 50, query: "Owned Movie 2026" })).totalCount, 0);
     assert.equal((await stat(moviePath)).isFile(), true);
 
@@ -532,10 +612,154 @@ async function run(): Promise<void> {
     const reopened = new LocalLibraryDatabase({ dbPath, workerPath });
     const reopenedState = await reopened.start();
     assert.equal(reopenedState.status, "ready");
-    assert.equal(reopenedState.schemaVersion, 2);
+    assert.equal(reopenedState.schemaVersion, 3);
     const reopenedPage = await reopened.list({ page: 1, pageSize: 50 });
     assert.equal(reopenedPage.items.some((item) => item.mediaId === imported.item.mediaId), false);
     await reopened.close();
+
+    const viewingRoot = join(profile, "viewing-ledger-fixture");
+    await mkdir(viewingRoot, { recursive: true });
+    const viewingFilePath = join(viewingRoot, "Viewing Ledger Movie.mkv");
+    const viewingBytes = Buffer.from("viewing ledger fixture");
+    await writeFile(viewingFilePath, viewingBytes);
+    const ledgerDb = new LocalLibraryDatabase({ dbPath, workerPath });
+    await ledgerDb.start();
+    const ledgerScan = await ledgerDb.scanFolder(viewingRoot);
+    assert.equal(ledgerScan.status, "completed");
+    const ledgerItem = (await ledgerDb.list({ page: 1, pageSize: 10, sourceId: ledgerScan.sourceId })).items[0];
+    assert.ok(ledgerItem, "viewing ledger fixture was indexed");
+    await recordViewingSession(ledgerDb, ledgerItem.mediaId, {
+      startedAtMs: 10_000,
+      playedSec: 120,
+      wallSec: 150,
+      endPositionSec: 120,
+      durationSec: 1_200,
+      completed: false,
+      closeReason: "user-close",
+    });
+    assert.equal((await ledgerDb.getViewingHistory(ledgerItem.mediaId))?.openCount, 1);
+
+    // A completed scan that no longer sees the file confirms the user deleted
+    // it, so its ledger rows disappear even though the media row is retained.
+    await rm(viewingFilePath, { force: true });
+    const missingScan = await ledgerDb.scanFolder(viewingRoot);
+    assert.equal(missingScan.status, "completed");
+    assert.equal(await ledgerDb.getViewingHistory(ledgerItem.mediaId), undefined, "a scan-confirmed missing file forgets its viewing history");
+    const missingDb = openSqlite(dbPath);
+    try {
+      const sessionCount = missingDb.prepare("SELECT COUNT(*) AS count FROM viewing_sessions WHERE media_id = ?").get(ledgerItem.mediaId) as { count?: number } | undefined;
+      assert.equal(Number(sessionCount?.count), 0, "missing-file cleanup deletes the raw sessions too");
+    } finally {
+      missingDb.close();
+    }
+
+    // Re-adding the file starts a fresh record instead of reviving the old one.
+    await writeFile(viewingFilePath, viewingBytes);
+    await utimes(viewingFilePath, new Date(Date.now() + 2_000), new Date(Date.now() + 2_000));
+    const readdedScan = await ledgerDb.scanFolder(viewingRoot);
+    assert.equal(readdedScan.status, "completed");
+    const readdedItem = (await ledgerDb.list({ page: 1, pageSize: 10, sourceId: ledgerScan.sourceId })).items[0];
+    assert.ok(readdedItem, "re-added file was indexed again");
+    assert.notEqual(readdedItem.mediaId, ledgerItem.mediaId, "a re-added file gets a fresh opaque identity");
+    assert.equal(await ledgerDb.getViewingHistory(readdedItem.mediaId), undefined, "re-adding starts with no viewing history");
+    await recordViewingSession(ledgerDb, readdedItem.mediaId, {
+      startedAtMs: 20_000,
+      playedSec: 60,
+      wallSec: 65,
+      endPositionSec: 60,
+      durationSec: 1_200,
+      completed: false,
+      closeReason: "user-close",
+    });
+
+    // A temporarily unavailable source keeps its records; only an explicit
+    // removal or a readable scan that confirms the file is missing clears them.
+    await rename(viewingRoot, `${viewingRoot}-offline`);
+    const offlineScan = await ledgerDb.scanFolder(viewingRoot);
+    assert.equal(offlineScan.status, "unavailable");
+    assert.equal((await ledgerDb.getViewingHistory(readdedItem.mediaId))?.openCount, 1, "an offline source keeps viewing history");
+    await rename(`${viewingRoot}-offline`, viewingRoot);
+    const backOnlineScan = await ledgerDb.scanFolder(viewingRoot);
+    assert.equal(backOnlineScan.status, "completed");
+    assert.equal((await ledgerDb.getViewingHistory(readdedItem.mediaId))?.openCount, 1, "coming back online keeps the same history");
+    await ledgerDb.removeSource(readdedScan.sourceId);
+    assert.equal(await ledgerDb.getViewingHistory(readdedItem.mediaId), undefined, "removing the source forgets the history");
+    await ledgerDb.close();
+
+    // Crash recovery: a session left open by a dead process is settled from its
+    // last heartbeat as interrupted, not lost.
+    const recoveryDbPath = join(profile, "recovery.sqlite");
+    const recoveryRoot = join(profile, "recovery-fixture");
+    await mkdir(recoveryRoot, { recursive: true });
+    await writeFile(join(recoveryRoot, "Recovery Movie.mkv"), Buffer.from("recovery fixture"));
+    const recoveryDb = new LocalLibraryDatabase({ dbPath: recoveryDbPath, workerPath });
+    await recoveryDb.start();
+    const recoveryScan = await recoveryDb.scanFolder(recoveryRoot);
+    const recoveryItem = (await recoveryDb.list({ page: 1, pageSize: 10, sourceId: recoveryScan.sourceId })).items[0];
+    assert.ok(recoveryItem, "recovery fixture was indexed");
+    const interrupted = await recoveryDb.startViewingSession({ mediaId: recoveryItem.mediaId, startedAtMs: 50_000, startPositionSec: 0 });
+    await recoveryDb.heartbeatViewingSession({
+      sessionId: interrupted.sessionId,
+      playedSec: 45,
+      wallSec: 60,
+      endPositionSec: 45,
+      durationSec: 600,
+      pauseCount: 2,
+      seekCount: 1,
+      speed: 1,
+      heartbeatAtMs: 110_000,
+    });
+    await recoveryDb.close();
+    const recovered = new LocalLibraryDatabase({ dbPath: recoveryDbPath, workerPath });
+    await recovered.start();
+    const recoveredHistory = await recovered.getViewingHistory(recoveryItem.mediaId);
+    assert.ok(recoveredHistory, "the interrupted session was recovered, not dropped");
+    assert.equal(recoveredHistory.openCount, 1);
+    assert.equal(recoveredHistory.effectiveWatchCount, 1, "45 played seconds are an effective watch");
+    assert.equal(recoveredHistory.totalPlayedSec, 45);
+    assert.equal(recoveredHistory.lastSessionWallSec, 60);
+    await recovered.close();
+    const recoveredDb = openSqlite(recoveryDbPath);
+    try {
+      const sessionRow = recoveredDb.prepare("SELECT close_reason AS closeReason, ended_at AS endedAt FROM viewing_sessions WHERE session_id = ?").get(interrupted.sessionId) as { closeReason?: string; endedAt?: number } | undefined;
+      assert.equal(sessionRow?.closeReason, "interrupted");
+      assert.equal(sessionRow?.endedAt, 110_000, "recovery settles at the last heartbeat");
+    } finally {
+      recoveredDb.close();
+    }
+
+    // v2 → v3 migration: an existing v2 database gains the two ledger tables
+    // without touching its rows, and re-opening is idempotent.
+    const versionTwoPath = join(profile, "version-two.sqlite");
+    const v2Snapshot = openSqlite(dbPath);
+    try {
+      v2Snapshot.exec(`VACUUM INTO '${versionTwoPath.replace(/'/g, "''")}'`);
+    } finally {
+      v2Snapshot.close();
+    }
+    const v2 = openSqlite(versionTwoPath);
+    try {
+      v2.exec("DROP TABLE IF EXISTS media_history;");
+      v2.exec("DROP TABLE IF EXISTS viewing_sessions;");
+      v2.exec("PRAGMA user_version = 2;");
+    } finally {
+      v2.close();
+    }
+    const v2Db = new LocalLibraryDatabase({ dbPath: versionTwoPath, workerPath });
+    assert.equal((await v2Db.start()).schemaVersion, 3);
+    await v2Db.close();
+    const v3 = openSqlite(versionTwoPath);
+    try {
+      const version = v3.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
+      assert.equal(Number(version?.user_version), 3);
+      const tables = v3.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('viewing_sessions', 'media_history') ORDER BY name").all() as Array<{ name?: string }>;
+      assert.deepEqual(tables.map((row) => row.name), ["media_history", "viewing_sessions"], "v3 migration creates both ledger tables");
+    } finally {
+      v3.close();
+    }
+    const v2Again = new LocalLibraryDatabase({ dbPath: versionTwoPath, workerPath });
+    assert.equal((await v2Again.start()).schemaVersion, 3, "re-running the v3 migration is idempotent");
+    await v2Again.close();
 
     const legacyPath = join(profile, "legacy-v1.sqlite");
     const snapshot = openSqlite(dbPath);
@@ -557,13 +781,13 @@ async function run(): Promise<void> {
       legacy.close();
     }
     const legacyDb = new LocalLibraryDatabase({ dbPath: legacyPath, workerPath });
-    assert.equal((await legacyDb.start()).schemaVersion, 2);
+    assert.equal((await legacyDb.start()).schemaVersion, 3);
     const migratedPage = await legacyDb.list({ page: 1, pageSize: 50, sort: "released_desc" });
     assert.equal(migratedPage.totalCount > 0, true);
     assert.equal(migratedPage.items.every((item) => item.premieredDate === null), true, "migration never guesses a date for old rows");
     await legacyDb.close();
     const migratedAgain = new LocalLibraryDatabase({ dbPath: legacyPath, workerPath });
-    assert.equal((await migratedAgain.start()).schemaVersion, 2, "re-running the v2 migration is idempotent");
+    assert.equal((await migratedAgain.start()).schemaVersion, 3, "re-running the migration is idempotent");
     const migratedAgainPage = await migratedAgain.list({ page: 1, pageSize: 50, sort: "released_desc" });
     assert.equal(migratedAgainPage.totalCount, migratedPage.totalCount);
     assert.equal(migratedAgainPage.items.every((item) => item.premieredDate === null), true);
@@ -571,7 +795,7 @@ async function run(): Promise<void> {
     const migratedDb = openSqlite(legacyPath);
     try {
       const version = migratedDb.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
-      assert.equal(Number(version?.user_version), 2);
+      assert.equal(Number(version?.user_version), 3);
       const columns = migratedDb.prepare("PRAGMA table_info(collections)").all() as Array<{ name?: string }>;
       assert.equal(columns.some((column) => column.name === "premiered_at"), true);
       const index = migratedDb.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'collections_premiered_at'").get();

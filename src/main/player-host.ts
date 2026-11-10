@@ -11,8 +11,10 @@ import {
   type LocalPlaybackOpenResult,
   type LocalPlaybackOpenOptions,
   type LocalPlaybackStore,
+  type LocalViewingSessionStore,
 } from "../shared/local-playback-contracts";
 import { IPC_CHANNELS } from "../shared/ipc-channels";
+import { AppViewingLedger } from "./app-viewing-ledger";
 import { MpvNativePlayer } from "./mpv-player";
 import { LocalPlaybackCoordinator, PlaybackCoordinator, type PlaybackIdentity, type PlaybackProgressSnapshot, type PlaybackTarget } from "./player";
 import { NasError, type AuthenticatedSession, type NasCollectionDetail, type NasEpisode, type NasPlaybackProgress, type NasPlaybackStream } from "./nas-client";
@@ -190,6 +192,7 @@ export class MainLocalPlaybackHost implements LocalPlaybackHost {
     private readonly appPreferences?: AppPreferencesStore,
   ) {
     const engine = new MpvNativePlayer(window, appPreferences?.get());
+    const ledger = isViewingSessionStore(store) ? new AppViewingLedger(store) : undefined;
     this.coordinator = new LocalPlaybackCoordinator(
       engine,
       (event) => {
@@ -200,6 +203,8 @@ export class MainLocalPlaybackHost implements LocalPlaybackHost {
         if (!window.isDestroyed() && window.isFullScreen() !== enabled) window.setFullScreen(enabled);
       },
       store,
+      Date.now,
+      ledger,
     );
   }
 
@@ -229,7 +234,7 @@ export class MainLocalPlaybackHost implements LocalPlaybackHost {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    await this.coordinator.close();
+    await this.coordinator.close("app-quit");
     await this.appPreferences?.flush();
   }
 
@@ -277,4 +282,11 @@ function findSamplePath(): string | undefined {
     join(process.resourcesPath, "assets", "test_video.mp4"),
   ];
   return candidates.find((value) => existsSync(value));
+}
+
+function isViewingSessionStore(store: LocalPlaybackStore): store is LocalPlaybackStore & LocalViewingSessionStore {
+  const candidate = store as Partial<LocalViewingSessionStore>;
+  return typeof candidate.startViewingSession === "function"
+    && typeof candidate.heartbeatViewingSession === "function"
+    && typeof candidate.finishViewingSession === "function";
 }

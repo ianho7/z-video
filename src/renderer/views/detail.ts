@@ -1,4 +1,4 @@
-import type { LocalMediaItem, LocalPlaybackState } from "../../shared/local-library-contracts";
+import type { LocalMediaItem, LocalPlaybackState, LocalViewingHistory } from "../../shared/local-library-contracts";
 import { biscuitPath, wavePath } from "../shapes.js";
 import { formatBytes, formatTime } from "./shared.js";
 
@@ -109,4 +109,88 @@ export function renderMovieFileInfo(item: LocalMediaItem, sourceLabel: string, p
     list.append(group);
   }
   return list;
+}
+
+export interface ViewingRecordOptions {
+  history?: LocalViewingHistory;
+  /** playback_state saved before the viewing ledger existed. */
+  legacyPlayback?: LocalPlaybackState;
+  fileSizeBytes: number;
+  nowMs?: number;
+}
+
+export interface ViewingRecordView {
+  list: HTMLDListElement;
+  empty: HTMLParagraphElement;
+}
+
+/**
+ * Detail "你的记录" block. A real aggregate renders counts and durations; an
+ * empty file renders one sentence (plus the legacy saved position when one
+ * exists) instead of a wall of zeroes.
+ */
+export function renderViewingRecord(options: ViewingRecordOptions): ViewingRecordView {
+  const list = document.createElement("dl");
+  list.className = "detail-viewing";
+  const empty = document.createElement("p");
+  empty.className = "detail-viewing-empty";
+  const history = options.history;
+  if (!history) {
+    empty.hidden = false;
+    empty.textContent = options.legacyPlayback
+      ? `上次看到（旧记录） ${formatTime(options.legacyPlayback.positionSec)}。打开次数、有效观看和累计时长从现在开始记录。`
+      : "还没有记录。播放后会在这里累计打开、有效观看和看完次数。";
+    return { list, empty };
+  }
+  empty.hidden = true;
+  const completionRate = history.effectiveWatchCount > 0
+    ? `${Math.round(history.completedCount / history.effectiveWatchCount * 100)}%`
+    : "—";
+  const rows: Array<[string, string]> = [
+    ["打开次数", `${history.openCount} 次`],
+    ["有效观看", `${history.effectiveWatchCount} 次`],
+    ["累计观看", history.totalPlayedSec > 0 ? formatWatchDuration(history.totalPlayedSec) : "—"],
+    ["完整看完", `${history.completedCount} 次`],
+    ["上次打开", relativeDayLabel(history.lastOpenedAtMs, options.nowMs)],
+    ["上次时长", history.lastSessionPlayedSec > 0
+      ? `播放 ${formatWatchDuration(history.lastSessionPlayedSec)}（停留 ${formatWatchDuration(history.lastSessionWallSec)}）`
+      : "—"],
+    ["完成率", completionRate],
+    ["GB/小时", history.totalPlayedSec > 0
+      ? `${(options.fileSizeBytes / (1024 * 1024 * 1024) / (history.totalPlayedSec / 3600)).toFixed(1)} GB/小时`
+      : "未产生观看"],
+  ];
+  for (const [label, value] of rows) {
+    const group = document.createElement("div");
+    const term = document.createElement("dt");
+    const detail = document.createElement("dd");
+    term.textContent = label;
+    detail.textContent = value;
+    group.append(term, detail);
+    list.append(group);
+  }
+  return { list, empty };
+}
+
+export function formatWatchDuration(seconds: number): string {
+  const safe = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
+  if (safe < 60) return `${safe} 秒`;
+  const minutes = Math.floor(safe / 60);
+  if (minutes < 60) return `${minutes} 分钟`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder > 0 ? `${hours} 小时 ${remainder} 分` : `${hours} 小时`;
+}
+
+export function relativeDayLabel(timestampMs: number, nowMs = Date.now()): string {
+  if (!Number.isFinite(timestampMs) || timestampMs <= 0) return "—";
+  const startOfDay = (value: number): number => {
+    const date = new Date(value);
+    return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+  };
+  const days = Math.max(0, Math.round((startOfDay(nowMs) - startOfDay(timestampMs)) / 86_400_000));
+  if (days === 0) return "今天";
+  if (days === 1) return "昨天";
+  if (days < 30) return `${days} 天前`;
+  return new Date(timestampMs).toLocaleDateString("zh-CN");
 }
