@@ -185,7 +185,7 @@ async function run(): Promise<void> {
     await waitFor("onboarding visible", () => evaluate(window, "document.querySelector('#onboarding')?.hidden === false"), Boolean);
     await capture("onboarding");
 
-    window.webContents.send(IPC_CHANNELS.localLibraryState, { status: "error", schemaVersion: 2, sqliteAvailable: false, sources: [], error: { code: "storage", message: "片库暂时不可用" } });
+    window.webContents.send(IPC_CHANNELS.localLibraryState, { status: "error", schemaVersion: 3, sqliteAvailable: false, sources: [], error: { code: "storage", message: "片库暂时不可用" } });
     const errorState = await waitFor("library error card", () => evaluate(window, `({ visible: !document.querySelector('#library-error').hidden, title: document.querySelector('#library-error-title')?.textContent || '', text: document.querySelector('#library-error').textContent, buttons: [...document.querySelectorAll('#library-error button')].map(button => button.textContent), tech: document.querySelector('#library-error .tech-details p')?.textContent || '', techOpen: document.querySelector('#library-error .tech-details')?.open })`), (value) => value.visible);
     await capture("error");
     assert.equal(errorState.title, "片库文件暂时无法读写", "a storage failure uses plain language instead of a raw error code");
@@ -1110,6 +1110,13 @@ async function run(): Promise<void> {
       (positions: number[]) => positions.every((position) => position > 0),
     );
     assert.equal(episodeProgress.length, 2, "two episodes of the same work hold progress before the dedupe check");
+    const nextEpisodeProgress = await waitFor(
+      "the next episode keeps its own playback progress",
+      () => evaluate(window, `window.zVideo.localLibrary.get(${JSON.stringify(showEpisodeIds[2])}).then((result) => result.detail?.playback?.positionSec ?? 0)`),
+      (position: number) => position > 0,
+      5_000,
+    );
+    assert.ok(nextEpisodeProgress > 0, "the next episode saved progress like the first two");
     await waitFor("detail restored after episode playback", () => evaluate(window, "({ hidden: document.querySelector('#media-detail')?.hidden, title: document.querySelector('#media-detail-title')?.textContent || '' })"), (value) => value.hidden === false && value.title === "Owned Next Show");
     await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
     await waitFor("back to library after episode playback", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === true);
@@ -1126,7 +1133,7 @@ async function run(): Promise<void> {
 
     const detail = await waitFor(
       "long detail view",
-      () => evaluate(window, "(() => { const button = document.querySelector('#media-detail-open')?.getBoundingClientRect(); const plot = document.querySelector('#media-detail-plot'); const toggle = document.querySelector('#media-detail-plot-toggle'); const rating = document.querySelector('.detail-rating-badge'); const style = plot ? getComputedStyle(plot) : undefined; const titleElement = document.querySelector('#media-detail-title'); const titleStyle = titleElement ? getComputedStyle(titleElement) : undefined; return { hidden: document.querySelector('#media-detail')?.hidden, title: titleElement?.textContent || '', titleLayout: titleElement && titleStyle ? { whiteSpace: titleStyle.whiteSpace, textOverflow: titleStyle.textOverflow, lineHeight: Number.parseFloat(titleStyle.lineHeight), clientHeight: titleElement.clientHeight, scrollHeight: titleElement.scrollHeight, clientWidth: titleElement.clientWidth, scrollWidth: titleElement.scrollWidth } : undefined, focusedTitle: document.activeElement?.id === 'media-detail-title', backLabel: document.querySelector('#media-detail-back')?.textContent || '', navCurrent: document.querySelector('[data-nav][aria-current=\"page\"]')?.dataset.nav || '', meta: document.querySelector('#media-detail-meta')?.textContent || '', ratingLabel: rating?.getAttribute('aria-label') || '', ratingShape: rating?.querySelector('path')?.getAttribute('d') || '', plot: plot?.textContent || '', plotCollapsed: plot?.classList.contains('collapsed'), plotMeasure: plot && style ? { width: plot.clientWidth, scrollHeight: plot.scrollHeight, lineHeight: style.lineHeight, display: style.display } : undefined, toggleHidden: toggle?.hidden, plotExpanded: toggle?.getAttribute('aria-expanded'), movieInfo: document.querySelector('#detail-file-info')?.textContent || '', episodesHidden: document.querySelector('#detail-episodes-section')?.hidden, button: button ? { left: button.left, right: button.right, top: button.top, bottom: button.bottom } : undefined, viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight } }; })()"),
+      () => evaluate(window, "(() => { const button = document.querySelector('#media-detail-open')?.getBoundingClientRect(); const plot = document.querySelector('#media-detail-plot'); const toggle = document.querySelector('#media-detail-plot-toggle'); const rating = document.querySelector('.detail-rating-badge'); const style = plot ? getComputedStyle(plot) : undefined; const titleElement = document.querySelector('#media-detail-title'); const titleStyle = titleElement ? getComputedStyle(titleElement) : undefined; return { hidden: document.querySelector('#media-detail')?.hidden, title: titleElement?.textContent || '', titleLayout: titleElement && titleStyle ? { whiteSpace: titleStyle.whiteSpace, textOverflow: titleStyle.textOverflow, lineHeight: Number.parseFloat(titleStyle.lineHeight), clientHeight: titleElement.clientHeight, scrollHeight: titleElement.scrollHeight, clientWidth: titleElement.clientWidth, scrollWidth: titleElement.scrollWidth } : undefined, focusedTitle: document.activeElement?.id === 'media-detail-title', backLabel: document.querySelector('#media-detail-back')?.textContent || '', navCurrent: document.querySelector('[data-nav][aria-current=\"page\"]')?.dataset.nav || '', meta: document.querySelector('#media-detail-meta')?.textContent || '', ratingLabel: rating?.getAttribute('aria-label') || '', ratingShape: rating?.querySelector('path')?.getAttribute('d') || '', plot: plot?.textContent || '', plotCollapsed: plot?.classList.contains('collapsed'), plotMeasure: plot && style ? { width: plot.clientWidth, scrollHeight: plot.scrollHeight, lineHeight: style.lineHeight, display: style.display } : undefined, toggleHidden: toggle?.hidden, plotExpanded: toggle?.getAttribute('aria-expanded'), movieInfo: document.querySelector('#detail-file-info')?.textContent || '', viewingEmpty: document.querySelector('#detail-viewing-empty')?.textContent || '', viewingSectionHidden: document.querySelector('#detail-viewing-section')?.hidden, viewingText: document.querySelector('#detail-viewing')?.textContent || '', episodesHidden: document.querySelector('#detail-episodes-section')?.hidden, button: button ? { left: button.left, right: button.right, top: button.top, bottom: button.bottom } : undefined, viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight } }; })()"),
       (value) => value.hidden === false && value.title === LONG_TITLE && value.plot.length >= LONG_PLOT.length && Boolean(value.button),
     );
     await capture("movie-detail");
@@ -1148,6 +1155,9 @@ async function run(): Promise<void> {
     assert.equal(detail.ratingLabel, "评分 8.7");
     assert.ok(detail.ratingShape.length > 0, "rating is rendered on a biscuit shape");
     assert.match(detail.movieInfo, /owned-fixture/i);
+    assert.equal(detail.viewingSectionHidden, false, "the detail always exposes its viewing-record block");
+    assert.match(detail.viewingEmpty, /还没有记录/, "a never-played file says it has no record instead of listing zeroes");
+    assert.equal(/打开次数|有效观看|累计观看/.test(detail.viewingText), false, "an empty record does not render a wall of zero counters");
     assert.equal(detail.episodesHidden, true, "movies do not show an episode list");
     assert.ok(detail.button.left >= 0 && detail.button.right <= detail.viewport.width && detail.button.top >= 0 && detail.button.bottom <= detail.viewport.height);
 
@@ -1280,7 +1290,7 @@ async function run(): Promise<void> {
     assert.ok(savedPlayback > 0, "playback progress exists before the preservation check");
     const returnedMovieDetail = await waitFor(
       "movie detail restored after playback",
-      () => evaluate(window, "({ hidden: document.querySelector('#media-detail')?.hidden, contentHidden: document.querySelector('#detail-content')?.hidden, title: document.querySelector('#media-detail-title')?.textContent || '', playText: document.querySelector('#media-detail-open')?.textContent || '', restartHidden: document.querySelector('#media-detail-restart')?.hidden, restartDisabled: document.querySelector('#media-detail-restart')?.disabled, backLabel: document.querySelector('#media-detail-back')?.textContent || '' })"),
+      () => evaluate(window, "({ hidden: document.querySelector('#media-detail')?.hidden, contentHidden: document.querySelector('#detail-content')?.hidden, title: document.querySelector('#media-detail-title')?.textContent || '', playText: document.querySelector('#media-detail-open')?.textContent || '', restartHidden: document.querySelector('#media-detail-restart')?.hidden, restartDisabled: document.querySelector('#media-detail-restart')?.disabled, backLabel: document.querySelector('#media-detail-back')?.textContent || '', viewingText: document.querySelector('#detail-viewing')?.textContent || '', viewingHidden: document.querySelector('#detail-viewing-section')?.hidden })"),
       (value) => value.hidden === false && value.contentHidden === false && value.title === LONG_TITLE && /继续播放|重新播放/.test(value.playText),
     );
     const savedMoviePlayback = await evaluate(window, `window.zVideo.localLibrary.get(${JSON.stringify(openedMediaId)}).then((result) => ({ watched: result.detail?.playback?.watched === true }))`);
@@ -1293,6 +1303,12 @@ async function run(): Promise<void> {
       assert.equal(returnedMovieDetail.restartDisabled, false, "restart is enabled while the source is online");
     }
     assert.match(returnedMovieDetail.backLabel, /返回搜索结果/, "returning from playback keeps the detail back origin");
+    assert.equal(returnedMovieDetail.viewingHidden, false, "the detail shows its viewing record after playback");
+    assert.match(returnedMovieDetail.viewingText, /打开次数\s*\d+\s*次/, `playback is counted as an open: ${returnedMovieDetail.viewingText}`);
+    assert.match(returnedMovieDetail.viewingText, /有效观看\s*\d+\s*次/, "the record distinguishes effective watches");
+    assert.match(returnedMovieDetail.viewingText, /累计观看/, "the record includes accumulated played time");
+    assert.equal(returnedMovieDetail.viewingText.includes(fixtureRoot), false, "the viewing record never leaks a path");
+    await capture("movie-detail-viewing");
     await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
     await waitFor("back from resumed movie detail", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === true);
     await evaluate(window, "document.querySelector('#choose-folder-button')?.click()");
@@ -1320,7 +1336,9 @@ async function run(): Promise<void> {
     assert.equal(continueMin.cards.every((entry: { collectionId: string; mediaId: string }) => Boolean(entry.collectionId && entry.mediaId)), true, "continue cards keep the opaque work and episode identities");
     const showContinueCard = continueMin.cards.find((entry: { title: string }) => entry.title === "Owned Next Show");
     assert.ok(showContinueCard, "continue watching uses the collection title instead of an episode file title");
-    assert.match(showContinueCard!.detail, new RegExp(`第 1 季 第 ${Number(episodeSelection.next.number)} 集`), `continue copy names the latest in-progress episode: ${JSON.stringify(showContinueCard)}`);
+    const showEpisodeStates = await evaluate(window, `Promise.all(${JSON.stringify(showEpisodeIds)}.map((mediaId) => window.zVideo.localLibrary.get(mediaId))).then((results) => results.map((result) => ({ mediaId: result.item?.mediaId, title: result.item?.title, position: result.detail?.playback?.positionSec ?? null, updatedAtMs: result.detail?.playback?.updatedAtMs ?? null })))`);
+    const continueFromMain = await evaluate(window, "window.zVideo.localLibrary.listContinueWatching().then((result) => result.items.map((entry) => ({ title: entry.collectionTitle, mediaId: entry.item.mediaId, episodeTitle: entry.episodeTitle, position: entry.playback.positionSec, updatedAtMs: entry.playback.updatedAtMs })))");
+    assert.match(showContinueCard!.detail, new RegExp(`第 1 季 第 ${Number(episodeSelection.next.number)} 集`), `continue copy names the latest in-progress episode: ${JSON.stringify({ card: showContinueCard, current: episodeSelection.current, next: episodeSelection.next, episodeIds: showEpisodeIds, states: showEpisodeStates, main: continueFromMain })}`);
     assert.doesNotMatch(continueMin.cards.map((entry: { title: string }) => entry.title).join(" | "), /Next Episode/, "episode file titles never leak into the home continue shelf");
     assert.match(continueMin.scope, /2 部作品/, "continue count matches the number of work cards");
     assert.equal(Number(continueMin.scope.match(/(\d+) 部作品/)?.[1] ?? 0), continueMin.cards.length);
@@ -1480,6 +1498,8 @@ async function run(): Promise<void> {
         noteHidden: document.querySelector('#detail-playback-note')?.hidden,
         noteText: document.querySelector('#detail-playback-note')?.textContent || '',
         resumeText: document.querySelector('#media-detail-resume')?.textContent || '',
+        viewingText: document.querySelector('#detail-viewing')?.textContent || '',
+        viewingHidden: document.querySelector('#detail-viewing-section')?.hidden,
         backLabel: document.querySelector('#media-detail-back')?.textContent || '',
         navCurrent: document.querySelector('[data-nav][aria-current="page"]')?.dataset.nav || '',
       }))()`),
@@ -1491,6 +1511,9 @@ async function run(): Promise<void> {
     assert.equal(offlineDetail.noteHidden, false, "the disabled play actions state their reason nearby");
     assert.match(offlineDetail.noteText, /离线|重新连接/, "the reason is written next to the buttons");
     assert.doesNotMatch(offlineDetail.resumeText, /可继续/, "an offline detail never claims playback can be resumed");
+    assert.equal(offlineDetail.viewingHidden, false, "an offline detail keeps the viewing-record block");
+    assert.match(offlineDetail.viewingText, /打开次数\s*\d+\s*次/, "temporarily offline sources keep their viewing history");
+    assert.equal(offlineDetail.viewingText.includes(fixtureRoot), false, "the offline viewing record never leaks a path");
     assert.match(offlineDetail.backLabel, /返回搜索结果/, "offline detail keeps the search origin");
     assert.equal(offlineDetail.navCurrent, "all");
     await capture("movie-offline");
@@ -1552,6 +1575,9 @@ async function run(): Promise<void> {
     const removed = await waitFor("remove retry succeeds", readFolders, (value) => value.removeOpen === false && value.cards.length === 0 && /还没有添加文件夹/.test(value.sourceText), 20_000);
     assert.equal(removed.libraryCards, 0, "removing the folder refreshes the library too");
     assert.match(await evaluate(window, "document.querySelector('#app-notice')?.textContent || ''"), /源文件没有被删除/);
+    const removedLedger = await evaluate(window, `window.zVideo.localLibrary.get(${JSON.stringify(openedMediaId)}).then((result) => ({ hasDetail: Boolean(result.detail), viewing: result.detail?.viewing ?? null }))`);
+    assert.equal(removedLedger.hasDetail, false, "removing the source deletes the media entry");
+    assert.equal(removedLedger.viewing, null, "removing the source deletes the viewing history with it");
     await capture("folders-removed");
 
     window.setSize(900, 640);
@@ -1576,7 +1602,7 @@ async function run(): Promise<void> {
     assert.ok(compactEmpty.rect!.left >= 0 && compactEmpty.rect!.right <= compactEmpty.viewport.width + 1 && compactEmpty.rect!.top >= 0 && compactEmpty.rect!.bottom <= compactEmpty.viewport.height + 1, `the empty state is not clipped at 900x640: ${JSON.stringify(compactEmpty)}`);
     await capture("empty-compact");
 
-    window.webContents.send(IPC_CHANNELS.localLibraryState, { status: "error", schemaVersion: 2, sqliteAvailable: false, sources: [], error: { code: "storage", message: "片库暂时不可用" } });
+    window.webContents.send(IPC_CHANNELS.localLibraryState, { status: "error", schemaVersion: 3, sqliteAvailable: false, sources: [], error: { code: "storage", message: "片库暂时不可用" } });
     const compactError = await waitFor("storage error card at 900x640", () => evaluate(window, `(() => {
       const card = document.querySelector('#library-error');
       card?.scrollIntoView({ block: 'end' });

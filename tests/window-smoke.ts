@@ -41,7 +41,7 @@ const items: SmokeItem[] = [item, broken, delayed, replacement, fanartOnly, good
 const otherSourceId = "source_123e4567-e89b-12d3-a456-426614174001";
 const state = {
   status: "ready",
-  schemaVersion: 2,
+  schemaVersion: 3,
   sqliteAvailable: true,
   sources: [
     { sourceId: item.sourceId, label: "Movies", locationHint: "D 盘 · 上级：影片", available: true, itemCount: 34, collectionCount: 12 },
@@ -549,9 +549,11 @@ async function run(): Promise<void> {
   await waitFor("completed notice dismissed", readScanState, (value) => value.noticeVisible === false);
 
   await window.webContents.executeJavaScript("document.querySelector('[data-media-id]').click()", true);
-  const detail = await waitFor("detail view", () => window.webContents.executeJavaScript(`({ hidden: document.querySelector('#media-detail')?.hidden, title: document.querySelector('#media-detail-title')?.textContent || '' })`, true) as Promise<{ hidden: boolean; title: string }>, (value) => value.hidden === false && Boolean(value.title));
+  const detail = await waitFor("detail view", () => window.webContents.executeJavaScript(`({ hidden: document.querySelector('#media-detail')?.hidden, title: document.querySelector('#media-detail-title')?.textContent || '', viewingHidden: document.querySelector('#detail-viewing-section')?.hidden, viewingEmpty: document.querySelector('#detail-viewing-empty')?.textContent || '' })`, true) as Promise<{ hidden: boolean; title: string; viewingHidden: boolean; viewingEmpty: string }>, (value) => value.hidden === false && Boolean(value.title));
   assert.equal(detail.hidden, false);
   assert.equal(detail.title, "窗口测试影片");
+  assert.equal(detail.viewingHidden, false, `detail always renders the viewing-record block: ${JSON.stringify(detail)}`);
+  assert.match(detail.viewingEmpty, /还没有记录/, "a file without sessions renders one sentence, not zero counters");
 
   await window.webContents.executeJavaScript("document.querySelector('#media-detail-back').click()", true);
   const queriesBeforeTyping = queries.length;

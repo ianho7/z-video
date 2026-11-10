@@ -107,7 +107,12 @@ button:disabled { cursor: wait; opacity: .55; }
 .detail-file-info > div { min-width: 0; padding: 16px 18px; border-radius: var(--r-card); background: var(--surface); }
 .detail-file-info dt { color: var(--text-muted); font-size: 12px; }
 .detail-file-info dd { margin: 5px 0 0; overflow-wrap: anywhere; color: var(--text); font-size: 15px; font-weight: 800; }
-@media (max-width: 760px) { .detail-hero { grid-template-columns: minmax(110px, 34%) minmax(0, 1fr); gap: 18px; min-height: 0; padding: 22px; border-radius: 30px 30px 30px 44px; }.detail-copy h2 { font-size: clamp(28px, 6vw, 40px); }.detail-file-info { grid-template-columns: 1fr; }.episode-row { grid-template-columns: 68px 42px minmax(0, 1fr) 32px; gap: 8px; padding-inline: 10px; }.episode-thumb { width: 68px; height: 48px; border-radius: 11px; }.episode-number { font-size: 31px; } }
+.detail-viewing { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 12px 0 0; }
+.detail-viewing > div { min-width: 0; padding: 16px 18px; border-radius: var(--r-card); background: var(--surface); }
+.detail-viewing dt { color: var(--text-muted); font-size: 12px; }
+.detail-viewing dd { margin: 5px 0 0; overflow-wrap: anywhere; color: var(--text); font-size: 15px; font-weight: 800; }
+.detail-viewing-empty { margin: 12px 0 0; color: var(--text-muted); font-size: 13px; line-height: 1.6; }
+@media (max-width: 760px) { .detail-hero { grid-template-columns: minmax(110px, 34%) minmax(0, 1fr); gap: 18px; min-height: 0; padding: 22px; border-radius: 30px 30px 30px 44px; }.detail-copy h2 { font-size: clamp(28px, 6vw, 40px); }.detail-file-info { grid-template-columns: 1fr; }.detail-viewing { grid-template-columns: 1fr; }.episode-row { grid-template-columns: 68px 42px minmax(0, 1fr) 32px; gap: 8px; padding-inline: 10px; }.episode-thumb { width: 68px; height: 48px; border-radius: 11px; }.episode-number { font-size: 31px; } }
 
 /* Ticket 04 local-library controls and details. */
 .library-content { overflow: auto; }

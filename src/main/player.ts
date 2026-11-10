@@ -1,6 +1,7 @@
 import type { PlaybackCommand, PlaybackEvent } from "../shared/contracts";
 import type { LocalPlaybackControlCommand, LocalPlaybackEvent, LocalPlaybackMediaId, LocalPlaybackOpenOptions, LocalPlaybackStore } from "../shared/local-playback-contracts";
-import type { LocalPlaybackState } from "../shared/local-library-contracts";
+import type { LocalPlaybackState, LocalViewingCloseReason } from "../shared/local-library-contracts";
+import type { ViewingLedger } from "./app-viewing-ledger";
 
 export type PlayerEngineEvent =
   | { type: "ready"; durationSec?: number }
@@ -80,6 +81,8 @@ interface ActiveLocalPlayback {
   subtitleTrackId?: string | null;
   watched: boolean;
   observedPosition: boolean;
+  endedObserved: boolean;
+  viewingFinished: boolean;
   trackPreferencesApplied: boolean;
   lastPersistedFingerprint?: string;
   queuedPersistFingerprint?: string;
@@ -102,6 +105,7 @@ export class LocalPlaybackCoordinator {
     private readonly setWindowFullscreen: (enabled: boolean) => void,
     private readonly store: LocalPlaybackStore,
     private readonly now: () => number = Date.now,
+    private readonly ledger?: ViewingLedger,
   ) {}
 
   async open(mediaId: LocalPlaybackMediaId, options: LocalPlaybackOpenOptions = {}): Promise<void> {
@@ -114,6 +118,8 @@ export class LocalPlaybackCoordinator {
       positionSec: 0,
       watched: false,
       observedPosition: false,
+      endedObserved: false,
+      viewingFinished: false,
       trackPreferencesApplied: false,
     };
     this.emit({ type: "loading", mediaId });
@@ -132,6 +138,7 @@ export class LocalPlaybackCoordinator {
       active.audioTrackId = state?.audioTrackId;
       active.subtitleTrackId = state?.subtitleTrackId;
       active.watched = options.restart ? false : state?.watched === true;
+      this.ledger?.begin(mediaId, active.positionSec);
       await this.engine.start(path, options.restart ? 0 : finiteNonNegative(state?.positionSec), (event) => {
         if (this.isCurrent(generation, mediaId)) this.onEngineEvent(generation, mediaId, event);
       });
@@ -141,6 +148,7 @@ export class LocalPlaybackCoordinator {
       if (!active || !this.isCurrent(generation, mediaId)) return;
       active.loadFailed = true;
       this.clearProgressTimer();
+      await this.finishViewing(active, "error");
       this.emit({ type: "error", mediaId, message: "本地媒体加载失败。" });
     }
   }
@@ -151,7 +159,7 @@ export class LocalPlaybackCoordinator {
       return;
     }
     if (command.type === "close") {
-      await this.close();
+      await this.close("user-close");
       return;
     }
     const active = this.active;
@@ -161,10 +169,12 @@ export class LocalPlaybackCoordinator {
         await this.engine.play();
         break;
       case "pause":
+        this.ledger?.countPause();
         await this.engine.pause();
         await this.flushProgress(active, active.generation);
         break;
       case "seek":
+        this.ledger?.countSeek();
         // Do not persist the requested value until libmpv reports time-pos.
         await this.engine.seek(command.positionSec);
         break;
@@ -209,7 +219,7 @@ export class LocalPlaybackCoordinator {
     }
   }
 
-  async close(): Promise<void> {
+  async close(reason: LocalViewingCloseReason = "user-close"): Promise<void> {
     const generation = ++this.generation;
     const previous = this.active;
     const mediaId = previous?.mediaId;
@@ -217,6 +227,7 @@ export class LocalPlaybackCoordinator {
     this.clearProgressTimer();
     this.setWindowFullscreen(false);
     await this.flushProgress(previous, generation);
+    await this.finishViewing(previous, reason);
     if (generation !== this.generation) return;
     await this.engine.stop();
     await this.engine.destroy?.();
@@ -229,9 +240,19 @@ export class LocalPlaybackCoordinator {
     this.active = undefined;
     this.clearProgressTimer();
     await this.flushProgress(previous, generation);
+    // Session accounting must never lengthen the switch itself: the previous
+    // attempt finishes in the background while the next media starts loading.
+    void this.finishViewing(previous, "user-close");
     if (generation !== this.generation) return undefined;
     await this.engine.stop();
     return generation;
+  }
+
+  private async finishViewing(active: ActiveLocalPlayback | undefined, reason: LocalViewingCloseReason): Promise<void> {
+    if (!active || !this.ledger || active.viewingFinished) return;
+    active.viewingFinished = true;
+    const effectiveReason = active.endedObserved && reason !== "error" ? "ended" : reason;
+    await this.ledger.finish(effectiveReason, Math.max(0, active.positionSec), finiteNonNegative(active.durationSec)).catch(() => undefined);
   }
 
   private async flushProgress(active: ActiveLocalPlayback | undefined, generation: number): Promise<void> {
@@ -282,7 +303,9 @@ export class LocalPlaybackCoordinator {
         this.emit({ type: "ready", mediaId, ...(active.durationSec === undefined ? {} : { durationSec: active.durationSec }) });
         break;
       case "state":
+        this.ledger?.setPlaying(event.state === "playing");
         if (event.state === "ended") {
+          active.endedObserved = true;
           active.watched = true;
           void this.flushProgress(active, generation);
         } else if (event.state === "paused") {
@@ -296,11 +319,13 @@ export class LocalPlaybackCoordinator {
         active.observedPosition = true;
         active.positionSec = position;
         active.durationSec = finiteNonNegative(event.durationSec) ?? active.durationSec;
+        this.ledger?.observePosition(position, active.durationSec);
         this.startProgressTimer(generation, mediaId);
         this.emit({ type: "position", mediaId, positionSec: position, ...(active.durationSec === undefined ? {} : { durationSec: active.durationSec }) });
         break;
       }
       case "settings":
+        this.ledger?.setSpeed(event.speed);
         this.emit({ type: "settings", mediaId, volume: event.volume, muted: event.muted, speed: event.speed });
         break;
       case "control-error":
@@ -314,6 +339,7 @@ export class LocalPlaybackCoordinator {
       case "error":
         active.loadFailed = true;
         this.clearProgressTimer();
+        void this.finishViewing(active, "error");
         this.emit({ type: "error", mediaId, message: "本地媒体加载失败。" });
         break;
       case "closed":
@@ -329,6 +355,7 @@ export class LocalPlaybackCoordinator {
     this.clearProgressTimer();
     this.setWindowFullscreen(false);
     await this.flushProgress(active, this.generation);
+    await this.finishViewing(active, "user-close");
     await this.engine.destroy?.();
     if (this.generation === generation + 1) this.emit({ type: "closed", mediaId: active.mediaId });
   }
@@ -365,7 +392,10 @@ export class LocalPlaybackCoordinator {
     if (this.progressTimer) return;
     this.progressTimer = setInterval(() => {
       const active = this.active;
-      if (active && this.isCurrent(generation, mediaId)) void this.flushProgress(active, generation);
+      if (active && this.isCurrent(generation, mediaId)) {
+        void this.flushProgress(active, generation);
+        void this.ledger?.heartbeat();
+      }
     }, 10_000);
   }
 

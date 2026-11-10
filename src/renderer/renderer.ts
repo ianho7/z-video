@@ -18,7 +18,7 @@ import { applyTone, posterTone } from "./tone.js";
 import { escapeHtml, formatTime, kindLabel, formatBytes, artworkKind } from "./views/shared.js";
 import { card, collectionAsMediaItem, collectionCard } from "./views/all.js";
 import { renderSources } from "./views/sources.js";
-import { episodeRows, renderMovieFileInfo, renderSeasonTabs } from "./views/detail.js";
+import { episodeRows, renderMovieFileInfo, renderSeasonTabs, renderViewingRecord } from "./views/detail.js";
 import { renderContinueCards } from "./views/home.js";
 import { biscuitPath, wavePath } from "./shapes.js";
 import type {
@@ -122,6 +122,7 @@ const detailEpisodesSection = document.querySelector<HTMLElement>("#detail-episo
 const detailEpisodes = document.querySelector<HTMLElement>("#detail-episodes");
 const detailSeasonTabs = document.querySelector<HTMLElement>("#detail-season-tabs");
 const detailFileSection = document.querySelector<HTMLElement>("#detail-file-section");
+const detailViewingSection = document.querySelector<HTMLElement>("#detail-viewing-section");
 const detailContent = document.querySelector<HTMLElement>("#detail-content");
 const detailSkeleton = document.querySelector<HTMLElement>("#detail-skeleton");
 const detailError = document.querySelector<HTMLElement>("#detail-error");
@@ -1980,6 +1981,13 @@ function clearDetailContent(): void {
   if (detailEpisodesSection) detailEpisodesSection.hidden = true;
   if (detailFileSection) detailFileSection.hidden = true;
   document.querySelector("#detail-file-info")?.replaceChildren();
+  if (detailViewingSection) detailViewingSection.hidden = true;
+  document.querySelector("#detail-viewing")?.replaceChildren();
+  const viewingEmpty = document.querySelector<HTMLElement>("#detail-viewing-empty");
+  if (viewingEmpty) {
+    viewingEmpty.hidden = true;
+    viewingEmpty.textContent = "";
+  }
 }
 
 function setDetailViewState(viewState: "loading" | "ready" | "error"): void {
@@ -2200,6 +2208,22 @@ function renderDetail(detailValue: LocalMediaDetail): void {
     const fileInfo = renderMovieFileInfo(item, sourceLabel, playback);
     fileInfo.id = "detail-file-info";
     detailFileSection.querySelector("#detail-file-info")?.replaceWith(fileInfo);
+  }
+  if (detailViewingSection) {
+    const viewingHost = document.querySelector<HTMLElement>("#detail-viewing");
+    const emptyHost = document.querySelector<HTMLElement>("#detail-viewing-empty");
+    if (viewingHost && emptyHost) {
+      detailViewingSection.hidden = false;
+      const viewing = renderViewingRecord({
+        history: detailValue.viewing,
+        legacyPlayback: detailValue.viewing ? undefined : playback,
+        fileSizeBytes: item.sizeBytes,
+      });
+      viewing.list.id = "detail-viewing";
+      viewing.empty.id = "detail-viewing-empty";
+      viewingHost.replaceWith(viewing.list);
+      emptyHost.replaceWith(viewing.empty);
+    }
   }
   if (detailPoster) {
     detailPoster.replaceChildren(generatedCover(item, detailValue.episodes.filter((episode) => episode.kind === "episode").length));

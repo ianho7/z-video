@@ -19,6 +19,10 @@ import {
   type LocalPlaybackUpdate,
   type LocalScanProgress,
   type LocalScanResult,
+  type LocalViewingHistory,
+  type LocalViewingSessionFinishInput,
+  type LocalViewingSessionHeartbeatInput,
+  type LocalViewingSessionStartInput,
 } from "../shared/local-library-contracts";
 import { localLibraryErrorMessage } from "./local-library-errors";
 
@@ -40,6 +44,10 @@ type WorkerCommand =
   | { command: "resolve-path"; mediaId: string }
   | { command: "get-playback"; mediaId: string }
   | { command: "save-playback"; state: LocalPlaybackState }
+  | { command: "start-viewing-session"; session: LocalViewingSessionStartInput }
+  | { command: "heartbeat-viewing-session"; heartbeat: LocalViewingSessionHeartbeatInput }
+  | { command: "finish-viewing-session"; session: LocalViewingSessionFinishInput }
+  | { command: "get-viewing-history"; mediaId: string }
   | { command: "close" };
 
 interface WorkerSuccess {
@@ -283,6 +291,27 @@ export class LocalLibraryDatabase {
     return this.call<LocalPlaybackState>({ command: "save-playback", state });
   }
 
+  async startViewingSession(session: LocalViewingSessionStartInput): Promise<{ sessionId: string }> {
+    assertMediaId(session.mediaId);
+    return this.call<{ sessionId: string }>({ command: "start-viewing-session", session });
+  }
+
+  async heartbeatViewingSession(heartbeat: LocalViewingSessionHeartbeatInput): Promise<void> {
+    assertSessionId(heartbeat.sessionId);
+    await this.call<boolean>({ command: "heartbeat-viewing-session", heartbeat });
+  }
+
+  async finishViewingSession(session: LocalViewingSessionFinishInput): Promise<LocalViewingHistory | undefined> {
+    assertSessionId(session.sessionId);
+    assertMediaId(session.mediaId);
+    return this.call<LocalViewingHistory | undefined>({ command: "finish-viewing-session", session });
+  }
+
+  async getViewingHistory(mediaId: string): Promise<LocalViewingHistory | undefined> {
+    assertMediaId(mediaId);
+    return this.call<LocalViewingHistory | undefined>({ command: "get-viewing-history", mediaId });
+  }
+
   async close(): Promise<void> {
     if (!this.worker || this.closing) return;
     this.closing = true;
@@ -339,4 +368,8 @@ function assertMediaId(mediaId: string): asserts mediaId is `media_${string}` {
 
 function assertSourceId(sourceId: string): asserts sourceId is `source_${string}` {
   if (typeof sourceId !== "string" || !/^source_[0-9a-f-]{36}$/i.test(sourceId)) throw new LocalLibraryDatabaseError("invalid-input", "sourceId 格式无效");
+}
+
+function assertSessionId(sessionId: string): void {
+  if (typeof sessionId !== "string" || !/^session_[0-9a-f-]{36}$/i.test(sessionId)) throw new LocalLibraryDatabaseError("invalid-input", "sessionId 格式无效");
 }

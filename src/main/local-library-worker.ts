@@ -9,6 +9,8 @@ import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
 
 import {
   LOCAL_LIBRARY_SCHEMA_VERSION,
+  isCompletedWatch,
+  isEffectiveWatch,
   type LocalLibraryQuery,
   type LocalCollectionQuery,
   type LocalCollectionSummary,
@@ -20,6 +22,10 @@ import {
   type LocalScanProgress,
   type LocalScanResult,
   type LocalSourceSummary,
+  type LocalViewingHistory,
+  type LocalViewingSessionFinishInput,
+  type LocalViewingSessionHeartbeatInput,
+  type LocalViewingSessionStartInput,
 } from "../shared/local-library-contracts";
 import { parseEpisodeNumbers, parseNfo, parsePremieredDate, type ParsedNfo } from "./local-library-metadata";
 import { localLibraryErrorCode, localLibraryErrorMessage } from "./local-library-errors";
@@ -43,6 +49,10 @@ type WorkerRequest =
   | { id: number; command: "resolve-path"; mediaId: string }
   | { id: number; command: "get-playback"; mediaId: string }
   | { id: number; command: "save-playback"; state: LocalPlaybackState }
+  | { id: number; command: "start-viewing-session"; session: LocalViewingSessionStartInput }
+  | { id: number; command: "heartbeat-viewing-session"; heartbeat: LocalViewingSessionHeartbeatInput }
+  | { id: number; command: "finish-viewing-session"; session: LocalViewingSessionFinishInput }
+  | { id: number; command: "get-viewing-history"; mediaId: string }
   | { id: number; command: "close" };
 
 interface WorkerSuccess {
@@ -217,7 +227,7 @@ async function finishScanProfiler(profiler: ScanProfiler | undefined, status: Sc
   }
 }
 
-function makeId(prefix: "media" | "source" | "collection" | "scan" | "artwork"): string {
+function makeId(prefix: "media" | "source" | "collection" | "scan" | "artwork" | "session"): string {
   return `${prefix}_${randomUUID()}`;
 }
 
@@ -333,6 +343,43 @@ function openDatabase(dbPath: string): void {
         completed_at INTEGER,
         FOREIGN KEY (source_id) REFERENCES sources(source_id)
       );
+      CREATE TABLE IF NOT EXISTS viewing_sessions (
+        session_id TEXT PRIMARY KEY,
+        media_id TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        ended_at INTEGER,
+        last_heartbeat_at INTEGER,
+        wall_sec REAL NOT NULL DEFAULT 0,
+        played_sec REAL NOT NULL DEFAULT 0,
+        start_position_sec REAL NOT NULL DEFAULT 0,
+        end_position_sec REAL NOT NULL DEFAULT 0,
+        duration_sec REAL,
+        completed INTEGER NOT NULL DEFAULT 0,
+        pause_count INTEGER NOT NULL DEFAULT 0,
+        seek_count INTEGER NOT NULL DEFAULT 0,
+        speed REAL NOT NULL DEFAULT 1,
+        close_reason TEXT,
+        FOREIGN KEY (media_id) REFERENCES media_files(media_id) ON DELETE CASCADE
+      );
+      CREATE TABLE IF NOT EXISTS media_history (
+        media_id TEXT PRIMARY KEY,
+        open_count INTEGER NOT NULL DEFAULT 0,
+        effective_watch_count INTEGER NOT NULL DEFAULT 0,
+        completed_count INTEGER NOT NULL DEFAULT 0,
+        inspection_open_count INTEGER NOT NULL DEFAULT 0,
+        total_played_sec REAL NOT NULL DEFAULT 0,
+        first_seen_at INTEGER NOT NULL,
+        last_opened_at INTEGER NOT NULL,
+        last_played_at INTEGER,
+        last_session_played_sec REAL NOT NULL DEFAULT 0,
+        last_session_wall_sec REAL NOT NULL DEFAULT 0,
+        last_position_sec REAL NOT NULL DEFAULT 0,
+        last_duration_sec REAL,
+        cleanup_state TEXT NOT NULL DEFAULT 'none',
+        cleanup_until INTEGER,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (media_id) REFERENCES media_files(media_id) ON DELETE CASCADE
+      );
     `);
     ensureColumn("collections", "identity_key", "TEXT");
     ensureColumn("collections", "source_id", "TEXT");
@@ -350,9 +397,16 @@ function openDatabase(dbPath: string): void {
     db.exec("CREATE INDEX IF NOT EXISTS collections_premiered_at ON collections(premiered_at);");
     db.exec("CREATE INDEX IF NOT EXISTS media_files_source_path ON media_files(source_id, relative_path);");
     db.exec("CREATE INDEX IF NOT EXISTS artwork_collection_kind ON artwork(collection_id, media_id, kind);");
-    // Incremental migration: v2 only adds collections.premiered_at and its index.
-    // Existing rows keep NULL so no date is invented from a year.
+    db.exec("CREATE INDEX IF NOT EXISTS viewing_sessions_media_started ON viewing_sessions(media_id, started_at);");
+    db.exec("CREATE INDEX IF NOT EXISTS viewing_sessions_started ON viewing_sessions(started_at);");
+    db.exec("CREATE INDEX IF NOT EXISTS viewing_sessions_open ON viewing_sessions(ended_at);");
+    db.exec("CREATE INDEX IF NOT EXISTS media_history_last_opened ON media_history(last_opened_at);");
+    db.exec("CREATE INDEX IF NOT EXISTS media_history_cleanup_state ON media_history(cleanup_state);");
+    // Incremental migrations: v2 adds collections.premiered_at; v3 adds the
+    // viewing_sessions/media_history ledger tables. No existing column is
+    // rewritten and no history is backfilled from playback_state.
     if (existingVersion < LOCAL_LIBRARY_SCHEMA_VERSION) db.exec(`PRAGMA user_version = ${LOCAL_LIBRARY_SCHEMA_VERSION};`);
+    recoverInterruptedViewingSessions();
   } catch (error) {
     throw new LocalWorkerError("storage", localLibraryErrorMessage("storage"));
   }
@@ -857,6 +911,16 @@ async function upsertMedia(rootPath: string, discovered: DiscoveredMedia, includ
         WHERE media_id = ?
       `).run(collectionId, discovered.displayTitle, discovered.mediaKind, discovered.seasonNumber ?? null, discovered.episodeNumber ?? null, timestamp, mediaId));
     } else {
+      profileSync("database", () => db.prepare(`
+        DELETE FROM viewing_sessions WHERE media_id IN (
+          SELECT media_id FROM media_files WHERE source_id = ? AND relative_path = ? AND available = 1
+        )
+      `).run(discovered.collection.sourceId, discovered.relativePath));
+      profileSync("database", () => db.prepare(`
+        DELETE FROM media_history WHERE media_id IN (
+          SELECT media_id FROM media_files WHERE source_id = ? AND relative_path = ? AND available = 1
+        )
+      `).run(discovered.collection.sourceId, discovered.relativePath));
       profileSync("database", () => db.prepare("UPDATE media_files SET available = 0, updated_at = ? WHERE source_id = ? AND relative_path = ? AND available = 1").run(timestamp, discovered.collection.sourceId, discovered.relativePath));
       mediaId = makeId("media");
       created = true;
@@ -1185,6 +1249,7 @@ function getDetail(mediaId: string): LocalMediaDetail | undefined {
   const db = requireDatabase();
   const playback = getPlayback(item.mediaId);
   const episodePlayback = getCollectionPlayback(item.collectionId);
+  const viewing = getViewingHistory(item.mediaId);
   const collection = db.prepare("SELECT title, kind FROM collections WHERE collection_id = ?").get(item.collectionId) as { title?: string; kind?: string } | undefined;
   const rows = db.prepare(`
     SELECT media_files.media_id AS mediaId, media_files.collection_id AS collectionId, media_files.source_id AS sourceId,
@@ -1206,6 +1271,7 @@ function getDetail(mediaId: string): LocalMediaDetail | undefined {
     episodes: rows.map(toPublicItem),
     ...(playback ? { playback } : {}),
     ...(episodePlayback.length > 0 ? { episodePlayback } : {}),
+    ...(viewing ? { viewing } : {}),
   };
 }
 
@@ -1283,6 +1349,9 @@ function removeSource(sourceId: string): boolean {
   if (!source?.sourceId) return false;
   db.exec("BEGIN IMMEDIATE");
   try {
+    // Removing a source is an explicit delete: never keep a viewing tombstone.
+    db.prepare("DELETE FROM viewing_sessions WHERE media_id IN (SELECT media_id FROM media_files WHERE source_id = ?)").run(sourceId);
+    db.prepare("DELETE FROM media_history WHERE media_id IN (SELECT media_id FROM media_files WHERE source_id = ?)").run(sourceId);
     db.prepare("DELETE FROM playback_state WHERE media_id IN (SELECT media_id FROM media_files WHERE source_id = ?)").run(sourceId);
     db.prepare("DELETE FROM artwork WHERE source_id = ?").run(sourceId);
     db.prepare("DELETE FROM media_files WHERE source_id = ?").run(sourceId);
@@ -1388,6 +1457,254 @@ function savePlayback(stateValue: LocalPlaybackState): LocalPlaybackState {
       watched = excluded.watched, updated_at = excluded.updated_at
   `).run(stateValue.mediaId, stateValue.positionSec, stateValue.durationSec ?? null, stateValue.audioTrackId ?? null, stateValue.subtitleTrackId ?? null, stateValue.watched ? 1 : 0, updatedAtMs);
   return { ...stateValue, updatedAtMs };
+}
+
+function viewingHistoryFromRow(row: Record<string, unknown>): LocalViewingHistory {
+  return {
+    mediaId: String(row.mediaId) as LocalViewingHistory["mediaId"],
+    openCount: Number(row.openCount),
+    effectiveWatchCount: Number(row.effectiveWatchCount),
+    completedCount: Number(row.completedCount),
+    inspectionOpenCount: Number(row.inspectionOpenCount),
+    totalPlayedSec: Number(row.totalPlayedSec),
+    firstSeenAtMs: Number(row.firstSeenAtMs),
+    lastOpenedAtMs: Number(row.lastOpenedAtMs),
+    ...(row.lastPlayedAt === null || row.lastPlayedAt === undefined ? {} : { lastPlayedAtMs: Number(row.lastPlayedAt) }),
+    lastSessionPlayedSec: Number(row.lastSessionPlayedSec),
+    lastSessionWallSec: Number(row.lastSessionWallSec),
+    lastPositionSec: Number(row.lastPositionSec),
+    ...(row.lastDurationSec === null || row.lastDurationSec === undefined ? {} : { lastDurationSec: Number(row.lastDurationSec) }),
+    updatedAtMs: Number(row.updatedAtMs),
+  };
+}
+
+function getViewingHistory(mediaId: string): LocalViewingHistory | undefined {
+  const db = requireDatabase();
+  const row = db.prepare(`
+    SELECT media_id AS mediaId, open_count AS openCount, effective_watch_count AS effectiveWatchCount,
+      completed_count AS completedCount, inspection_open_count AS inspectionOpenCount,
+      total_played_sec AS totalPlayedSec, first_seen_at AS firstSeenAtMs, last_opened_at AS lastOpenedAtMs,
+      last_played_at AS lastPlayedAt, last_session_played_sec AS lastSessionPlayedSec,
+      last_session_wall_sec AS lastSessionWallSec, last_position_sec AS lastPositionSec,
+      last_duration_sec AS lastDurationSec, updated_at AS updatedAtMs
+    FROM media_history WHERE media_id = ?
+  `).get(mediaId) as Record<string, unknown> | undefined;
+  return row ? viewingHistoryFromRow(row) : undefined;
+}
+
+function finiteNonNegative(value: unknown, fallback = 0): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+function startViewingSession(session: LocalViewingSessionStartInput): { sessionId: string } {
+  const db = requireDatabase();
+  const media = db.prepare("SELECT media_id AS mediaId FROM media_files WHERE media_id = ?").get(session.mediaId) as { mediaId?: string } | undefined;
+  if (!media?.mediaId) throw new LocalWorkerError("invalid-input", "媒体不存在");
+  const startedAt = finiteNonNegative(session.startedAtMs, now());
+  const sessionId = makeId("session");
+  db.prepare(`
+    INSERT INTO viewing_sessions (session_id, media_id, started_at, last_heartbeat_at, start_position_sec, end_position_sec, speed)
+    VALUES (?, ?, ?, ?, ?, ?, 1)
+  `).run(sessionId, session.mediaId, startedAt, startedAt, finiteNonNegative(session.startPositionSec), finiteNonNegative(session.startPositionSec));
+  return { sessionId };
+}
+
+function heartbeatViewingSession(heartbeat: LocalViewingSessionHeartbeatInput): void {
+  const db = requireDatabase();
+  if (!isSessionId(heartbeat.sessionId)) throw new LocalWorkerError("invalid-input", "观看会话格式无效");
+  const playedSec = finiteNonNegative(heartbeat.playedSec);
+  const wallSec = finiteNonNegative(heartbeat.wallSec);
+  const speed = typeof heartbeat.speed === "number" && Number.isFinite(heartbeat.speed) && heartbeat.speed > 0 ? heartbeat.speed : 1;
+  db.prepare(`
+    UPDATE viewing_sessions SET played_sec = ?, wall_sec = ?, end_position_sec = ?, duration_sec = ?,
+      pause_count = ?, seek_count = ?, speed = ?, last_heartbeat_at = ?
+    WHERE session_id = ? AND ended_at IS NULL
+  `).run(
+    playedSec,
+    wallSec,
+    finiteNonNegative(heartbeat.endPositionSec),
+    heartbeat.durationSec === undefined ? null : finiteNonNegative(heartbeat.durationSec),
+    Math.max(0, Math.trunc(finiteNonNegative(heartbeat.pauseCount))),
+    Math.max(0, Math.trunc(finiteNonNegative(heartbeat.seekCount))),
+    speed,
+    finiteNonNegative(heartbeat.heartbeatAtMs, now()),
+    heartbeat.sessionId,
+  );
+}
+
+interface AggregatedViewingSession {
+  mediaId: string;
+  startedAtMs: number;
+  endedAtMs: number;
+  playedSec: number;
+  wallSec: number;
+  endPositionSec: number;
+  durationSec?: number;
+  completed: boolean;
+  closeReason: string;
+}
+
+/** Fold one finished or recovered session into the per-media aggregate. */
+function aggregateViewingSession(session: AggregatedViewingSession): void {
+  const db = requireDatabase();
+  const playedSec = finiteNonNegative(session.playedSec);
+  const effective = isEffectiveWatch(playedSec, session.durationSec) ? 1 : 0;
+  const inspection = effective ? 0 : 1;
+  const completed = session.completed || session.closeReason === "ended" || isCompletedWatch(playedSec, session.durationSec, session.endPositionSec) ? 1 : 0;
+  const lastPlayedAt = playedSec > 0 ? session.endedAtMs : null;
+  const durationSec = session.durationSec === undefined ? null : finiteNonNegative(session.durationSec);
+  db.prepare(`
+    INSERT INTO media_history (
+      media_id, open_count, effective_watch_count, completed_count, inspection_open_count, total_played_sec,
+      first_seen_at, last_opened_at, last_played_at, last_session_played_sec, last_session_wall_sec,
+      last_position_sec, last_duration_sec, updated_at
+    ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(media_id) DO UPDATE SET
+      open_count = media_history.open_count + 1,
+      effective_watch_count = media_history.effective_watch_count + excluded.effective_watch_count,
+      completed_count = media_history.completed_count + excluded.completed_count,
+      inspection_open_count = media_history.inspection_open_count + excluded.inspection_open_count,
+      total_played_sec = media_history.total_played_sec + excluded.total_played_sec,
+      first_seen_at = MIN(media_history.first_seen_at, excluded.first_seen_at),
+      last_opened_at = MAX(media_history.last_opened_at, excluded.last_opened_at),
+      last_played_at = CASE WHEN excluded.last_opened_at >= media_history.last_opened_at THEN excluded.last_played_at ELSE media_history.last_played_at END,
+      last_session_played_sec = CASE WHEN excluded.last_opened_at >= media_history.last_opened_at THEN excluded.last_session_played_sec ELSE media_history.last_session_played_sec END,
+      last_session_wall_sec = CASE WHEN excluded.last_opened_at >= media_history.last_opened_at THEN excluded.last_session_wall_sec ELSE media_history.last_session_wall_sec END,
+      last_position_sec = CASE WHEN excluded.last_opened_at >= media_history.last_opened_at THEN excluded.last_position_sec ELSE media_history.last_position_sec END,
+      last_duration_sec = CASE WHEN excluded.last_opened_at >= media_history.last_opened_at THEN excluded.last_duration_sec ELSE media_history.last_duration_sec END,
+      updated_at = MAX(media_history.updated_at, excluded.updated_at)
+  `).run(
+    session.mediaId,
+    effective,
+    completed,
+    inspection,
+    playedSec,
+    session.startedAtMs,
+    session.startedAtMs,
+    lastPlayedAt,
+    playedSec,
+    finiteNonNegative(session.wallSec),
+    finiteNonNegative(session.endPositionSec),
+    durationSec,
+    session.endedAtMs,
+  );
+}
+
+function finishViewingSession(session: LocalViewingSessionFinishInput): LocalViewingHistory | undefined {
+  const db = requireDatabase();
+  if (!isSessionId(session.sessionId)) throw new LocalWorkerError("invalid-input", "观看会话格式无效");
+  const row = db.prepare(`
+    SELECT media_id AS mediaId, started_at AS startedAtMs, ended_at AS endedAt
+    FROM viewing_sessions WHERE session_id = ?
+  `).get(session.sessionId) as { mediaId?: string; startedAtMs?: number; endedAt?: number | null } | undefined;
+  if (!row?.mediaId) return undefined;
+  if (row.endedAt !== null && row.endedAt !== undefined) return getViewingHistory(String(row.mediaId));
+  const endedAtMs = finiteNonNegative(session.endedAtMs, now());
+  const startedAtMs = finiteNonNegative(row.startedAtMs, endedAtMs);
+  const playedSec = finiteNonNegative(session.playedSec);
+  const durationSec = session.durationSec === undefined ? undefined : finiteNonNegative(session.durationSec);
+  const closeReason = session.closeReason;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare(`
+      UPDATE viewing_sessions SET ended_at = ?, wall_sec = ?, played_sec = ?, end_position_sec = ?, duration_sec = ?,
+        completed = ?, pause_count = ?, seek_count = ?, speed = ?, close_reason = ?, last_heartbeat_at = ?
+      WHERE session_id = ? AND ended_at IS NULL
+    `).run(
+      endedAtMs,
+      finiteNonNegative(session.wallSec),
+      playedSec,
+      finiteNonNegative(session.endPositionSec),
+      durationSec ?? null,
+      session.completed ? 1 : 0,
+      Math.max(0, Math.trunc(finiteNonNegative(session.pauseCount))),
+      Math.max(0, Math.trunc(finiteNonNegative(session.seekCount))),
+      typeof session.speed === "number" && Number.isFinite(session.speed) && session.speed > 0 ? session.speed : 1,
+      closeReason,
+      endedAtMs,
+      session.sessionId,
+    );
+    aggregateViewingSession({
+      mediaId: String(row.mediaId),
+      startedAtMs,
+      endedAtMs,
+      playedSec,
+      wallSec: finiteNonNegative(session.wallSec),
+      endPositionSec: finiteNonNegative(session.endPositionSec),
+      ...(durationSec === undefined ? {} : { durationSec }),
+      completed: session.completed,
+      closeReason,
+    });
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  return getViewingHistory(String(row.mediaId));
+}
+
+/**
+ * A session left open by a crash is settled from its last heartbeat. This runs
+ * once on database initialization, before any new playback can start.
+ */
+function recoverInterruptedViewingSessions(): void {
+  const db = requireDatabase();
+  const rows = db.prepare(`
+    SELECT session_id AS sessionId, media_id AS mediaId, started_at AS startedAtMs,
+      last_heartbeat_at AS lastHeartbeatAt, wall_sec AS wallSec, played_sec AS playedSec,
+      end_position_sec AS endPositionSec, duration_sec AS durationSec, completed
+    FROM viewing_sessions WHERE ended_at IS NULL
+  `).all() as Array<Record<string, unknown>>;
+  if (rows.length === 0) return;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const row of rows) {
+      const startedAtMs = Number(row.startedAtMs);
+      const endedAtMs = row.lastHeartbeatAt === null || row.lastHeartbeatAt === undefined ? startedAtMs : Number(row.lastHeartbeatAt);
+      const playedSec = finiteNonNegative(row.playedSec);
+      const wallSec = Math.max(finiteNonNegative(row.wallSec), Math.max(0, endedAtMs - startedAtMs) / 1000);
+      const durationSec = row.durationSec === null || row.durationSec === undefined ? undefined : finiteNonNegative(row.durationSec);
+      const endPositionSec = finiteNonNegative(row.endPositionSec);
+      const completed = isCompletedWatch(playedSec, durationSec, endPositionSec);
+      db.prepare("UPDATE viewing_sessions SET ended_at = ?, wall_sec = ?, close_reason = 'interrupted', completed = ?, last_heartbeat_at = ? WHERE session_id = ? AND ended_at IS NULL")
+        .run(endedAtMs, wallSec, completed ? 1 : 0, endedAtMs, String(row.sessionId));
+      aggregateViewingSession({
+        mediaId: String(row.mediaId),
+        startedAtMs,
+        endedAtMs,
+        playedSec,
+        wallSec,
+        endPositionSec,
+        ...(durationSec === undefined ? {} : { durationSec }),
+        completed,
+        closeReason: "interrupted",
+      });
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function isSessionId(value: unknown): value is string {
+  return typeof value === "string" && /^session_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
+/**
+ * Delete ledger rows for media the scan confirmed missing while the source was
+ * readable. Media rows stay unavailable so the ordinary scan contract does not
+ * change; only the viewing history is removed.
+ */
+function clearMissingViewingRecords(sourceId: string, seenRelativePaths: Set<string>): void {
+  const db = requireDatabase();
+  const seen = [...seenRelativePaths];
+  const predicate = seen.length === 0
+    ? "source_id = ?"
+    : `source_id = ? AND relative_path NOT IN (${seen.map(() => "?").join(",")})`;
+  const params: Array<string> = [sourceId, ...seen];
+  db.prepare(`DELETE FROM viewing_sessions WHERE media_id IN (SELECT media_id FROM media_files WHERE ${predicate})`).run(...params);
+  db.prepare(`DELETE FROM media_history WHERE media_id IN (SELECT media_id FROM media_files WHERE ${predicate})`).run(...params);
 }
 
 function addScanRun(sourceId: string, scanId: string): number {
@@ -1559,11 +1876,22 @@ async function scanRoot(rootPath: string): Promise<LocalScanResult> {
     const traversalComplete = await scanDirectory(canonicalRoot, canonicalRoot, scanSource.sourceId, scanId, cancellation, counters, undefined);
     if (cancellation.requested) throw new LocalWorkerError("storage", "scan-cancelled");
     if (traversalComplete) {
-      if (counters.seenRelativePaths.size === 0) {
-        profileSync("database", () => db.prepare("UPDATE media_files SET available = 0, updated_at = ? WHERE source_id = ?").run(now(), scanSource.sourceId));
-      } else {
-        const placeholders = [...counters.seenRelativePaths].map(() => "?").join(",");
-        profileSync("database", () => db.prepare(`UPDATE media_files SET available = 0, updated_at = ? WHERE source_id = ? AND relative_path NOT IN (${placeholders})`).run(now(), scanSource.sourceId, ...counters.seenRelativePaths));
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        // The source was readable and traversal completed, so any indexed file
+        // that was not seen is confirmed missing. Forgotten by design: remove
+        // its ledger rows explicitly; only the media row stays unavailable.
+        clearMissingViewingRecords(scanSource.sourceId, counters.seenRelativePaths);
+        if (counters.seenRelativePaths.size === 0) {
+          profileSync("database", () => db.prepare("UPDATE media_files SET available = 0, updated_at = ? WHERE source_id = ?").run(now(), scanSource.sourceId));
+        } else {
+          const placeholders = [...counters.seenRelativePaths].map(() => "?").join(",");
+          profileSync("database", () => db.prepare(`UPDATE media_files SET available = 0, updated_at = ? WHERE source_id = ? AND relative_path NOT IN (${placeholders})`).run(now(), scanSource.sourceId, ...counters.seenRelativePaths));
+        }
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
       }
       finishScan(scanId, true);
       const result: LocalScanResult = { ...progressFor(scanId, scanSource.sourceId, "completed", counters), warnings: [...counters.warnings] };
@@ -1671,6 +1999,13 @@ async function handle(request: WorkerRequest): Promise<unknown> {
   if (request.command === "resolve-path") return resolvePath(request.mediaId);
   if (request.command === "get-playback") return getPlayback(request.mediaId);
   if (request.command === "save-playback") return savePlayback(request.state);
+  if (request.command === "start-viewing-session") return startViewingSession(request.session);
+  if (request.command === "heartbeat-viewing-session") {
+    heartbeatViewingSession(request.heartbeat);
+    return true;
+  }
+  if (request.command === "finish-viewing-session") return finishViewingSession(request.session);
+  if (request.command === "get-viewing-history") return getViewingHistory(request.mediaId);
   throw new LocalWorkerError("unknown", "未知本地片库命令");
 }
 

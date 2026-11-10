@@ -1,8 +1,8 @@
 # Local library contracts
 
-Status: Schema v2 (B0 premiere dates) plus the work-level Collection read contract (B1) and work-level home shelves/continue watching (B2), local playback IPC, accepted 2026-10-31 and extended 2026-11-01/2026-11-06/2026-11-08. Schema owners: `src/main/local-library-worker.ts`, `src/main/local-library-database.ts`, and `src/shared/local-library-contracts.ts`; playback owners: `src/main/player.ts`, `src/main/mpv-player.ts`, `src/main/player-host.ts`, and `src/shared/local-playback-contracts.ts`; app-preferences owners: `src/main/app-preferences.ts`, `src/main/app-preferences-ipc.ts`, and `src/shared/app-preferences-contracts.ts`.
+Status: Schema v3 (viewing ledger) plus the work-level Collection read contract (B1) and work-level home shelves/continue watching (B2), local playback IPC, accepted 2026-10-31 and extended 2026-11-01/2026-11-06/2026-11-08/2026-11-09. Schema owners: `src/main/local-library-worker.ts`, `src/main/local-library-database.ts`, and `src/shared/local-library-contracts.ts`; playback owners: `src/main/player.ts`, `src/main/mpv-player.ts`, `src/main/player-host.ts`, `src/main/app-viewing-ledger.ts`, and `src/shared/local-playback-contracts.ts`; app-preferences owners: `src/main/app-preferences.ts`, `src/main/app-preferences-ipc.ts`, and `src/shared/app-preferences-contracts.ts`.
 
-## Schema v2
+## Schema v3
 
 The utility process creates these tables in the database under application `userData/local-library/library.sqlite`:
 
@@ -14,15 +14,18 @@ The utility process creates these tables in the database under application `user
 | `artwork` | `artwork_id`, collection/media owner, source-relative path (main/worker only), `kind`, source fingerprint/cache key | 02 metadata |
 | `playback_state` | `media_id`, position/duration, audio/subtitle track IDs, watched, updated time | 03 playback |
 | `scan_runs` | source, generation, completion, error, start/completion times | 02 scan |
+| `viewing_sessions` | `session_id`, `media_id`, start/end/heartbeat times, wall/played seconds, start/end position, duration, completed, pause/seek counts, speed, close reason | A1 ledger |
+| `media_history` | `media_id`, open/effective/completed/inspection counts, total played seconds, first/last-opened/last-played times, last-session duration/position, cleanup state/until, updated time | A1 ledger |
 
-`PRAGMA user_version` is `2`. The worker uses prepared statements and enables foreign keys. The first import creates one movie collection and one media file.
+`PRAGMA user_version` is `3`. The worker uses prepared statements and enables foreign keys. The first import creates one movie collection and one media file.
 
-### v2 premiere dates
+### v3 viewing ledger
 
-- NFO `<premiered>` is parsed first and `<releasedate>` is a compatibility fallback. Only a real calendar date written as `YYYY-MM-DD` is accepted; a bare year, an impossible month/day, or a timestamp is rejected and stored as `NULL`. A year is never used as a date.
-- `collections.premiered_at TEXT` persists that value and `collections_premiered_at` indexes it. The v1 → v2 migration is incremental and idempotent: it adds the column and index, then sets `user_version` to `2`. Existing rows keep `NULL`; migration never guesses a date.
-- `local-library:list` accepts sort `released_desc`: rows with a premiere date come first, newest first, then `year` descending and most recently added; rows without a date stay last.
-- `LocalMediaItem.premieredDate` is the renderer-safe `YYYY-MM-DD` value or `null` when unknown. It is not a path and carries no source location.
+- `viewing_sessions.media_id` and `media_history.media_id` are foreign keys to `media_files` with `ON DELETE CASCADE`. Both tables are owned by the local-library utility process; the renderer never reads a raw row.
+- Migration is incremental and idempotent: a v1 database gains `collections.premiered_at` (v2) and then the two viewing tables (v3). Existing rows are untouched and no viewing history is backfilled from `playback_state`, so old progress never fabricates open counts or accumulated time.
+- No global totals, yearly report, deleted-work archive, `history_key`, or tombstone table exists. Removing a file/source deletes its sessions and aggregate; a re-added file starts a new record.
+- A source that is merely offline keeps its rows. A readable scan that completes without seeing an indexed file confirms the deletion: the worker removes that media's `viewing_sessions` and `media_history` in the same transaction that marks the media row unavailable. Removing a source deletes playback and viewing rows explicitly.
+- A session left open by a crash (no `ended_at`) is settled at the next initialization from its last heartbeat: `close_reason = interrupted`, `ended_at = last_heartbeat_at`, and its counters are folded into `media_history` exactly once.
 
 ## Public IPC
 
@@ -31,7 +34,7 @@ Channels are defined in `src/shared/ipc-channels.ts` and exposed through `window
 - `local-library:state` → `LocalLibraryState`; reports schema version, SQLite availability, safe source labels/counts, and an actionable storage error.
 - `local-library:choose-folder` → opens a main-owned directory picker and starts a visible, cancellable full-root scan; progress is emitted through `onScanProgress` and the final result reports `completed`/`cancelled`/`partial`/`unavailable` without a root path.
 - `local-library:open-video` → opens a main-owned video picker and imports the selected file under its parent root.
-- `local-library:list` → validates bounded page/query input, including `sort`, and returns `LocalLibraryPage` with renderer-safe items. `released_desc` is valid only under schema v2.
+- `local-library:list` → validates bounded page/query input, including `sort`, and returns `LocalLibraryPage` with renderer-safe items. `released_desc` is valid under schema v2+.
 - `local-library:get` → validates opaque `mediaId` and returns one renderer-safe item; missing media is not a path error.
 
 Renderer-visible `LocalMediaItem` fields are `mediaId`, `sourceId`, `collectionId`, title, kind, optional year, optional `premieredDate` (`YYYY-MM-DD` or `null`), optional plot/genres/rating/season/episode, artwork cache keys, size, modified time, and availability. Source summaries use a basename or a fixed drive/folder label; they never fall back to an absolute root. Absolute paths, UNC paths, source-relative paths, database rows, credentials, NAS signs, and raw playback URIs are never part of the public DTO. Worker, SQLite, filesystem and IPC errors are reduced to stable renderer-safe messages before entering state, scan results, or rejected IPC promises.
@@ -43,6 +46,15 @@ Renderer-visible `LocalMediaItem` fields are `mediaId`, `sourceId`, `collectionI
 `local-library:get` may include `detail.playback` for the requested opaque `mediaId` when local progress exists. The worker joins that state to the validated media row; the field contains only `LocalPlaybackState` and never a path or playback URI.
 
 B4a adds optional `detail.episodePlayback`: the saved `LocalPlaybackState` for every file in the same collection, ordered by season/episode. Episodes with no saved row are omitted, so the detail page can render each episode's own watched/progress/unwatched state instead of borrowing the selected episode's state. Every entry is keyed by an opaque `mediaId` and carries only the existing playback fields; no path, relative path, URI, or raw SQL row enters the DTO.
+
+### A1 viewing ledger contract
+
+- `LocalViewingHistory` is the renderer-safe aggregate for one media file: `mediaId`, open/effective/completed/inspection counts, `totalPlayedSec`, first/last-opened/last-played times, last-session played/wall seconds, last position/duration, and `updatedAtMs`. It never carries a title, filename, path, source root, or raw session row.
+- `local-library:get` adds optional `detail.viewing` when at least one session has been recorded for the selected media. The view is read-only; the renderer cannot write counts or mark a file watched through this DTO. The existing `playback_state.watched` flag and the `detail.playback`/`detail.episodePlayback` progress contract are preserved.
+- Session capture stays in main: `AppViewingLedger` receives renderer-safe observations from the local player (`mediaId`, positions, duration, play/pause state, seek/pause counts, speed) and calls the local-library owner. The renderer never sends a path to the ledger.
+- Effective watch = played at least 30 seconds and at least 3% of a known duration. Completion = the native player reported `ended`, or end position is at least 90% with at least 30 played seconds. Seeking to the end without real playback never completes. Paused, buffering, and wall-clock-only time are not counted as played time.
+- The player writes a lightweight heartbeat every 10 seconds and on close; an unfinished session is recovered as `interrupted` on the next database initialization. Session close reasons are `ended`, `user-close`, `error`, `app-quit`, and `interrupted`.
+- When there is no aggregate but a legacy `playback_state` row exists, the detail renders it only as "上次看到（旧记录）"; it never invents open counts or accumulated time from old progress.
 
 ## Work-level (Collection) read contract
 
