@@ -173,13 +173,14 @@ const playerErrorMessage = document.querySelector<HTMLElement>("#player-error-me
 const playerErrorRetry = document.querySelector<HTMLButtonElement>("#player-error-retry");
 const playerErrorBack = document.querySelector<HTMLButtonElement>("#player-error-back");
 
-let homeVisible = true;
 let homeItems: LocalContinueWatchingItem[] = [];
 let recentItems: LocalMediaItem[] = [];
 let homeEpoch = 0;
 const hero = document.querySelector<HTMLElement>("#home-hero");
 const recentSection = document.querySelector<HTMLElement>("#recent-section");
 const showsSection = document.querySelector<HTMLElement>("#shows-section");
+const recentRow = document.querySelector<HTMLElement>("#recent-row");
+const showsRow = document.querySelector<HTMLElement>("#shows-row");
 const sidebar = document.querySelector<HTMLElement>("#sources-page");
 const libraryContent = document.querySelector<HTMLElement>(".library-content");
 const onboarding = document.querySelector<HTMLElement>("#onboarding");
@@ -261,14 +262,14 @@ interface SearchOrigin {
   kind: SearchOriginKind;
   nav: string | undefined;
   libraryQuery: LocalLibraryQuery;
-  homeVisible: boolean;
+  /** The base surface search was entered from, restored when search is left. */
+  base: BaseView;
   scrollTop: number;
   windowScrollY: number;
   focusMediaId: string | undefined;
   focusControlId: string | undefined;
   detail: { mediaId: string; episodeId: string | undefined; origin: DetailOrigin | undefined } | undefined;
 }
-let searchActive = false;
 let searchQuery: string | undefined;
 let searchFilter: LocalLibraryFilter = "all";
 let searchPage = 1;
@@ -388,7 +389,7 @@ const sortListbox = sortMenuContainer && sortMenuTrigger && sortMenuPopover ? ne
       applyQuery({ sort, page: 1 });
       // Ticket 12: ordering is part of the result identity, so an active search
       // restarts at page 1 with the new order.
-      if (searchActive) { searchPage = 1; void loadSearch(); }
+      if (isSearchBase()) { searchPage = 1; void loadSearch(); }
       void window.zVideo.appPreferences.setSort(sort).catch(() => setMessage("排序偏好保存失败，本次排序仍已应用。", true));
     },
   },
@@ -418,8 +419,97 @@ function setMessage(message: string, error = false): void {
   if (sourcesMessage) { sourcesMessage.textContent = message; sourcesMessage.dataset.state = error ? "error" : "normal"; }
 }
 
-function isDetailOrPlayerVisible(): boolean {
-  return detail?.hidden === false || playerView?.hidden === false;
+/**
+ * Ticket 15: one view model instead of fourteen navigation functions each
+ * writing `hidden`. `baseView` is the mutually exclusive page surface;
+ * `layers` stack on top of it. `player` is the modal layer: it hides the app
+ * shell and keeps the base surface and the other layers mounted underneath.
+ * `applyView()` is the only writer of these containers; navigation functions
+ * only change `baseView`/`layers`.
+ */
+type BaseView = "home" | "library" | "sources" | "search";
+interface ViewLayers { cleanup: boolean; detail: boolean; player: boolean }
+
+let baseView: BaseView = "home";
+let layers: ViewLayers = { cleanup: false, detail: false, player: false };
+
+function isHomeBase(): boolean { return baseView === "home"; }
+function isSearchBase(): boolean { return baseView === "search"; }
+function isDetailLayerOpen(): boolean { return layers.detail; }
+function isPlayerLayerOpen(): boolean { return layers.player; }
+function isCleanupLayerOpen(): boolean { return layers.cleanup; }
+function isDetailOrPlayerVisible(): boolean { return layers.detail || layers.player; }
+
+function setView(next: { baseView?: BaseView; layers?: Partial<ViewLayers> }): void {
+  if (next.baseView) baseView = next.baseView;
+  if (next.layers) layers = { ...layers, ...next.layers };
+}
+
+function hasRowContent(row: HTMLElement | null): boolean {
+  return Boolean(row && row.childElementCount > 0);
+}
+
+/**
+ * The only place that derives a `hidden` value for a view container. Everything
+ * below is a pure read of `baseView`, `layers` and the loaded data, so a cleared
+ * error state can restore the home blocks without another navigation.
+ */
+function applyView(): void {
+  const error = state?.status === "error";
+  const detailOpen = layers.detail;
+  const cleanupOpen = layers.cleanup;
+  const playerOpen = layers.player;
+
+  // The player is modal: the shell is hidden but never unmounted.
+  if (appShell) appShell.hidden = playerOpen;
+  if (playerView) playerView.hidden = !playerOpen;
+
+  // Base surfaces are mutually exclusive.
+  if (sidebar) sidebar.hidden = baseView !== "sources";
+  if (libraryContent) libraryContent.hidden = baseView === "sources";
+
+  // Layers stack above the base surface.
+  if (detail) detail.hidden = !detailOpen;
+  if (searchSection) searchSection.hidden = baseView !== "search" || detailOpen;
+  if (cleanupSection) cleanupSection.hidden = !cleanupOpen;
+  if (collectionSection) collectionSection.hidden = baseView !== "library" || detailOpen || cleanupOpen || error;
+
+  // Home chrome is derived, so clearing the error state restores it by itself.
+  const homeSurface = isHomeBase() && !error && !detailOpen && !cleanupOpen;
+  const heroItem = homeItems[0]?.item ?? recentItems[0];
+  if (hero) hero.hidden = !homeSurface || !heroItem;
+  if (continueSection) continueSection.hidden = !homeSurface || homeItems.length === 0 || Boolean(currentQuery.sourceId);
+  if (recentSection) recentSection.hidden = !homeSurface || !hasRowContent(recentRow);
+  if (showsSection) showsSection.hidden = !homeSurface || !hasRowContent(showsRow);
+  if (onboarding) onboarding.hidden = !(homeSurface && activePage?.totalCount === 0 && !currentQuery.query);
+  updateOfflineNotice();
+}
+
+/**
+ * Ticket 08: a degraded source read some of its directories, so its indexed
+ * entries still play. Only `available === false` means offline.
+ */
+function updateOfflineNotice(): void {
+  if (!libraryOfflineNotice) return;
+  const sources = state?.status !== "error" ? (state?.sources ?? []) : [];
+  const offline = sources.filter((source) => !source.available);
+  const degraded = sources.filter((source) => source.available && source.degraded);
+  const visible = (offline.length > 0 || degraded.length > 0) && !isHomeBase() && !layers.detail && !layers.player && !layers.cleanup;
+  libraryOfflineNotice.hidden = !visible;
+  if (!visible) return;
+  if (libraryOfflineText) {
+    if (offline.length > 0) {
+      libraryOfflineText.textContent = offline.length === 1
+        ? `「${offline[0].label}」文件夹离线，其中的作品暂时不能播放。重新连接驱动器或网络位置后，在文件夹页重新扫描。`
+        : `${offline.length} 个文件夹离线，其中的作品暂时不能播放。重新连接驱动器或网络位置后，在文件夹页重新扫描。`;
+    } else {
+      // Degraded is not offline: playback still works, only the unread
+      // directories are missing from the index.
+      libraryOfflineText.textContent = degraded.length === 1
+        ? `「${degraded[0].label}」中有部分目录这次没读到；已加入的作品仍可播放，接回这些目录后在文件夹页重新扫描可补齐。`
+        : `${degraded.length} 个文件夹中有部分目录这次没读到；已加入的作品仍可播放，接回这些目录后在文件夹页重新扫描可补齐。`;
+    }
+  }
 }
 
 function detailPlayback(detailValue: LocalMediaDetail): LocalPlaybackState | undefined {
@@ -435,7 +525,7 @@ function hasResume(playback: LocalPlaybackState | undefined): playback is LocalP
 
 /** The only shared-element source allowed by B6b: a work card on the home view. */
 function detailFlightSource(target: HTMLElement | undefined): HTMLElement | undefined {
-  if (!target || !homeVisible || searchActive) return undefined;
+  if (!target || !isHomeBase()) return undefined;
   if (target.id === "hero-detail") return document.querySelector<HTMLElement>("#hero-poster") ?? undefined;
   if (!target.closest("#recent-row, #shows-row, #continue-row")) return undefined;
   return target.querySelector<HTMLElement>(".media-poster, .continue-image") ?? undefined;
@@ -559,7 +649,7 @@ function searchOriginLabel(kind: SearchOriginKind | undefined): string {
 }
 
 function updateHeaderSearch(): void {
-  const detailVisible = detail?.hidden === false;
+  const detailVisible = isDetailLayerOpen();
   const showForm = !detailVisible || detailSearchFormOpen;
   if (searchForm) searchForm.hidden = !showForm;
   if (detailSearchEntry) detailSearchEntry.hidden = !detailVisible || detailSearchFormOpen;
@@ -586,12 +676,12 @@ function updateSearchChrome(): void {
 
 function captureSearchOrigin(): SearchOrigin {
   const focused = document.activeElement;
-  const detailVisible = detail?.hidden === false;
+  const detailVisible = isDetailLayerOpen();
   const kind: SearchOriginKind = detailVisible
     ? "detail"
-    : sidebar?.hidden === false
+    : baseView === "sources"
       ? "sources"
-      : homeVisible
+      : isHomeBase()
         ? "home"
         : (currentQuery.filter ?? "all") === "episode"
           ? "episodes"
@@ -600,7 +690,7 @@ function captureSearchOrigin(): SearchOrigin {
     kind,
     nav: document.querySelector<HTMLButtonElement>("[data-nav][aria-current='page']")?.dataset.nav,
     libraryQuery: { ...currentQuery },
-    homeVisible,
+    base: baseView,
     scrollTop: libraryContent?.scrollTop ?? 0,
     windowScrollY: document.scrollingElement?.scrollTop ?? window.scrollY,
     focusMediaId: focused instanceof HTMLElement && focused.dataset.mediaId ? focused.dataset.mediaId : undefined,
@@ -612,20 +702,10 @@ function captureSearchOrigin(): SearchOrigin {
 }
 
 function showSearchView(): void {
-  if (detail) detail.hidden = true;
-  if (sidebar) sidebar.hidden = true;
-  if (cleanupSection) cleanupSection.hidden = true;
-  cleanupVisible = false;
+  setView({ baseView: "search", layers: { detail: false, cleanup: false } });
   cleanupRequestEpoch += 1;
-  if (hero) hero.hidden = true;
-  if (continueSection) continueSection.hidden = true;
-  if (recentSection) recentSection.hidden = true;
-  if (showsSection) showsSection.hidden = true;
-  if (collectionSection) collectionSection.hidden = true;
-  if (onboarding) onboarding.hidden = true;
-  if (libraryContent) libraryContent.hidden = false;
-  if (searchSection) searchSection.hidden = false;
   detailSearchFormOpen = false;
+  applyView();
   updateHeaderSearch();
   updateScanUi();
 }
@@ -674,7 +754,7 @@ function renderSearchPage(page: { mode: "collection"; items: LocalCollectionSumm
 }
 
 async function loadSearch(): Promise<void> {
-  if (!searchActive || !searchQuery) return;
+  if (!isSearchBase() || !searchQuery) return;
   const epoch = ++requestEpoch;
   const filter = searchFilter;
   if (searchGrid) {
@@ -719,15 +799,14 @@ async function loadSearch(): Promise<void> {
 async function enterSearch(query: string): Promise<void> {
   const text = query.trim();
   if (!text) return;
-  const detailVisible = detail?.hidden === false;
-  if (!searchActive || detailVisible) {
+  const detailVisible = isDetailLayerOpen();
+  if (!isSearchBase() || detailVisible) {
     searchOrigin = captureSearchOrigin();
     searchFilter = searchOrigin.libraryQuery.filter ?? "all";
   }
   // Ticket 12: a new term starts at page 1 even when a search view is already open.
   if (text !== searchQuery) searchPage = 1;
   searchQuery = text;
-  searchActive = true;
   if (searchInput) searchInput.value = text;
   if (searchClear) searchClear.hidden = false;
   showSearchView();
@@ -740,12 +819,12 @@ async function enterSearch(query: string): Promise<void> {
 }
 
 function exitSearchState(): void {
-  searchActive = false;
+  // Leaving search restores the base surface it was entered from.
+  setView({ baseView: searchOrigin?.base ?? "library" });
   searchQuery = undefined;
   searchOrigin = undefined;
   searchPage = 1;
   searchPageView = undefined;
-  if (searchSection) searchSection.hidden = true;
   if (searchGrid) searchGrid.replaceChildren();
   if (searchPagination) {
     searchPagination.replaceChildren();
@@ -755,11 +834,12 @@ function exitSearchState(): void {
   if (searchInput) searchInput.value = "";
   if (searchClear) searchClear.hidden = true;
   detailSearchFormOpen = false;
+  applyView();
   updateHeaderSearch();
 }
 
 async function clearSearch(): Promise<void> {
-  if (!searchActive) {
+  if (!isSearchBase()) {
     if (searchInput) searchInput.value = "";
     if (searchClear) searchClear.hidden = true;
     return;
@@ -785,19 +865,13 @@ async function clearSearch(): Promise<void> {
     currentQuery = { ...origin.libraryQuery };
     syncQueryControls();
   } else if (origin.kind === "home") {
-    homeVisible = true;
-    if (sidebar) sidebar.hidden = true;
-    if (libraryContent) libraryContent.hidden = false;
-    if (onboarding) onboarding.hidden = true;
-    if (collectionSection) collectionSection.hidden = true;
+    setView({ baseView: "home" });
+    applyView();
     setNavCurrent(origin.nav ?? "home");
     await Promise.all([loadContinueWatching(), loadHomeShelves()]);
   } else {
-    homeVisible = false;
-    if (sidebar) sidebar.hidden = true;
-    if (libraryContent) libraryContent.hidden = false;
-    if (onboarding) onboarding.hidden = true;
-    if (collectionSection) collectionSection.hidden = false;
+    setView({ baseView: "library" });
+    applyView();
     setNavCurrent(origin.nav ?? "all");
     await loadLibrary();
   }
@@ -837,7 +911,7 @@ async function restoreSortPreference(): Promise<void> {
 }
 
 function showPlayer(visible: boolean): void {
-  const wasVisible = playerView ? !playerView.hidden : false;
+  const wasVisible = isPlayerLayerOpen();
   if (visible) {
     // Ticket 06: showing the player always starts (or restarts) one session, so
     // a late event from a torn-down session can never reopen this view.
@@ -845,8 +919,8 @@ function showPlayer(visible: boolean): void {
     playerClosing = false;
     clearPlayerCloseFallback();
   }
-  if (appShell) appShell.hidden = visible;
-  if (playerView) playerView.hidden = !visible;
+  setView({ layers: { player: visible } });
+  applyView();
   const nextTitle = visible ? activePlaybackTitle : "";
   if (playerCurrentTitle && playerCurrentTitle.textContent !== nextTitle) playerCurrentTitle.textContent = nextTitle;
   if (visible && !wasVisible) {
@@ -909,9 +983,9 @@ function updateReviewBar(): void {
   const facts = document.getElementById("player-review-facts");
   if (!bar || !facts) return;
   const target = reviewTarget;
-  bar.hidden = !target || playerView?.hidden !== false;
+  bar.hidden = !target || !isPlayerLayerOpen();
   facts.textContent = target ? reviewFactsText(target.viewing, Date.now()) : "";
-  if (playerView?.hidden === false) {
+  if (isPlayerLayerOpen()) {
     markPlayerUiStructureChanged();
     sendOverlayState();
   }
@@ -919,7 +993,7 @@ function updateReviewBar(): void {
 
 /** Remember whether playback started from the detail view, home or cleanup. */
 function recordPlayerOrigin(): void {
-  playerOrigin = reviewTarget ? "cleanup" : detail?.hidden === false ? "detail" : "home";
+  playerOrigin = reviewTarget ? "cleanup" : isDetailLayerOpen() ? "detail" : "home";
   playerOriginScroll = document.scrollingElement?.scrollTop ?? window.scrollY;
   const label = playerOriginLabel();
   const closeLabel = document.getElementById("player-close-label");
@@ -940,7 +1014,7 @@ const overlayIds = ["player-current-title", "player-close-button", "player-close
 const overlayActions = new Set(overlayIds);
 let overlayActivity = 0;
 function sendOverlayState(): void {
-  if (playerView?.hidden !== false) return;
+  if (!isPlayerLayerOpen()) return;
   const elements: Record<string, Record<string, unknown>> = {};
   for (const id of overlayIds) {
     const element = document.getElementById(id);
@@ -959,10 +1033,10 @@ function sendOverlayState(): void {
   window.zVideo.overlay.state({ heading: document.querySelector(".player-heading")?.outerHTML, controls: document.querySelector(".player-controls")?.outerHTML, stage: playerError && !playerError.hidden ? playerError.outerHTML : "", elements, progress: playerSeek?.parentElement?.getAttribute("style") ?? "", fullscreen: playerFullscreen, playing: playerState === "playing", error: Boolean(playerError && !playerError.hidden), activity: overlayActivity, revision: playerUiRevision, ...(playerOverlayFocusId ? { focusId: playerOverlayFocusId } : {}) });
 }
 window.zVideo.overlay.onReady(sendOverlayState);
-window.addEventListener("keydown", () => { if (playerView?.hidden === false) { overlayActivity += 1; sendOverlayState(); } });
+window.addEventListener("keydown", () => { if (isPlayerLayerOpen()) { overlayActivity += 1; sendOverlayState(); } });
 setInterval(sendOverlayState, 250);
 window.zVideo.overlay.onAction((action) => {
-  if (!action || typeof action !== "object" || playerView?.hidden !== false) return;
+  if (!action || typeof action !== "object" || !isPlayerLayerOpen()) return;
   if (action.type === "key" && typeof action.key === "string" && typeof action.code === "string") {
     handlePlayerShortcut(new KeyboardEvent("keydown", { key: action.key, code: action.code }));
     return;
@@ -1235,7 +1309,7 @@ function isPlayerButton(target: EventTarget | null): boolean {
 }
 
 function handlePlayerShortcut(event: KeyboardEvent): void {
-  if (playerView?.hidden || event.isComposing) return;
+  if (!isPlayerLayerOpen() || event.isComposing) return;
   if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
   if (event.defaultPrevented) return;
   if (isPlayerFormControl(event.target) || isPlayerFormControl(document.activeElement)) return;
@@ -1503,7 +1577,8 @@ function handlePlayerClosed(): void {
     selectedMediaId = undefined;
     selectedSeason = undefined;
     playerReturnToDetail = false;
-    if (detail) detail.hidden = true;
+    setView({ layers: { detail: false } });
+    applyView();
     updateReviewBar();
     openReviewDecision();
     return;
@@ -1521,7 +1596,8 @@ function handlePlayerClosed(): void {
   activeDetailPlayback = undefined;
   selectedMediaId = undefined;
   selectedSeason = undefined;
-  if (detail) detail.hidden = true;
+  setView({ layers: { detail: false } });
+  applyView();
   restorePlayerOriginScroll();
   void Promise.all([loadContinueWatching(), loadHomeShelves()]).then(() => restorePlayerOriginScroll());
 }
@@ -1641,51 +1717,16 @@ function renderState(next: LocalLibraryState): void {
     if (libraryPageError) libraryPageError.hidden = true;
     if (libraryEmpty) libraryEmpty.hidden = true;
     if (libraryPagination) libraryPagination.hidden = true;
-    if (libraryOfflineNotice) libraryOfflineNotice.hidden = true;
-    if (onboarding) onboarding.hidden = true;
-    if (hero) hero.hidden = true;
-    if (continueSection) continueSection.hidden = true;
-    if (recentSection) recentSection.hidden = true;
-    if (showsSection) showsSection.hidden = true;
-    if (cleanupSection) cleanupSection.hidden = true;
-    cleanupVisible = false;
+    setView({ layers: { cleanup: false } });
     cleanupRequestEpoch += 1;
     // Ticket 14: the cleanup view is hidden here, so a pending close-time
     // decision must not pop up over a hidden page once playback closes.
     if (reviewTarget) clearReviewTarget();
   }
-  if (collectionSection && !isDetailOrPlayerVisible() && !cleanupVisible) collectionSection.hidden = next.status === "error" || homeVisible || searchActive;
   renderSources(next, scanProgress, sourceList, { singleVideoSourceIds });
   renderSourceFilters();
-  renderOfflineNotice();
+  applyView();
   if (next.status === "error") setMessage(next.error?.message ?? "本地片库不可用。", true);
-}
-
-/**
- * Ticket 08: a degraded source read some of its directories, so its indexed
- * entries still play. Only `available === false` means offline.
- */
-function renderOfflineNotice(): void {
-  if (!libraryOfflineNotice) return;
-  const sources = state?.status !== "error" ? (state?.sources ?? []) : [];
-  const offline = sources.filter((source) => !source.available);
-  const degraded = sources.filter((source) => source.available && source.degraded);
-  const visible = (offline.length > 0 || degraded.length > 0) && !homeVisible && !isDetailOrPlayerVisible() && !cleanupVisible;
-  libraryOfflineNotice.hidden = !visible;
-  if (!visible) return;
-  if (libraryOfflineText) {
-    if (offline.length > 0) {
-      libraryOfflineText.textContent = offline.length === 1
-        ? `「${offline[0].label}」文件夹离线，其中的作品暂时不能播放。重新连接驱动器或网络位置后，在文件夹页重新扫描。`
-        : `${offline.length} 个文件夹离线，其中的作品暂时不能播放。重新连接驱动器或网络位置后，在文件夹页重新扫描。`;
-    } else {
-      // Degraded is not offline: playback still works, only the unread
-      // directories are missing from the index.
-      libraryOfflineText.textContent = degraded.length === 1
-        ? `「${degraded[0].label}」中有部分目录这次没读到；已加入的作品仍可播放，接回这些目录后在文件夹页重新扫描可补齐。`
-        : `${degraded.length} 个文件夹中有部分目录这次没读到；已加入的作品仍可播放，接回这些目录后在文件夹页重新扫描可补齐。`;
-    }
-  }
 }
 
 function collectionCardSignature(item: LocalCollectionSummary): string {
@@ -1706,7 +1747,7 @@ function renderPage(page: LibraryPageView): void {
   if (page.page !== currentQuery.page) currentQuery = { ...currentQuery, page: page.page };
   activePage = page;
   if (libraryPageError) libraryPageError.hidden = true;
-  if (onboarding) onboarding.hidden = !(state?.status !== "error" && homeVisible && page.totalCount === 0 && !currentQuery.query);
+  applyView();
   const focusedMediaId = preserveGridFocus();
   if (!libraryGrid || !libraryEmpty) return;
   artworkObserver?.disconnect();
@@ -1923,7 +1964,6 @@ function renderHomeHero(): void {
   if (!hero) return;
   const entry = homeItems[0];
   const item = entry?.item ?? recentItems[0];
-  hero.hidden = !homeVisible || searchActive || !item || detail?.hidden === false;
   if (!item) return;
   // The poster, tone and title follow the work, never the episode file name.
   const heroItem: LocalMediaItem = entry
@@ -1975,14 +2015,13 @@ async function loadHomeShelves(): Promise<void> {
     const recentCollections = recent.page?.items ?? [];
     const showCollections = shows.page?.items ?? [];
     recentItems = recentCollections.map(collectionAsMediaItem);
-    for (const [section, selector, items] of [[recentSection, "#recent-row", recentCollections], [showsSection, "#shows-row", showCollections]] as const) {
-      const row = document.querySelector<HTMLElement>(selector);
-      if (!row || !section) continue;
+    for (const [row, items] of [[recentRow, recentCollections], [showsRow, showCollections]] as const) {
+      if (!row) continue;
       row.replaceChildren(...items.map((item) => collectionCard(item)));
       row.querySelectorAll<HTMLElement>("[data-artwork-media-id]").forEach((element) => enqueueArtwork(element, 1));
-      section.hidden = !homeVisible || searchActive || items.length === 0 || detail?.hidden === false;
     }
     renderHomeHero();
+    applyView();
     playFirstContentMotion(hero && !hero.hidden ? hero : document.querySelector<HTMLElement>("#recent-row .media-card"));
   } catch { if (epoch === homeEpoch) setMessage("首页片架加载失败，请重试。", true); }
 }
@@ -1994,11 +2033,8 @@ function renderContinue(items: LocalContinueWatchingItem[]): void {
   continueRow.replaceChildren();
   continuePlaybackByMediaId.clear();
   for (const entry of items) continuePlaybackByMediaId.set(entry.item.mediaId, entry.playback);
-  if (!homeVisible || searchActive || items.length === 0 || currentQuery.sourceId || detail?.hidden === false || playerView?.hidden === false) {
-    continueSection.hidden = true;
-    return;
-  }
-  continueSection.hidden = false;
+  applyView();
+  if (continueSection.hidden) return;
   if (continueScope) continueScope.textContent = `${items.length} 部作品`;
   renderContinueCards(items, continueRow, enqueueArtwork);
 }
@@ -2046,7 +2082,7 @@ async function pumpArtwork(): Promise<void> {
       task.element.dataset.artworkLoaded = "true";
       applyTone(task.element, tone);
       if (task.element.id === "hero-poster" && hero) applyTone(hero, tone);
-      if (selectedMediaId === task.mediaId && detail && !detail.hidden) {
+      if (selectedMediaId === task.mediaId && detail && isDetailLayerOpen()) {
         applyTone(detail, tone);
         if (playerView) applyTone(playerView, tone);
       }
@@ -2087,7 +2123,7 @@ function scheduleScanRefresh(): void {
 }
 
 async function loadLibrary(): Promise<boolean> {
-  if (isDetailOrPlayerVisible() || searchActive || cleanupVisible) {
+  if (isDetailOrPlayerVisible() || isSearchBase() || isCleanupLayerOpen()) {
     scanRefreshQueued = true;
     return false;
   }
@@ -2173,7 +2209,6 @@ async function loadContinueWatching(): Promise<void> {
 
 /* A2 · cleanup view -------------------------------------------------------- */
 
-let cleanupVisible = false;
 let cleanupSettings: CleanupSettings = defaultCleanupSettings();
 let cleanupQueue: LocalCleanupQueue | undefined;
 let cleanupQuery: LocalCleanupQueueQuery = { page: 1, pageSize: 50, rule: "all", state: "none" };
@@ -2289,12 +2324,12 @@ function renderCleanupQueue(queue: LocalCleanupQueue): void {
 }
 
 async function loadCleanupQueue(): Promise<void> {
-  if (!cleanupVisible) return;
+  if (!isCleanupLayerOpen()) return;
   const epoch = ++cleanupRequestEpoch;
   if (cleanupMessage) cleanupMessage.textContent = "正在读取整理候选…";
   try {
     const result = await window.zVideo.localLibrary.getCleanupQueue(cleanupQuery);
-    if (epoch !== cleanupRequestEpoch || !cleanupVisible) return;
+    if (epoch !== cleanupRequestEpoch || !isCleanupLayerOpen()) return;
     renderCleanupQueue(result.queue);
   } catch (error) {
     if (epoch !== cleanupRequestEpoch) return;
@@ -2307,22 +2342,12 @@ async function loadCleanupQueue(): Promise<void> {
 }
 
 async function showCleanup(): Promise<void> {
-  if (searchActive) exitSearchState();
-  cleanupVisible = true;
+  if (isSearchBase()) exitSearchState();
+  setView({ layers: { cleanup: true, detail: false } });
   requestEpoch += 1;
-  if (cleanupSection) cleanupSection.hidden = false;
-  if (collectionSection) collectionSection.hidden = true;
-  if (detail) detail.hidden = true;
-  if (sidebar) sidebar.hidden = true;
-  if (searchSection) searchSection.hidden = true;
-  if (onboarding) onboarding.hidden = true;
-  if (hero) hero.hidden = true;
-  if (recentSection) recentSection.hidden = true;
-  if (showsSection) showsSection.hidden = true;
-  if (continueSection) continueSection.hidden = true;
+  applyView();
   if (libraryEmpty) libraryEmpty.hidden = true;
   if (libraryPagination) libraryPagination.hidden = true;
-  if (libraryOfflineNotice) libraryOfflineNotice.hidden = true;
   cleanupQuery = { page: 1, pageSize: 50, rule: "all", state: "none" };
   renderCleanupFilters();
   updateScanUi();
@@ -2332,23 +2357,21 @@ async function showCleanup(): Promise<void> {
   } catch {
     cleanupSettings = defaultCleanupSettings();
   }
-  if (!cleanupVisible) return;
+  if (!isCleanupLayerOpen()) return;
   await loadCleanupQueue();
   document.querySelector<HTMLElement>("#cleanup-title")?.focus({ preventScroll: true });
 }
 
 function hideCleanup(returnFocus = true): void {
-  if (!cleanupVisible) return;
-  cleanupVisible = false;
+  if (!isCleanupLayerOpen()) return;
+  setView({ layers: { cleanup: false } });
   cleanupRequestEpoch += 1;
   cleanupQueue = undefined;
-  if (cleanupSection) cleanupSection.hidden = true;
-  if (collectionSection) collectionSection.hidden = homeVisible;
-  renderOfflineNotice();
+  applyView();
   updateScanUi();
   void loadLibrary();
   void loadContinueWatching();
-  if (homeVisible) void loadHomeShelves();
+  if (isHomeBase()) void loadHomeShelves();
   if (returnFocus) cleanupEntry?.focus({ preventScroll: true });
 }
 
@@ -2503,8 +2526,8 @@ async function openReviewMedia(): Promise<void> {
 }
 
 function startReview(candidate: LocalCleanupCandidate): void {
-  if (reviewTarget || playerView?.hidden === false || cleanupMarkBusy) return;
-  if (!cleanupVisible) return;
+  if (reviewTarget || isPlayerLayerOpen() || cleanupMarkBusy) return;
+  if (!isCleanupLayerOpen()) return;
   reviewTarget = {
     mediaId: candidate.item.mediaId,
     title: candidate.item.title,
@@ -2803,9 +2826,9 @@ function applyQuery(patch: Partial<LocalLibraryQuery>): void {
 }
 
 function currentDetailOriginKind(): DetailOriginKind {
-  if (searchActive) return "search";
+  if (isSearchBase()) return "search";
   if ((currentQuery.filter ?? "all") === "episode") return "episodes";
-  return homeVisible ? "home" : "library";
+  return isHomeBase() ? "home" : "library";
 }
 
 function detailOriginLabel(kind: DetailOriginKind): string {
@@ -2943,7 +2966,7 @@ function showDetailUnavailable(): void {
 }
 
 async function openDetail(mediaId: string, returnFocusTarget?: HTMLElement, restoringOrigin?: DetailOrigin): Promise<void> {
-  const entering = detail?.hidden !== false;
+  const entering = !isDetailLayerOpen();
   const retrying = detail?.dataset.state === "error";
   if (entering) {
     skipFlight();
@@ -2971,13 +2994,8 @@ async function openDetail(mediaId: string, returnFocusTarget?: HTMLElement, rest
   selectedMediaId = mediaId;
   detailRequestMediaId = mediaId;
   detailSearchFormOpen = false;
-  if (detail) detail.hidden = false;
-  if (searchSection) searchSection.hidden = true;
-  if (collectionSection) collectionSection.hidden = true;
-  if (hero) hero.hidden = true;
-  if (recentSection) recentSection.hidden = true;
-  if (showsSection) showsSection.hidden = true;
-  if (continueSection) continueSection.hidden = true;
+  setView({ layers: { detail: true } });
+  applyView();
   updateHeaderSearch();
   updateScanUi();
   setMessage("正在打开详情…");
@@ -3197,18 +3215,16 @@ function closeDetail(): void {
   if (detailFlightStarted) skipFlight();
   const returnFlight = detailFlightStarted && detailPoster && origin?.kind === "home" ? captureFlightSource(detailPoster) : undefined;
   detailFlightStarted = false;
+  setView({ layers: { detail: false } });
   if (detail) {
-    detail.hidden = true;
     delete detail.dataset.state;
     detail.removeAttribute("aria-busy");
   }
+  applyView();
   updateHeaderSearch();
   updateScanUi();
   if (origin?.kind === "search") {
-    if (searchActive && searchQuery) {
-      if (searchSection) searchSection.hidden = false;
-      if (collectionSection) collectionSection.hidden = true;
-      if (libraryContent) libraryContent.hidden = false;
+    if (isSearchBase() && searchQuery) {
       if (origin) applyDetailNav(origin.nav);
       void loadSearch().then(() => {
         if (!origin) return;
@@ -3222,7 +3238,6 @@ function closeDetail(): void {
     }
     // Ticket 12: a detail opened from search must never leave a visible but
     // unloaded search page behind; drop back to the list instead.
-    if (searchSection) searchSection.hidden = true;
     if (searchGrid) searchGrid.replaceChildren();
     if (searchPagination) {
       searchPagination.replaceChildren();
@@ -3230,10 +3245,8 @@ function closeDetail(): void {
     }
     searchPageView = undefined;
   }
-  if (collectionSection) collectionSection.hidden = homeVisible;
-  renderOfflineNotice();
   if (origin) applyDetailNav(origin.nav);
-  void Promise.all([loadLibrary(), homeVisible ? loadHomeShelves() : Promise.resolve()]).then(([applied]) => {
+  void Promise.all([loadLibrary(), isHomeBase() ? loadHomeShelves() : Promise.resolve()]).then(([applied]) => {
     if (applied) {
       scanRenderedCommit = scanCommit;
       scanRefreshQueued = false;
@@ -3254,7 +3267,7 @@ function closeDetail(): void {
 
 async function openSelectedLocalMedia(restart = false): Promise<void> {
   if (!selectedMediaId) return;
-  if (playerView?.hidden !== false) recordPlayerOrigin();
+  if (!isPlayerLayerOpen()) recordPlayerOrigin();
   activePlaybackTitle = activeDetail?.item.title ?? "本地媒体";
   showPlayer(true);
   setPlayerStatus(restart ? "正在从头打开本地媒体…" : "正在打开本地媒体…");
@@ -3560,7 +3573,7 @@ function updateScanUi(): void {
       if (scanStatusText.textContent !== text) scanStatusText.textContent = text;
     }
   }
-  const homeIdle = homeVisible && !searchActive && !cleanupVisible && !isDetailOrPlayerVisible();
+  const homeIdle = isHomeBase() && !isCleanupLayerOpen() && !isDetailOrPlayerVisible();
   const lastSummary = running || pendingScanSummary ? undefined : lastScanSummary;
   const showCard = Boolean(homeIdle && (running || lastSummary));
   if (homeScanCard) {
@@ -3673,29 +3686,18 @@ function renderScanResult(result: LocalScanResult): void {
 }
 
 function navigateHomeOrLibrary(target: string): void {
-  if (searchActive) exitSearchState();
-  if (cleanupVisible) {
-    cleanupVisible = false;
-    cleanupRequestEpoch += 1;
-    if (cleanupSection) cleanupSection.hidden = true;
-  }
+  if (isSearchBase()) exitSearchState();
+  setView({ baseView: target === "home" ? "home" : "library", layers: { detail: false, cleanup: false } });
   requestEpoch += 1;
-  homeVisible = target === "home";
-  if (detail) detail.hidden = true;
-  if (sidebar) sidebar.hidden = true;
-  if (onboarding && target !== "home") onboarding.hidden = true;
-  if (libraryContent) libraryContent.hidden = false;
-  if (searchSection) searchSection.hidden = true;
-  if (collectionSection) collectionSection.hidden = homeVisible;
   detailSearchFormOpen = false;
+  applyView();
   updateHeaderSearch();
   document.querySelectorAll<HTMLButtonElement>("[data-nav]").forEach((button) => {
     if (button.dataset.nav === target) button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current");
   });
-  if (homeVisible) { setQuery({ query: undefined, sourceId: undefined, filter: "all" }); void loadContinueWatching(); void loadHomeShelves(); }
-  else { if (hero) hero.hidden = true; if (continueSection) continueSection.hidden = true; if (recentSection) recentSection.hidden = true; if (showsSection) showsSection.hidden = true; setQuery({ sourceId: undefined, query: undefined, filter: target === "movie" || target === "show" ? target : "all", sort: target === "recent" ? "added_desc" : currentQuery.sort }); void loadLibrary(); }
+  if (isHomeBase()) { setQuery({ query: undefined, sourceId: undefined, filter: "all" }); void loadContinueWatching(); void loadHomeShelves(); }
+  else { setQuery({ sourceId: undefined, query: undefined, filter: target === "movie" || target === "show" ? target : "all", sort: target === "recent" ? "added_desc" : currentQuery.sort }); void loadLibrary(); }
   updateScanUi();
-  renderOfflineNotice();
 }
 document.querySelectorAll<HTMLButtonElement>("[data-nav]").forEach((button) => button.addEventListener("click", () => {
   if (button.dataset.nav === "folder") showSources();
@@ -3703,25 +3705,11 @@ document.querySelectorAll<HTMLButtonElement>("[data-nav]").forEach((button) => b
 }));
 document.querySelectorAll<HTMLButtonElement>("[data-shelf]").forEach((button) => button.addEventListener("click", () => navigateHomeOrLibrary(button.dataset.shelf ?? "all")));
 function showSources(): void {
-  if (searchActive) exitSearchState();
-  if (cleanupVisible) {
-    cleanupVisible = false;
-    cleanupRequestEpoch += 1;
-    if (cleanupSection) cleanupSection.hidden = true;
-  }
+  if (isSearchBase()) exitSearchState();
+  setView({ baseView: "sources", layers: { detail: false, cleanup: false } });
   requestEpoch += 1;
-  homeVisible = false;
-  if (detail) detail.hidden = true;
-  if (sidebar) sidebar.hidden = false;
-  if (libraryContent) libraryContent.hidden = true;
-  if (onboarding) onboarding.hidden = true;
-  if (hero) hero.hidden = true;
-  if (continueSection) continueSection.hidden = true;
-  if (recentSection) recentSection.hidden = true;
-  if (showsSection) showsSection.hidden = true;
-  if (searchSection) searchSection.hidden = true;
-  if (collectionSection) collectionSection.hidden = true;
   detailSearchFormOpen = false;
+  applyView();
   updateHeaderSearch();
   document.querySelectorAll<HTMLButtonElement>("[data-nav]").forEach((button) => {
     if (button.dataset.nav === "folder") button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current");
@@ -3729,7 +3717,6 @@ function showSources(): void {
   setQuery({ query: undefined, sourceId: undefined, page: 1 });
   if (state) renderSources(state, scanProgress, sourceList, { singleVideoSourceIds });
   updateScanUi();
-  renderOfflineNotice();
 }
 document.querySelector<HTMLAnchorElement>('#detail-offline-banner a')?.addEventListener("click", (event) => { event.preventDefault(); showSources(); });
 document.querySelectorAll<HTMLButtonElement>('[data-import="folder"]').forEach((button) => button.addEventListener("click", () => chooseFolderButton?.click()));
@@ -3857,7 +3844,7 @@ document.addEventListener("keydown", (event) => {
   else if (offlineDialog?.open) { event.preventDefault(); offlineDialog.close(); }
   else if (reviewDecisionDialog?.open) { event.preventDefault(); returnToReviewQueue(); }
   else if (cleanupSettingsDialog?.open || cleanupDeleteDialog?.open) { /* the native dialog consumes Escape */ }
-  else if (cleanupVisible && playerView?.hidden !== false) { event.preventDefault(); hideCleanup(); }
+  else if (isCleanupLayerOpen() && !isPlayerLayerOpen()) { event.preventDefault(); hideCleanup(); }
 });
 libraryGrid?.addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-media-id]");
@@ -3908,7 +3895,7 @@ playerSettingsButton?.addEventListener("click", () => {
 });
 document.querySelector<HTMLButtonElement>("#player-settings-close")?.addEventListener("click", () => closePlayerSettings(true));
 document.addEventListener("pointerdown", (event) => {
-  if (playerView?.hidden !== false) return;
+  if (!isPlayerLayerOpen()) return;
   const target = event.target instanceof Node ? event.target : undefined;
   const element = target instanceof Element ? target : undefined;
   if (playerSettings && !playerSettings.hidden) {
@@ -3973,7 +3960,7 @@ searchForm?.addEventListener("submit", (event) => {
   event.preventDefault();
   const text = searchInput?.value.trim() ?? "";
   if (!text) {
-    if (searchActive) void clearSearch();
+    if (isSearchBase()) void clearSearch();
     else if (detailSearchFormOpen) {
       detailSearchFormOpen = false;
       updateHeaderSearch();
@@ -3995,7 +3982,7 @@ detailSearchEntry?.addEventListener("click", () => {
 searchFilterButtons?.addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-filter]");
   const filter = button?.dataset.filter as LocalLibraryFilter | undefined;
-  if (!filter || !searchActive || filter === searchFilter) return;
+  if (!filter || !isSearchBase() || filter === searchFilter) return;
   searchFilter = filter;
   searchPage = 1;
   updateSearchFilterPressed();
@@ -4004,7 +3991,7 @@ searchFilterButtons?.addEventListener("click", (event) => {
 searchBackButton?.addEventListener("click", () => { void clearSearch(); });
 searchEmptyClear?.addEventListener("click", () => { void clearSearch(); });
 searchAllTypesButton?.addEventListener("click", () => {
-  if (!searchActive) return;
+  if (!isSearchBase()) return;
   searchFilter = "all";
   searchPage = 1;
   updateSearchChrome();
@@ -4146,7 +4133,7 @@ void (async () => {
     await restoreSortPreference();
     renderState(next);
     updateHeaderSearch();
-    if (collectionSection) collectionSection.hidden = true;
+    applyView();
     await Promise.all([loadLibrary(), loadContinueWatching(), loadHomeShelves()]);
   } catch (error: unknown) {
     setMessage(error instanceof Error ? error.message : "本地片库加载失败。", true);

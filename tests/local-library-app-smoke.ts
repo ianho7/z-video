@@ -241,6 +241,41 @@ async function run(): Promise<void> {
       })),
       listTitles: [...document.querySelectorAll('#library-grid .media-card-title')].map((title) => title.textContent || ''),
     }))()`);
+    // Ticket 15: one snapshot of every view container. `true` means hidden, so
+    // every base switch and layer combination can be asserted without guessing
+    // which of the old visibility flags was supposed to win.
+    const readViewStack = () => evaluate<{
+      hero: boolean;
+      continueSection: boolean;
+      recentSection: boolean;
+      showsSection: boolean;
+      onboarding: boolean;
+      sources: boolean;
+      search: boolean;
+      collection: boolean;
+      cleanup: boolean;
+      detail: boolean;
+      player: boolean;
+      appShell: boolean;
+      libraryContent: boolean;
+    }>(window, `(() => {
+      const hidden = (selector) => document.querySelector(selector)?.hidden !== false;
+      return {
+        hero: hidden('#home-hero'),
+        continueSection: hidden('#continue-section'),
+        recentSection: hidden('#recent-section'),
+        showsSection: hidden('#shows-section'),
+        onboarding: hidden('#onboarding'),
+        sources: document.querySelector('#sources-page')?.hidden === false,
+        search: hidden('#search-section'),
+        collection: hidden('#collection-section'),
+        cleanup: hidden('#cleanup-section'),
+        detail: hidden('#media-detail'),
+        player: hidden('[data-view="player"]'),
+        appShell: hidden('.app-shell'),
+        libraryContent: hidden('.library-content'),
+      };
+    })()`);
     const submitSearch = async (query: string): Promise<void> => {
       await evaluate(window, `(() => {
         const input = document.querySelector('#library-search-input');
@@ -441,6 +476,18 @@ async function run(): Promise<void> {
     await evaluate(window, "document.querySelector('[data-nav=all]')?.click()");
     await waitFor("visible all-media page", () => evaluate(window, "document.querySelector('#collection-section')?.hidden"), (hidden) => hidden === false);
     await waitFor("all navigation active", () => evaluate(window, "document.querySelector('[data-nav=all]')?.getAttribute('aria-current')"), (value) => value === "page");
+    const libraryStack = await readViewStack();
+    assert.equal(libraryStack.collection, false, "the work list is the only visible base surface on the all-media page");
+    assert.equal(libraryStack.hero, true, "switching to the list never leaves the home hero behind");
+    assert.equal(libraryStack.continueSection, true);
+    assert.equal(libraryStack.recentSection, true);
+    assert.equal(libraryStack.showsSection, true);
+    assert.equal(libraryStack.sources, false);
+    assert.equal(libraryStack.search, true);
+    assert.equal(libraryStack.cleanup, true);
+    assert.equal(libraryStack.detail, true);
+    assert.equal(libraryStack.player, true);
+    assert.equal(libraryStack.libraryContent, false);
     const allWorks = await waitFor(
       "all view counts works",
       () => evaluate(window, "(() => { const scope = document.querySelector('#page-scope')?.textContent || ''; return { scope, busy: document.querySelector('#library-grid')?.getAttribute('aria-busy'), count: Number(scope.match(/共 (\\d+) 部作品/)?.[1] || 0) }; })()"),
@@ -506,6 +553,15 @@ async function run(): Promise<void> {
     assert.deepEqual(showDetail.rows.map((row: { meta: string }) => row.meta), ["未看", "未看", "未看"], "every episode starts with its own unwatched state");
     assert.equal(showDetail.rows.some((row: { progress: boolean }) => row.progress), false, "an unwatched episode never draws a progress bar");
     await capture("show-detail");
+    const detailStack = await readViewStack();
+    assert.equal(detailStack.detail, false, "the detail layer is the visible surface");
+    assert.equal(detailStack.libraryContent, false, "the library content stays mounted behind the detail layer");
+    assert.equal(detailStack.collection, true, "the work list is covered while the detail layer is open");
+    assert.equal(detailStack.hero, true, "opening a detail hides the home blocks instead of unmounting them");
+    assert.equal(detailStack.search, true);
+    assert.equal(detailStack.cleanup, true);
+    assert.equal(detailStack.sources, false);
+    assert.equal(detailStack.player, true, "opening a detail never opens the player layer");
 
     const detailScrollBefore = await evaluate(window, `(() => {
       const scroller = document.querySelector('.library-content');
@@ -519,6 +575,12 @@ async function run(): Promise<void> {
     assert.match(detailOriginClose.text, /返回详情/, "the player close control names the detail origin");
     assert.equal(detailOriginClose.label, "返回详情", "the player close control reads out the detail return target");
     assert.equal(await evaluate(window, "document.querySelector('#player-review-bar')?.hidden"), true, "normal detail playback never shows the review strip");
+    const detailPlayerStack = await readViewStack();
+    assert.equal(detailPlayerStack.appShell, true, "the player is a modal layer: it hides the app shell");
+    assert.equal(detailPlayerStack.player, false, "the player layer is open");
+    assert.equal(detailPlayerStack.libraryContent, false, "the library content is still mounted under the player");
+    assert.equal(detailPlayerStack.detail, false, "detail-origin playback keeps the detail page underneath");
+    assert.equal(detailPlayerStack.cleanup, true, "detail-origin playback never opens the cleanup layer");
     await evaluate(window, "window.zVideo.localPlayback.command({ type: 'seek', positionSec: 5 })");
     await new Promise((resolve) => setTimeout(resolve, 400));
     await evaluate(window, "document.querySelector('#player-close-button')?.click()");
@@ -541,6 +603,11 @@ async function run(): Promise<void> {
       (value) => value.detailVisible === true && value.title === "Owned Next Show" && /看到|已看完/.test(value.firstMeta),
     );
     assert.equal(detailReturn.playerHidden, true);
+    const detailReturnStack = await readViewStack();
+    assert.equal(detailReturnStack.appShell, false, "closing the player restores the app shell");
+    assert.equal(detailReturnStack.player, true);
+    assert.equal(detailReturnStack.detail, false, "closing detail-origin playback returns to the detail page");
+    assert.equal(detailReturnStack.libraryContent, false, "the library content is still mounted after the player closes");
     assert.equal(detailReturn.currentIndex, 0, "returning from playback keeps the played episode selected");
     assert.equal(detailReturn.currentNumber, "01");
     assert.ok(Math.abs(detailReturn.scroll.content - detailScrollBefore.content) <= 4, `playback close restores the detail scroll position: ${JSON.stringify(detailReturn.scroll)} vs ${JSON.stringify(detailScrollBefore)}`);
@@ -617,6 +684,15 @@ async function run(): Promise<void> {
     assert.equal(episodeSearch.cards[0]?.chips.length, 1, "the matched episode is marked with one chip");
     assert.match(episodeSearch.cards[0]?.chips[0] ?? "", /第 1 季 第 1 集 · Next Episode 1/, "the chip names the matched season, episode and title");
     await capture("search-results");
+    const searchStack = await readViewStack();
+    assert.equal(searchStack.search, false, "search is the only visible base surface");
+    assert.equal(searchStack.collection, true, "the list is covered while search is the base view");
+    assert.equal(searchStack.hero, true, "search never leaves the home blocks behind");
+    assert.equal(searchStack.continueSection, true);
+    assert.equal(searchStack.recentSection, true);
+    assert.equal(searchStack.showsSection, true);
+    assert.equal(searchStack.sources, false);
+    assert.equal(searchStack.libraryContent, false);
 
     await evaluate(window, "document.querySelector('#search-filter-buttons [data-filter=movie]')?.click()");
     const filteredSearch = await waitFor(
@@ -1398,6 +1474,14 @@ async function run(): Promise<void> {
       10_000,
     );
     await capture("home");
+    const homeStack = await waitFor("home base surface with every shelf", readViewStack, (value) => value.hero === false && value.recentSection === false && value.showsSection === false);
+    assert.equal(homeStack.continueSection, false);
+    assert.equal(homeStack.collection, true, "home never leaves the work list visible behind the shelves");
+    assert.equal(homeStack.search, true);
+    assert.equal(homeStack.sources, false);
+    assert.equal(homeStack.cleanup, true);
+    assert.equal(homeStack.onboarding, true);
+    assert.equal(homeStack.libraryContent, false);
     assert.equal(continueMin.title, LONG_TITLE);
     assert.ok(continueMin.firstTitle.length > 0);
     assert.equal(continueMin.cards.length, 2, "continue watching shows one movie and one show work");
@@ -1440,6 +1524,12 @@ async function run(): Promise<void> {
     assert.equal(homeOriginPlayer.title, LONG_TITLE, "home hero playback keeps the movie title");
     assert.match(homeOriginPlayer.text, /返回首页/, "the player close control names the home origin");
     assert.equal(homeOriginPlayer.label, "返回首页", "the player close control reads out the home return target");
+    const homePlayerStack = await readViewStack();
+    assert.equal(homePlayerStack.appShell, true);
+    assert.equal(homePlayerStack.player, false);
+    assert.equal(homePlayerStack.detail, true, "home-origin playback never opens a detail page");
+    assert.equal(homePlayerStack.hero, false, "the modal player keeps the home surface underneath instead of unmounting it");
+    assert.equal(homePlayerStack.libraryContent, false, "the library content is still mounted under the player");
     await evaluate(window, "document.querySelector('#player-close-button')?.click()");
     const homeReturn = await waitFor(
       "home restored after home-origin playback",
@@ -1448,6 +1538,11 @@ async function run(): Promise<void> {
     );
     assert.equal(homeReturn.nav, "home", "closing home-origin playback keeps home highlighted");
     assert.ok(Math.abs(Number(homeReturn.scroll) - Number(homeScrollBefore)) <= 8, `closing home-origin playback restores the home scroll position: ${homeReturn.scroll} vs ${homeScrollBefore}`);
+    const homeReturnStack = await readViewStack();
+    assert.equal(homeReturnStack.player, true);
+    assert.equal(homeReturnStack.appShell, false, "closing home-origin playback restores the app shell");
+    assert.equal(homeReturnStack.hero, false, "home comes back without a manual navigation");
+    assert.equal(homeReturnStack.detail, true);
 
     window.setSize(1040, 720);
     const defaultAfterContinueOuter = window.getSize();
@@ -1460,6 +1555,34 @@ async function run(): Promise<void> {
     assert.ok(Math.abs(continueDefault.windowContent[0] - continueDefault.inner.width) <= 4 && Math.abs(continueDefault.windowContent[1] - continueDefault.inner.height) <= 4, `content=${JSON.stringify(continueDefault.windowContent)} inner=${JSON.stringify(continueDefault.inner)}`);
     assert.ok(continueDefault.content.width > 0 && continueDefault.content.height > 0);
     assert.ok(continueDefault.firstTitle.length > 0);
+
+    // Ticket 15: the library error state is derived chrome, not a one-way hide.
+    // A ready state must bring the home blocks back without extra navigation.
+    window.webContents.send(IPC_CHANNELS.localLibraryState, { status: "error", schemaVersion: 3, sqliteAvailable: false, sources: [], error: { code: "storage", message: "片库暂时不可用" } });
+    const readHomeChrome = () => evaluate(window, `(() => ({
+      errorVisible: document.querySelector('#library-error')?.hidden === false,
+      hero: document.querySelector('#home-hero')?.hidden,
+      continueSection: document.querySelector('#continue-section')?.hidden,
+      recentSection: document.querySelector('#recent-section')?.hidden,
+      showsSection: document.querySelector('#shows-section')?.hidden,
+      onboarding: document.querySelector('#onboarding')?.hidden,
+      offlineNotice: document.querySelector('#library-offline-notice')?.hidden,
+    }))()`);
+    const homeErrorChrome = await waitFor("home chrome hidden by the library error state", readHomeChrome, (value) => value.errorVisible);
+    assert.equal(homeErrorChrome.hero, true, "the error state hides the home hero");
+    assert.equal(homeErrorChrome.continueSection, true, "the error state hides the continue shelf");
+    assert.equal(homeErrorChrome.recentSection, true, "the error state hides the recent shelf");
+    assert.equal(homeErrorChrome.showsSection, true, "the error state hides the shows shelf");
+    assert.equal(homeErrorChrome.onboarding, true, "the error state hides the onboarding card");
+    assert.equal(homeErrorChrome.offlineNotice, true, "the error state hides the offline notice");
+    await evaluate(window, "document.querySelector('#library-error-retry')?.click()");
+    await waitFor("library error resolved on home", () => evaluate(window, "document.querySelector('#library-error')?.hidden"), (hidden) => hidden === true);
+    const homeRecovered = await waitFor("home chrome recovered without navigation", readHomeChrome, (value) => value.hero === false);
+    assert.equal(homeRecovered.continueSection, false, "the continue shelf comes back when the error clears");
+    assert.equal(homeRecovered.recentSection, false, "the recent shelf comes back when the error clears");
+    assert.equal(homeRecovered.showsSection, false, "the shows shelf comes back when the error clears");
+    assert.equal(homeRecovered.onboarding, true, "onboarding stays hidden while the library has content");
+    assert.equal(homeRecovered.offlineNotice, true, "no offline notice is shown while every source is available");
 
     await rename(fixtureRoot, fixtureRoot + "-offline");
     assert.equal(await stat(fixtureRoot).then(() => true).catch(() => false), false, "the fixture root is gone before the offline rescan");
@@ -1496,6 +1619,18 @@ async function run(): Promise<void> {
     assert.match(folderPage.cards[0].text, /上级：|盘/u);
     assert.equal(folderPage.rescanAllVisible, true, "the folder page offers a rescan-all action");
     assert.equal(folderPage.sourceText.includes(fixtureRoot), false, "folder cards never expose the root path");
+    const sourcesStack = await readViewStack();
+    assert.equal(sourcesStack.sources, true, "the folder page is the only visible base surface");
+    assert.equal(sourcesStack.libraryContent, true, "switching to the folder page hides the library content");
+    assert.equal(sourcesStack.collection, true, "the work list never leaks onto the folder page");
+    assert.equal(sourcesStack.hero, true);
+    assert.equal(sourcesStack.continueSection, true);
+    assert.equal(sourcesStack.recentSection, true);
+    assert.equal(sourcesStack.showsSection, true);
+    assert.equal(sourcesStack.search, true);
+    assert.equal(sourcesStack.cleanup, true);
+    assert.equal(sourcesStack.detail, true);
+    assert.equal(sourcesStack.player, true);
     await capture("folders");
 
     await evaluate(window, "document.querySelector('[data-refresh-source-id]')?.click()");
@@ -2090,6 +2225,11 @@ async function run(): Promise<void> {
     assert.equal(reviewPlayer.closeLabel, "返回整理");
     assert.equal(reviewPlayer.cleanupHidden, false, "the cleanup queue stays underneath the review player");
     assert.equal(reviewPlayer.detailHidden, true, "review playback does not open a detail page");
+    const reviewPlayerStack = await readViewStack();
+    assert.equal(reviewPlayerStack.appShell, true, "the review player is a modal layer over the cleanup layer");
+    assert.equal(reviewPlayerStack.player, false);
+    assert.equal(reviewPlayerStack.cleanup, false, "the cleanup layer stays open while the review player is stacked on it");
+    assert.equal(reviewPlayerStack.libraryContent, false, "the library content stays mounted while cleanup and player are stacked");
     const overlayReview = await findOverlayWindow();
     const readOverlayReview = () => overlayReview.webContents.executeJavaScript(`(() => ({
       facts: document.querySelector('#player-review-facts')?.textContent || '',
@@ -2114,6 +2254,12 @@ async function run(): Promise<void> {
       (value) => value.decision.open === false && value.focused === fewOpensId && value.cleanup.cards.some((card) => card.mediaId === fewOpensId && card.state === "keep"),
     );
     assert.equal(keptFromReview.focused, fewOpensId, "focus returns to the inspected candidate card");
+    const reviewReturnStack = await readViewStack();
+    assert.equal(reviewReturnStack.player, true, "closing review playback closes the player layer");
+    assert.equal(reviewReturnStack.appShell, false, "closing review playback restores the app shell");
+    assert.equal(reviewReturnStack.cleanup, false, "closing review playback returns to the cleanup queue");
+    assert.equal(reviewReturnStack.detail, true, "closing review playback never falls back to a detail page");
+    assert.equal(reviewReturnStack.libraryContent, false, "the library content is still mounted after review playback");
     assert.match(keptFromReview.cleanup.message, /已保留/);
     assert.equal(await evaluate(window, `window.zVideo.localLibrary.getCleanupQueue({ state: "keep" }).then((result) => result.queue.candidates.find((candidate) => candidate.item.mediaId === ${JSON.stringify(fewOpensId)})?.cleanupState || "")`), "keep", "the review decision is persisted in the ledger");
 
