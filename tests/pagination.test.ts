@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { clampPage, paginationModel, parseJumpTarget } from "../src/renderer/pagination";
+import { clampPage, countLabel, paginationModel, parseJumpTarget } from "../src/renderer/pagination";
 
 test("pagination model reports 8000 items as 334 pages of 24", () => {
   const model = paginationModel(8_000, 24, 167);
@@ -77,4 +77,26 @@ test("jump input rejects empty and non-numeric values instead of guessing", () =
   for (const raw of ["", "   ", "abc", "1.5", "-3", "12abc", Number.NaN.toString()]) {
     assert.equal(parseJumpTarget(raw, 334), undefined, `jump target rejects ${JSON.stringify(raw)}`);
   }
+});
+
+test("count label states the page whenever the result set spans more than one page", () => {
+  // Ticket 12: "共 137 部" alone read as "all 137 are on screen"; the page is explicit.
+  assert.equal(countLabel(137, "部作品", 1, 24), "共 137 部作品 · 第 1 / 6 页");
+  assert.equal(countLabel(137, "部作品", 2, 24), "共 137 部作品 · 第 2 / 6 页");
+  assert.equal(countLabel(48, "集", 2, 24), "共 48 集 · 第 2 / 2 页");
+});
+
+test("count label drops the page part when one page holds the whole result", () => {
+  assert.equal(countLabel(5, "部作品", 1, 24), "共 5 部作品");
+  assert.equal(countLabel(0, "部作品", 1, 24), "共 0 部作品");
+});
+
+test("count label clamps an out-of-range page instead of inventing one", () => {
+  assert.equal(countLabel(137, "部作品", 99, 24), "共 137 部作品 · 第 6 / 6 页");
+});
+
+test("pagination model still normalizes its own total count", () => {
+  assert.equal(paginationModel(-4, 24, 1).totalCount, 0);
+  assert.equal(paginationModel(Number.NaN, 24, 1).totalCount, 0);
+  assert.equal(paginationModel(137, 0, 1).totalCount, 137);
 });

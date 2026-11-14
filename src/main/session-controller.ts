@@ -1,3 +1,10 @@
+/**
+ * @deprecated Not on the default runtime path: the account-free local library
+ * never restores a NAS session, and only tests construct this controller.
+ * Superseded by the local-library source/state owner (`local-library-ipc.ts`);
+ * any encrypted session data it produced stays untouched.
+ * See docs/local-library/legacy-paths.md.
+ */
 import type { ClassificationResult, MfaProof, NasApiClient } from "./nas-client";
 import { NasError } from "./nas-client";
 import type { AppError, LoginInput, PublicSessionState } from "../shared/contracts";

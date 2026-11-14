@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { mpvTracksFromProperties } from "../src/main/mpv-player";
+import { mpvProjectedState, mpvTracksFromProperties } from "../src/main/mpv-player";
 
 test("MPV track DTOs retain useful labels without forwarding path-like titles", () => {
   const properties = new Map([
@@ -23,4 +23,18 @@ test("MPV track DTOs retain useful labels without forwarding path-like titles", 
     subtitles: [{ id: "2", label: "captions.srt", selected: true }],
   });
   assert.doesNotMatch(JSON.stringify(tracks), /C:\\private/u);
+});
+
+test("an idle player before FILE_LOADED is not projected as ended", () => {
+  assert.equal(mpvProjectedState({ loaded: false, idle: true, eofReached: false, paused: false }), undefined);
+  assert.equal(mpvProjectedState({ loaded: false, idle: true, eofReached: false, paused: true }), undefined);
+  assert.equal(mpvProjectedState({ loaded: false, idle: false, eofReached: false, paused: false }), "playing");
+  assert.equal(mpvProjectedState({ loaded: false, idle: false, eofReached: false, paused: true }), "paused");
+});
+
+test("a loaded idle or eof-reached player is still projected as ended", () => {
+  assert.equal(mpvProjectedState({ loaded: true, idle: true, eofReached: false, paused: false }), "ended");
+  assert.equal(mpvProjectedState({ loaded: true, idle: false, eofReached: true, paused: false }), "ended");
+  assert.equal(mpvProjectedState({ loaded: true, idle: false, eofReached: false, paused: false }), "playing");
+  assert.equal(mpvProjectedState({ loaded: true, idle: false, eofReached: false, paused: true }), "paused");
 });

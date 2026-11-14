@@ -1840,7 +1840,7 @@ async function run(): Promise<void> {
     assert.equal(cleanupInitial.cards.some((card) => card.reason.includes(cleanupRoot)), false, "candidate reasons never leak a source root");
     assert.equal(cleanupInitial.deleteButtonDisabled, true);
     assert.match(cleanupInitial.deleteSummary, /待删清单 0 项 · 0 B/);
-    assert.deepEqual(cleanupInitial.stateFilters.map((filter) => filter.label), ["待整理", "保留", "稍后", "待删"]);
+    assert.deepEqual(cleanupInitial.stateFilters.map((filter) => filter.label), ["待整理", "已保留", "稍后", "待删"]);
     assert.equal(cleanupInitial.ruleFilters.length, 6);
     assert.equal(cleanupInitial.ruleFilters.find((filter) => filter.value === "all")?.pressed, true);
     await capture("cleanup");
@@ -2114,7 +2114,7 @@ async function run(): Promise<void> {
       (value) => value.decision.open === false && value.focused === fewOpensId && value.cleanup.cards.some((card) => card.mediaId === fewOpensId && card.state === "keep"),
     );
     assert.equal(keptFromReview.focused, fewOpensId, "focus returns to the inspected candidate card");
-    assert.match(keptFromReview.cleanup.message, /已标记保留/);
+    assert.match(keptFromReview.cleanup.message, /已保留/);
     assert.equal(await evaluate(window, `window.zVideo.localLibrary.getCleanupQueue({ state: "keep" }).then((result) => result.queue.candidates.find((candidate) => candidate.item.mediaId === ${JSON.stringify(fewOpensId)})?.cleanupState || "")`), "keep", "the review decision is persisted in the ledger");
 
     // Snooze and delete decisions follow the same close-time path.

@@ -1,3 +1,10 @@
+/**
+ * @deprecated Not on the default runtime path: the live renderer browses local
+ * SQLite through `local-library-ipc.ts`, and this NAS-backed controller is
+ * imported only by tests. Superseded by the local-library list/detail IPC
+ * surface; kept as rollback reference.
+ * See docs/local-library/legacy-paths.md.
+ */
 import type {
   AppError,
   Collection,

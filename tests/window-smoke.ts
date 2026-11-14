@@ -44,8 +44,8 @@ const state = {
   schemaVersion: 3,
   sqliteAvailable: true,
   sources: [
-    { sourceId: item.sourceId, label: "Movies", locationHint: "D 盘 · 上级：影片", available: true, itemCount: 34, collectionCount: 12 },
-    { sourceId: otherSourceId, label: "Movies", locationHint: "E 盘 · 上级：备份", available: false, itemCount: 9, collectionCount: 4 },
+    { sourceId: item.sourceId, label: "Movies", locationHint: "D 盘 · 上级：影片", available: true, degraded: false, itemCount: 34, collectionCount: 12 },
+    { sourceId: otherSourceId, label: "Movies", locationHint: "E 盘 · 上级：备份", available: false, degraded: false, itemCount: 9, collectionCount: 4 },
   ],
 };
 
@@ -479,7 +479,9 @@ async function run(): Promise<void> {
       cards: document.querySelectorAll('#library-grid .media-card').length,
       busy: document.querySelector('#library-grid')?.getAttribute('aria-busy'),
       cardHidden: document.querySelector('#home-scan-card')?.hidden,
+      cardState: document.querySelector('#home-scan-card')?.dataset.state || '',
       pillHidden: document.querySelector('#scan-status')?.hidden,
+      scanPanelHidden: document.querySelector('#scan-panel')?.hidden,
     };
   })()`, true) as Promise<any>;
   const assertInside = (label: string, rect: { left: number; right: number; top: number; bottom: number } | null, viewport: { width: number; height: number }) => {
@@ -514,10 +516,21 @@ async function run(): Promise<void> {
   window.webContents.send("local-library:scan-progress", scanProgress({ status: "cancelled", error: "扫描已取消，已保留此前索引和播放历史" }));
   const cancelledNotice = await waitFor("cancelled scan notice", readScanState, (value) => value.noticeVisible && /扫描已取消/.test(value.noticeTitle));
   assert.match(cancelledNotice.noticeText, /保留/);
-  assert.equal(cancelledNotice.cardHidden, true);
+  // Ticket 08: a finished scan collapses the folder-page panel. The summary
+  // notice owns the counts while it is up, and the home result card takes over
+  // once that notice is dismissed.
+  assert.equal(cancelledNotice.scanPanelHidden, true, "the folder-page scan panel is collapsed on a terminal status");
+  assert.equal(cancelledNotice.cardHidden, true, "the scan summary notice is the only summary while it is open");
   assert.equal(cancelledNotice.pillHidden, true);
   await window.webContents.executeJavaScript("document.querySelector('#app-notice-close').click()", true);
-  await waitFor("cancelled notice dismissed", readScanState, (value) => value.noticeVisible === false);
+  const cancelledResult = await waitFor("cancelled result card after the notice", readScanState, (value) => value.noticeVisible === false && value.cardVisible);
+  assert.match(cancelledResult.cardText, /上次扫描：扫描已取消/);
+  assert.match(cancelledResult.cardText, /窗口测试文件夹/);
+  assert.match(cancelledResult.cardText, /已扫描/);
+  assert.match(cancelledResult.cardText, /已加入/);
+  assert.match(cancelledResult.cardText, /已用时间/);
+  assert.equal(cancelledResult.homeCancelVisible, false, "a finished scan offers no cancel action");
+  assert.equal(cancelledResult.cardState, "done", "a kept result never looks like a running scan");
 
   window.webContents.send("local-library:scan-progress", scanProgress({ scanId: "scan_123e4567-e89b-42d3-a456-426614174001" }));
   await waitFor("second running scan", readScanState, (value) => value.pillVisible && value.cardVisible);
@@ -535,7 +548,8 @@ async function run(): Promise<void> {
   assert.match(completedNotice.noticeText, /新增 986/);
   assert.match(completedNotice.noticeText, /更新 18/);
   assert.match(completedNotice.noticeText, /2 条警告/);
-  assert.equal(completedNotice.cardHidden, true);
+  assert.equal(completedNotice.cardHidden, true, "the completed scan summary notice owns the counts");
+  assert.equal(completedNotice.scanPanelHidden, true);
   assert.equal(completedNotice.pillHidden, true);
 
   delayNextList = true;
@@ -547,6 +561,13 @@ async function run(): Promise<void> {
   await waitFor("refreshed list settled", readScanState, (value) => !value.busy);
   await window.webContents.executeJavaScript("document.querySelector('#app-notice-close').click()", true);
   await waitFor("completed notice dismissed", readScanState, (value) => value.noticeVisible === false);
+  const completedResult = await waitFor("completed result card after the notice", readScanState, (value) => value.cardVisible && value.cardState === "done");
+  assert.match(completedResult.cardText, /上次扫描：扫描完成/);
+  assert.match(completedResult.cardText, /窗口测试文件夹/);
+  assert.match(completedResult.cardText, /新增 986/);
+  assert.match(completedResult.cardText, /更新 18/);
+  assert.match(completedResult.cardText, /2 条警告/);
+  assert.equal(completedResult.homeCancelVisible, false);
 
   await window.webContents.executeJavaScript("document.querySelector('[data-media-id]').click()", true);
   const detail = await waitFor("detail view", () => window.webContents.executeJavaScript(`({ hidden: document.querySelector('#media-detail')?.hidden, title: document.querySelector('#media-detail-title')?.textContent || '', viewingHidden: document.querySelector('#detail-viewing-section')?.hidden, viewingEmpty: document.querySelector('#detail-viewing-empty')?.textContent || '' })`, true) as Promise<{ hidden: boolean; title: string; viewingHidden: boolean; viewingEmpty: string }>, (value) => value.hidden === false && Boolean(value.title));
@@ -613,6 +634,21 @@ async function run(): Promise<void> {
   assert.match(folderPage.cards[1].text, /E 盘 · 上级：备份/);
   assert.match(folderPage.cards[1].text, /离线/);
   assert.equal(folderPage.cards[1].available, false);
+
+  // Ticket 08: degraded means "some directories were not read"; it is not offline
+  // and it must never borrow the offline copy.
+  const degradedSourceId = "source_123e4567-e89b-12d3-a456-426614174002";
+  const baseSources = state.sources.map((source) => ({ ...source }));
+  state.sources = [...baseSources, { sourceId: degradedSourceId, label: "Movies", locationHint: "F 盘 · 上级：片段", available: true, degraded: true, itemCount: 3, collectionCount: 1 }];
+  window.webContents.send("local-library:state", state);
+  const degradedFolder = await waitFor("degraded folder copy", readFolders, (value) => value.cards.length === 3 && /部分目录未读取/.test(value.cards[2]?.text || ""));
+  assert.match(degradedFolder.cards[2].text, /部分目录未读取/);
+  assert.doesNotMatch(degradedFolder.cards[2].text, /离线/, "a degraded folder is not an offline folder");
+  assert.match(degradedFolder.cards[2].text, /仍可播放/);
+  assert.equal(degradedFolder.cards[2].available, true, "a degraded folder stays usable");
+  state.sources = baseSources;
+  window.webContents.send("local-library:state", state);
+  await waitFor("degraded folder reverted", readFolders, (value) => value.cards.length === 2);
 
   await window.webContents.executeJavaScript("document.querySelector('#open-video-button').click()", true);
   const singleVideo = await waitFor("single-video folder note", readFolders, (value) => /由添加单个视频登记/.test(value.cards[0]?.text || ""));
@@ -795,6 +831,31 @@ async function run(): Promise<void> {
   await waitFor("player closed back to detail", () => window.webContents.executeJavaScript("document.querySelector('[data-view=player]')?.hidden === true && document.querySelector('#media-detail')?.hidden === false", true) as Promise<boolean>, Boolean);
   await window.webContents.executeJavaScript("document.querySelector('#media-detail-back').click()", true);
   await waitFor("home restored after playback", () => window.webContents.executeJavaScript("document.querySelectorAll('#recent-row .media-card').length", true) as Promise<number>, (count) => count > 0);
+
+  // Ticket 06: a lost `closed` event must not leave the player view stuck.
+  await window.webContents.executeJavaScript("document.querySelector('#recent-row .media-card [data-media-id]').click()", true);
+  await waitFor("detail before the close fallback", () => window.webContents.executeJavaScript("document.querySelector('#media-detail')?.hidden === false && Boolean(document.querySelector('#media-detail-title')?.textContent)", true) as Promise<boolean>, Boolean);
+  await window.webContents.executeJavaScript("document.querySelector('#media-detail-open').click()", true);
+  await waitFor("player for the close fallback", () => window.webContents.executeJavaScript("document.querySelector('[data-view=player]')?.hidden === false", true) as Promise<boolean>, Boolean);
+  // The fixture's command channel never answers `close`, so only the local 1.5s
+  // fallback can leave the player view.
+  await window.webContents.executeJavaScript("document.querySelector('#player-close-button').click()", true);
+  await waitFor(
+    "close fallback leaves the player",
+    () => window.webContents.executeJavaScript("document.querySelector('[data-view=player]')?.hidden === true", true) as Promise<boolean>,
+    Boolean,
+    4_000,
+  );
+  assert.equal(await window.webContents.executeJavaScript("document.querySelector('#media-detail')?.hidden === false", true), true, "the fallback returns to the detail that started playback");
+  window.webContents.send("local-playback:event", { type: "closed" });
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(
+    await window.webContents.executeJavaScript("document.querySelector('[data-view=player]')?.hidden === true && document.querySelector('#media-detail')?.hidden === false", true),
+    true,
+    "a late duplicate closed event never dismantles the view twice",
+  );
+  await window.webContents.executeJavaScript("document.querySelector('#media-detail-back').click()", true);
+  await waitFor("home after the close fallback", () => window.webContents.executeJavaScript("document.querySelectorAll('#recent-row .media-card').length", true) as Promise<number>, (count) => count > 0);
 
   // ⑤ narrative: end-of-episode copy + a linear, opacity-only countdown ring.
   await window.webContents.executeJavaScript(`document.querySelector('#recent-row [data-media-id="${episodeOne.mediaId}"]').click()`, true);

@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { LocalViewingHistory } from "../src/shared/local-library-contracts";
-import { reviewFactsText, reviewSessionFacts } from "../src/renderer/views/review";
+import { cleanupStateLabel } from "../src/renderer/views/cleanup";
+import { reviewDecisionNotice, reviewFactsText, reviewSessionFacts } from "../src/renderer/views/review";
 
 const DAY_MS = 86_400_000;
 const NOW = 1_800_000_000_000;
@@ -44,4 +45,34 @@ test("review session facts separate the session label used by the decision dialo
     playedLabel: "累计 18 分钟",
     lastLabel: "上次 3 天前",
   });
+});
+
+test("keep is terminal in the close-time notice, so it never names an expiry", () => {
+  // Ticket 14: previously this read "180 天内不会再出现在候选里".
+  const notice = reviewDecisionNotice("测试影片", "keep", 180);
+  assert.match(notice, /已保留《测试影片》/);
+  assert.match(notice, /不会再回到整理候选/);
+  assert.doesNotMatch(notice, /\d+\s*天内/);
+  assert.doesNotMatch(notice, /保留至/);
+  assert.match(notice, /文件没有被移动或删除/);
+});
+
+test("snooze is the only close-time mark that keeps a day count", () => {
+  assert.equal(
+    reviewDecisionNotice("测试影片", "snooze", 30),
+    "已标记稍后《测试影片》；30 天内不再出现。文件没有被移动或删除。",
+  );
+});
+
+test("delete-candidate still refuses to delete anything by itself", () => {
+  const notice = reviewDecisionNotice("测试影片", "delete-candidate", 180);
+  assert.match(notice, /加入待删清单/);
+  assert.match(notice, /不会删除文件/);
+});
+
+test("keep renders as a settled state instead of a waiting period", () => {
+  assert.equal(cleanupStateLabel("keep"), "已保留");
+  assert.equal(cleanupStateLabel("snooze"), "稍后");
+  assert.equal(cleanupStateLabel("delete-candidate"), "待删");
+  assert.equal(cleanupStateLabel("none"), "待整理");
 });

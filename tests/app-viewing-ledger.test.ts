@@ -111,3 +111,108 @@ test("completion needs an ended event or 90% plus real playback", async () => {
   assert.equal((await finishWith({ playedSec: 5, durationSec: 300, endPositionSec: 295, reason: "ended" })).completed, true, "an explicit ended event completes");
   assert.equal((await finishWith({ playedSec: 31, endPositionSec: 31, reason: "user-close" })).completed, false, "unknown duration completes only through ended");
 });
+
+test("a load failure never completes, whatever the resume position says", async () => {
+  const store = new MemoryViewingStore();
+  const clock = fakeClock();
+  const ledger = new AppViewingLedger(store, clock.now);
+
+  ledger.begin(mediaOne, 540);
+  ledger.setPlaying(true);
+  clock.advance(60);
+  ledger.observePosition(545, 600);
+  await ledger.finish("error", 545, 600);
+
+  assert.equal(store.finishes[0].completed, false, "reason=error is never completion");
+  assert.equal(store.finishes[0].closeReason, "error");
+});
+
+test("the resume position alone is not completion evidence", async () => {
+  const store = new MemoryViewingStore();
+  const clock = fakeClock();
+  const ledger = new AppViewingLedger(store, clock.now);
+
+  ledger.begin(mediaOne, 270);
+  ledger.setPlaying(true);
+  clock.advance(60);
+  // No position was ever reported: the coordinator reports no end position.
+  await ledger.finish("user-close", undefined, 300);
+
+  assert.equal(store.finishes[0].completed, false, "the position carried in from begin() cannot complete the attempt");
+  assert.equal(store.finishes[0].endPositionSec, 270, "the last known position stays the resume position");
+});
+
+test("an ended attempt without a position uses the duration as its end position", async () => {
+  const store = new MemoryViewingStore();
+  const clock = fakeClock();
+  const ledger = new AppViewingLedger(store, clock.now);
+
+  ledger.begin(mediaOne, 0);
+  ledger.setPlaying(true);
+  clock.advance(5);
+  await ledger.finish("ended", undefined, 600);
+
+  assert.equal(store.finishes[0].completed, true);
+  assert.equal(store.finishes[0].endPositionSec, 600, "played to the end means the duration is the end position");
+});
+
+test("a second begin settles the still-open session before starting the next one", async () => {
+  const store = new MemoryViewingStore();
+  const clock = fakeClock();
+  const ledger = new AppViewingLedger(store, clock.now);
+
+  ledger.begin(mediaOne, 0);
+  ledger.setPlaying(true);
+  clock.advance(60);
+  ledger.observePosition(90, 100);
+  ledger.begin(mediaOne, 0);
+  await ledger.heartbeat();
+
+  assert.equal(store.finishes.length, 1, "the previous attempt is closed in the store");
+  assert.equal(store.finishes[0].closeReason, "interrupted");
+  assert.equal(store.finishes[0].completed, true, "an observed 90% still completes the settled attempt");
+  assert.equal(store.starts.length, 2);
+});
+
+test("a replay after ended records one completed attempt, not two", async () => {
+  const store = new MemoryViewingStore();
+  const clock = fakeClock();
+  const ledger = new AppViewingLedger(store, clock.now);
+
+  ledger.begin(mediaOne, 0);
+  ledger.setPlaying(true);
+  clock.advance(60);
+  ledger.observePosition(100, 100);
+  await ledger.finish("ended", 100, 100);
+
+  ledger.begin(mediaOne, 0);
+  ledger.setPlaying(true);
+  clock.advance(5);
+  ledger.observePosition(4, 100);
+  await ledger.finish("user-close", 4, 100);
+
+  assert.equal(store.starts.length, 2, "the replay is a new viewing attempt");
+  assert.equal(store.finishes.filter((entry) => entry.completed).length, 1, "the completed watch is counted once");
+});
+
+test("a failing session start stays observable and never fabricates a finish", async () => {
+  class RejectingStartStore extends MemoryViewingStore {
+    override async startViewingSession(): Promise<{ sessionId: string }> {
+      throw new Error("SQLITE_BUSY");
+    }
+  }
+  const store = new RejectingStartStore();
+  const clock = fakeClock();
+  const reported: Array<{ context: string; name?: string }> = [];
+  const ledger = new AppViewingLedger(store, clock.now, (context, error) => {
+    reported.push({ context, ...(error instanceof Error ? { name: error.name } : {}) });
+  });
+
+  ledger.begin(mediaOne, 0);
+  ledger.setPlaying(true);
+  clock.advance(5);
+  await ledger.finish("user-close", 5, 10);
+
+  assert.deepEqual(reported, [{ context: "start", name: "Error" }], "the lost viewing row is reported once");
+  assert.equal(store.finishes.length, 0, "no finish is written without a session id");
+});

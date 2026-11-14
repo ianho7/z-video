@@ -130,6 +130,12 @@ const api: ElectronApi = {
     setSort: (sort: LocalLibrarySort) => ipcRenderer.invoke(IPC_CHANNELS.appPreferencesSetSort, sort),
     setCleanup: (settings: CleanupSettings) => ipcRenderer.invoke(IPC_CHANNELS.appPreferencesSetCleanup, settings),
   },
+  // @deprecated Legacy NAS namespaces below (appearance/session/library/player/
+  // discovery). The live renderer calls only localLibrary, localPlayback,
+  // appPreferences, overlay, windowAction and onWindowMaximized; the deprecated
+  // src/renderer/library.ts is the only consumer of `library` and `player`, and
+  // `appearance`/`session`/`discovery` have no consumer at all. Kept for
+  // rollback; see docs/local-library/legacy-paths.md.
   appearance: {
     onState: (listener: (state: WindowAppearanceState) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, value: WindowAppearanceState) => listener(value);

@@ -5,17 +5,23 @@ export interface RenderSourcesOptions {
   singleVideoSourceIds?: ReadonlySet<string>;
 }
 
+/**
+ * Ticket 08: a source is either offline (nothing can be read, playback is
+ * disabled), degraded (some sub-directories or files failed, indexed entries
+ * still play) or fully available.
+ */
 function statusFor(source: LocalSourceSummary, progress: LocalScanProgress | undefined): { label: string; tone: "ok" | "warning" | "busy" | "muted" } {
   const current = progress?.sourceId === source.sourceId ? progress.status : undefined;
   if (current === "running") return { label: "扫描中", tone: "busy" };
-  if (current === "partial") return { label: "部分完成", tone: "warning" };
-  if (current === "unavailable" || !source.available) return { label: "离线", tone: "warning" };
+  if (!source.available || current === "unavailable") return { label: "离线", tone: "warning" };
+  if (current === "partial" || source.degraded) return { label: "部分目录未读取", tone: "warning" };
   return { label: "可用", tone: "ok" };
 }
 
 function sourceNote(source: LocalSourceSummary, singleVideo: boolean): string | undefined {
   const notes: string[] = [];
   if (!source.available) notes.push("暂时无法读取。接回驱动器或网络位置后点“重新扫描”，已加入的作品和观看进度仍保留。");
+  else if (source.degraded) notes.push("部分子目录或文件这次没读到；已加入的作品仍可播放，接回这些目录后点“重新扫描”可补齐。");
   if (singleVideo) notes.push("由“添加单个视频”登记。这次只加入了选中的文件；以后重新扫描会把整个文件夹里的其他支持视频也加入片库。");
   return notes.length ? notes.join(" ") : undefined;
 }
@@ -29,6 +35,7 @@ export function renderSources(next: LocalLibraryState, progress: LocalScanProgre
     row.setAttribute("role", "listitem");
     row.dataset.sourceCardId = source.sourceId;
     if (!source.available) row.dataset.available = "false";
+    else if (source.degraded) row.dataset.degraded = "true";
     const current = progress?.sourceId === source.sourceId ? progress.status : undefined;
     const scanningThis = current === "running";
 

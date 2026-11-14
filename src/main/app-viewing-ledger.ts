@@ -20,8 +20,12 @@ export interface ViewingLedger {
   countSeek(): void;
   setSpeed(speed: number): void;
   heartbeat(): Promise<void>;
-  finish(reason: LocalViewingCloseReason, positionSec: number, durationSec?: number): Promise<void>;
+  /** `positionSec` is undefined when the engine never reported one; a resume position is not an end position. */
+  finish(reason: LocalViewingCloseReason, positionSec: number | undefined, durationSec?: number): Promise<void>;
 }
+
+/** Which ledger store call failed; used for the main-process diagnostics trace. */
+export type ViewingLedgerErrorContext = "start" | "heartbeat" | "finish";
 
 interface ActiveViewingSession {
   mediaId: `media_${string}`;
@@ -30,6 +34,8 @@ interface ActiveViewingSession {
   playedSec: number;
   playingSinceMs?: number;
   endPositionSec: number;
+  /** True once the engine reported a position for this attempt. */
+  observedPosition: boolean;
   durationSec?: number;
   pauseCount: number;
   seekCount: number;
@@ -45,21 +51,32 @@ export class AppViewingLedger implements ViewingLedger {
   constructor(
     private readonly store: LocalViewingSessionStore,
     private readonly now: () => number = Date.now,
+    private readonly reportError?: (context: ViewingLedgerErrorContext, error: unknown) => void,
   ) {}
 
   begin(mediaId: `media_${string}`, startPositionSec: number): void {
+    const previous = this.session;
+    // A second begin() without a finish() (media switch, replay) would leave
+    // the previous row open forever, so settle it before starting the new one.
+    if (previous) void this.finish("interrupted", previous.observedPosition ? previous.endPositionSec : undefined, previous.durationSec);
     const startedAtMs = this.now();
     const startPosition = finiteNonNegative(startPositionSec);
     const startPromise = this.store
       .startViewingSession({ mediaId, startedAtMs, startPositionSec: startPosition })
       .then((result) => result.sessionId)
-      .catch(() => undefined);
+      .catch((error: unknown) => {
+        // The attempt is still playable; only the ledger row is missing, so it
+        // must be observable rather than silently dropped.
+        this.reportError?.("start", error);
+        return undefined;
+      });
     this.session = {
       mediaId,
       startedAtMs,
       startPositionSec: startPosition,
       playedSec: 0,
       endPositionSec: startPosition,
+      observedPosition: false,
       pauseCount: 0,
       seekCount: 0,
       speed: 1,
@@ -85,7 +102,10 @@ export class AppViewingLedger implements ViewingLedger {
   observePosition(positionSec: number, durationSec?: number): void {
     const session = this.session;
     if (!session || session.finished) return;
-    if (Number.isFinite(positionSec) && positionSec >= 0) session.endPositionSec = positionSec;
+    if (Number.isFinite(positionSec) && positionSec >= 0) {
+      session.endPositionSec = positionSec;
+      session.observedPosition = true;
+    }
     if (durationSec !== undefined && Number.isFinite(durationSec) && durationSec > 0) session.durationSec = durationSec;
   }
 
@@ -110,12 +130,16 @@ export class AppViewingLedger implements ViewingLedger {
       if (session.finished) return;
       const sessionId = await session.startPromise;
       if (!sessionId) return;
-      await this.store.heartbeatViewingSession({ ...this.heartbeatSnapshot(session, timestamp), sessionId });
+      try {
+        await this.store.heartbeatViewingSession({ ...this.heartbeatSnapshot(session, timestamp), sessionId });
+      } catch (error) {
+        this.reportError?.("heartbeat", error);
+      }
     });
     return this.queue;
   }
 
-  finish(reason: LocalViewingCloseReason, positionSec: number, durationSec?: number): Promise<void> {
+  finish(reason: LocalViewingCloseReason, positionSec: number | undefined, durationSec?: number): Promise<void> {
     const session = this.session;
     if (!session) return this.queue;
     session.finished = true;
@@ -125,17 +149,31 @@ export class AppViewingLedger implements ViewingLedger {
       session.playedSec += secondsBetween(session.playingSinceMs, timestamp);
       session.playingSinceMs = undefined;
     }
-    if (Number.isFinite(positionSec) && positionSec >= 0) session.endPositionSec = positionSec;
+    if (positionSec !== undefined && Number.isFinite(positionSec) && positionSec >= 0) {
+      session.endPositionSec = positionSec;
+      session.observedPosition = true;
+    }
     if (durationSec !== undefined && Number.isFinite(durationSec) && durationSec > 0) session.durationSec = durationSec;
     const playedSec = roundMillis(Math.max(0, session.playedSec));
     const wallSec = roundMillis(secondsBetween(session.startedAtMs, timestamp));
-    const completed = reason === "ended" || isCompletedWatch(playedSec, session.durationSec, session.endPositionSec);
+    // `ended` without any reported position still watched the file to its end,
+    // so the duration is the end position; otherwise the last known position
+    // stays (a resume position when nothing was observed).
+    const endPositionSec = session.observedPosition
+      ? session.endPositionSec
+      : reason === "ended" && session.durationSec !== undefined
+        ? session.durationSec
+        : session.endPositionSec;
+    // Completion: an explicit `ended` report, or an observed position at 90%+.
+    // A load failure never completes and the resume position alone never counts.
+    const completed = reason !== "error"
+      && (reason === "ended" || (session.observedPosition && isCompletedWatch(playedSec, session.durationSec, endPositionSec)));
     const input: LocalViewingSessionFinishInput = {
       mediaId: session.mediaId,
       sessionId: "",
       playedSec,
       wallSec,
-      endPositionSec: finiteNonNegative(session.endPositionSec),
+      endPositionSec: finiteNonNegative(endPositionSec),
       ...(session.durationSec === undefined ? {} : { durationSec: session.durationSec }),
       pauseCount: session.pauseCount,
       seekCount: session.seekCount,
@@ -148,7 +186,11 @@ export class AppViewingLedger implements ViewingLedger {
     this.enqueue(async () => {
       const sessionId = await session.startPromise;
       if (!sessionId) return;
-      await this.store.finishViewingSession({ ...input, sessionId });
+      try {
+        await this.store.finishViewingSession({ ...input, sessionId });
+      } catch (error) {
+        this.reportError?.("finish", error);
+      }
     });
     return this.queue;
   }

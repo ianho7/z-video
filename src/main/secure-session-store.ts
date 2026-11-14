@@ -1,3 +1,9 @@
+/**
+ * @deprecated Not on the default runtime path: the account-free default stores
+ * no credentials, so nothing constructs this store outside tests. No
+ * replacement by design; existing encrypted session files must stay untouched.
+ * See docs/local-library/legacy-paths.md.
+ */
 import { app, safeStorage } from "electron";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";

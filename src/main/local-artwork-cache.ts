@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, unlink, utimes, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { nativeImage } from "electron";
 
@@ -19,6 +19,8 @@ export class LocalArtworkCache {
   private readonly pending: Array<() => void> = [];
   private activeReads = 0;
   private initialized: Promise<void> | undefined;
+  /** One in-flight load per cache key: concurrent cards share one read+decode. */
+  private readonly inFlight = new Map<string, Promise<{ dataUrl: string; mimeType: string } | undefined>>();
   private diskQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly directory: string, private readonly limitBytes = CACHE_LIMIT_BYTES) {}
@@ -26,7 +28,9 @@ export class LocalArtworkCache {
   async load(cacheKey: string, sourcePath: string): Promise<{ dataUrl: string; mimeType: string } | undefined> {
     if (!/^artwork_[a-f0-9]{64}$/i.test(cacheKey)) return undefined;
     await this.ensureInitialized();
-    return this.withReadSlot(async () => {
+    const running = this.inFlight.get(cacheKey);
+    if (running) return running;
+    const work = this.withReadSlot(async () => {
       const mimeType = mimeTypeFor(sourcePath);
       const cached = this.memory.get(cacheKey);
       if (cached) {
@@ -49,9 +53,21 @@ export class LocalArtworkCache {
         this.putMemory(cacheKey, bytes, derivative.mimeType);
         return { dataUrl: toDataUrl(bytes, derivative.mimeType), mimeType: derivative.mimeType };
       }
+      // A disk hit refreshes an explicit last-use marker. Windows often does not
+      // update the access time, so eviction would otherwise fall back to write
+      // order and drop recently used covers first.
+      await utimes(cachePath, new Date(), new Date()).catch(() => undefined);
       this.putMemory(cacheKey, bytes, mimeType);
       return { dataUrl: toDataUrl(bytes, mimeType), mimeType };
     });
+    this.inFlight.set(cacheKey, work);
+    try {
+      return await work;
+    } finally {
+      // A failed or finished load never stays latched, so the next request
+      // retries instead of reusing a stale promise.
+      if (this.inFlight.get(cacheKey) === work) this.inFlight.delete(cacheKey);
+    }
   }
 
   private async ensureInitialized(): Promise<void> {
@@ -70,7 +86,15 @@ export class LocalArtworkCache {
         });
       })();
     }
-    await this.initialized;
+    try {
+      await this.initialized;
+    } catch (error) {
+      // Initialization can fail (e.g. the cache directory cannot be created).
+      // Clearing the rejected promise lets a later load try again instead of
+      // reusing a permanently failed initialization.
+      if (this.initialized) this.initialized = undefined;
+      throw error;
+    }
   }
 
   private withReadSlot<T>(work: () => Promise<T>): Promise<T> {

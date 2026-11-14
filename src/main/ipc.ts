@@ -1,3 +1,11 @@
+/**
+ * @deprecated Not on the default runtime path: `main.ts` registers only
+ * local-library, local-playback and app-preferences IPC. These NAS session,
+ * library, discovery and legacy player handlers are reachable only from
+ * window-smoke tests. Superseded by `local-library-ipc.ts` and
+ * `local-playback-ipc.ts`; kept as rollback reference.
+ * See docs/local-library/legacy-paths.md.
+ */
 import { ipcMain } from "electron";
 
 import type { LibraryQuery, NavigationContext, PlaybackCommand } from "../shared/contracts";

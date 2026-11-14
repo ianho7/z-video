@@ -83,6 +83,12 @@ interface PendingRequest {
 export interface LocalLibraryDatabaseOptions {
   dbPath?: string;
   workerPath?: string;
+  /**
+   * Upper bound for one worker round trip. A wedged worker would otherwise keep
+   * the renderer's busy state forever, so every call rejects with a stable error
+   * instead of hanging. Whole-folder scans use the longer traversal bound.
+   */
+  callTimeoutMs?: number;
 }
 
 export class LocalLibraryDatabaseError extends Error {
@@ -93,8 +99,15 @@ export class LocalLibraryDatabaseError extends Error {
 }
 
 export class LocalLibraryDatabase {
+  private static readonly DEFAULT_CALL_TIMEOUT_MS = 30_000;
+  /**
+   * A full-root traversal over a large library is not an ordinary round trip;
+   * it gets its own upper bound so the ordinary timeout never kills a scan.
+   */
+  private static readonly SCAN_CALL_TIMEOUT_MS = 30 * 60_000;
   private readonly dbPath: string;
   private readonly workerPath: string;
+  private readonly callTimeoutMs: number;
   private worker: UtilityProcess | undefined;
   private nextRequestId = 1;
   private readonly pending = new Map<number, PendingRequest>();
@@ -107,17 +120,28 @@ export class LocalLibraryDatabase {
     sources: [],
   };
   private closing = false;
+  /** Set once close() ran: a teardown kill must never look like a crash. */
+  private closed = false;
+  /** True after an unexpected worker exit; the next owner call may restart once. */
+  private workerCrashed = false;
+  private restartPromise: Promise<void> | undefined;
 
   constructor(options: LocalLibraryDatabaseOptions = {}) {
     this.dbPath = options.dbPath ?? join(process.cwd(), "local-library", "library.sqlite");
     this.workerPath = options.workerPath ?? join(__dirname, "local-library-worker.js");
+    const requestedTimeout = options.callTimeoutMs;
+    this.callTimeoutMs = typeof requestedTimeout === "number" && Number.isFinite(requestedTimeout) && requestedTimeout > 0
+      ? requestedTimeout
+      : LocalLibraryDatabase.DEFAULT_CALL_TIMEOUT_MS;
   }
 
   async start(): Promise<LocalLibraryState> {
+    if (this.closed) throw new LocalLibraryDatabaseError("storage", "本地片库 worker 已关闭");
     if (this.worker) return this.getState();
     await mkdir(dirname(this.dbPath), { recursive: true });
-    this.worker = utilityProcess.fork(this.workerPath, [], { serviceName: "z-video-local-library" });
-    this.worker.on("message", (event) => {
+    const worker = utilityProcess.fork(this.workerPath, [], { serviceName: "z-video-local-library" });
+    this.worker = worker;
+    worker.on("message", (event) => {
       const payload = event && typeof event === "object" && ("id" in event || "event" in event)
         ? event
         : (event as unknown as { data?: unknown }).data;
@@ -127,18 +151,21 @@ export class LocalLibraryDatabase {
       }
       this.handleWorkerMessage(payload as WorkerSuccess | WorkerFailure);
     });
-    this.worker.on("exit", (code) => this.handleWorkerExit(code));
-    this.worker.on("error", (type, location) => {
+    worker.on("exit", (code) => this.handleWorkerExit(worker, code));
+    worker.on("error", (type, location) => {
       void type;
       void location;
-      this.failPending(new LocalLibraryDatabaseError("sqlite-unavailable", localLibraryErrorMessage("sqlite-unavailable")));
+      if (this.closed || this.closing) return;
+      this.failWorker(new LocalLibraryDatabaseError("sqlite-unavailable", localLibraryErrorMessage("sqlite-unavailable")));
     });
     try {
       const result = await this.call<{ schemaVersion: typeof LOCAL_LIBRARY_SCHEMA_VERSION; sqliteAvailable: true; sources: LocalLibraryState["sources"] }>({ command: "initialize", dbPath: this.dbPath });
+      this.workerCrashed = false;
       this.state = { status: "ready", ...result };
       this.emitState();
       return this.getState();
     } catch (error) {
+      this.workerCrashed = this.worker === undefined;
       this.state = {
         status: "error",
         schemaVersion: LOCAL_LIBRARY_SCHEMA_VERSION,
@@ -180,7 +207,7 @@ export class LocalLibraryDatabase {
   }
 
   async importFirstMovieInFolder(rootPath: string): Promise<LocalImportOutcome> {
-    const result = await this.call<{ status: "imported" | "empty"; item?: LocalMediaItem }>({ command: "import-first-movie", rootPath });
+    const result = await this.call<{ status: "imported" | "empty"; item?: LocalMediaItem }>({ command: "import-first-movie", rootPath }, LocalLibraryDatabase.SCAN_CALL_TIMEOUT_MS);
     const state = await this.refreshState();
     return result.status === "empty" || !result.item
       ? { status: "empty", state }
@@ -188,13 +215,13 @@ export class LocalLibraryDatabase {
   }
 
   async importVideo(filePath: string, rootPath: string): Promise<LocalImportOutcome> {
-    const result = await this.call<{ status: "imported"; item: LocalMediaItem }>({ command: "import-video", filePath, rootPath });
+    const result = await this.call<{ status: "imported"; item: LocalMediaItem }>({ command: "import-video", filePath, rootPath }, LocalLibraryDatabase.SCAN_CALL_TIMEOUT_MS);
     const state = await this.refreshState();
     return { status: "imported", item: result.item, state };
   }
 
   async scanFolder(rootPath: string): Promise<LocalScanResult> {
-    const result = await this.call<LocalScanResult>({ command: "scan", rootPath });
+    const result = await this.call<LocalScanResult>({ command: "scan", rootPath }, LocalLibraryDatabase.SCAN_CALL_TIMEOUT_MS);
     await this.refreshState();
     return result;
   }
@@ -330,25 +357,71 @@ export class LocalLibraryDatabase {
   }
 
   async close(): Promise<void> {
-    if (!this.worker || this.closing) return;
+    if (this.closing) return;
+    // No automatic restart may race a teardown.
+    this.closed = true;
+    const worker = this.worker;
+    if (!worker) return;
     this.closing = true;
     try {
       await this.call({ command: "close" });
+    } catch {
+      // A worker that already died needs no orderly shutdown; teardown below
+      // still runs and no caller-visible state is lost.
     } finally {
-      this.worker.kill();
-      this.worker = undefined;
+      worker.kill();
+      if (this.worker === worker) this.worker = undefined;
       this.failPending(new LocalLibraryDatabaseError("storage", "本地片库 worker 已关闭"));
       this.closing = false;
     }
   }
 
-  private async call<T>(command: WorkerCommand): Promise<T> {
-    if (!this.worker) throw new LocalLibraryDatabaseError("storage", "本地片库 worker 尚未启动");
+  /**
+   * Dispatch one command with a bounded wait. A worker that never answers (or a
+   * dropped reply) rejects with a stable error so the renderer's busy state ends
+   * instead of waiting forever.
+   */
+  private async call<T>(command: WorkerCommand, timeoutMs = this.callTimeoutMs): Promise<T> {
+    const worker = await this.ensureWorker();
+    if (!worker) throw new LocalLibraryDatabaseError("sqlite-unavailable", localLibraryErrorMessage("sqlite-unavailable"));
     const id = this.nextRequestId++;
     return new Promise<T>((resolve, reject) => {
-      this.pending.set(id, { resolve: (value) => resolve(value as T), reject });
-      this.worker?.postMessage({ id, ...command });
+      const timer = setTimeout(() => {
+        if (!this.pending.delete(id)) return;
+        reject(new LocalLibraryDatabaseError("sqlite-unavailable", localLibraryErrorMessage("sqlite-unavailable")));
+      }, Math.max(1, timeoutMs));
+      // A pending request must not keep the process alive on its own.
+      (timer as unknown as { unref?: () => void }).unref?.();
+      this.pending.set(id, {
+        resolve: (value) => { clearTimeout(timer); resolve(value as T); },
+        reject: (error) => { clearTimeout(timer); reject(error); },
+      });
+      try {
+        worker.postMessage({ id, ...command });
+      } catch (error) {
+        this.pending.delete(id);
+        clearTimeout(timer);
+        reject(new LocalLibraryDatabaseError("sqlite-unavailable", localLibraryErrorMessage("sqlite-unavailable", error instanceof Error ? error.message : undefined)));
+      }
     });
+  }
+
+  /**
+   * After an unexpected worker exit the next owner operation performs exactly one
+   * controlled restart. A successful start restores `ready`; a failed one keeps
+   * the error state visible and reports it through `onState`.
+   */
+  private async ensureWorker(): Promise<UtilityProcess | undefined> {
+    if (this.worker) return this.worker;
+    if (this.closed || this.closing || !this.workerCrashed) return undefined;
+    if (!this.restartPromise) {
+      this.restartPromise = this.start().then(
+        () => undefined,
+        () => undefined,
+      ).finally(() => { this.restartPromise = undefined; });
+    }
+    await this.restartPromise;
+    return this.worker;
   }
 
   private handleWorkerMessage(message: WorkerSuccess | WorkerFailure): void {
@@ -359,9 +432,33 @@ export class LocalLibraryDatabase {
     else pending.reject(new LocalLibraryDatabaseError(message.error.code, localLibraryErrorMessage(message.error.code, message.error.message)));
   }
 
-  private handleWorkerExit(code: number): void {
+  private handleWorkerExit(worker: UtilityProcess, code: number): void {
+    void code;
+    // A late exit from an already replaced worker must not clear the new one.
+    if (this.worker !== worker) return;
     this.worker = undefined;
-    if (!this.closing && code !== 0) this.failPending(new LocalLibraryDatabaseError("sqlite-unavailable", localLibraryErrorMessage("sqlite-unavailable")));
+    if (this.closed || this.closing) return;
+    // Any unexpected exit — including a zero exit code — leaves the owner
+    // unusable. Pending calls must reject and the state must stop claiming
+    // `ready` so the renderer can show an actionable error.
+    this.workerCrashed = true;
+    this.failWorker(new LocalLibraryDatabaseError("sqlite-unavailable", localLibraryErrorMessage("sqlite-unavailable")));
+  }
+
+  /** Reject every pending call and publish a stable error state. */
+  private failWorker(error: LocalLibraryDatabaseError): void {
+    this.failPending(error);
+    this.state = {
+      status: "error",
+      schemaVersion: LOCAL_LIBRARY_SCHEMA_VERSION,
+      sqliteAvailable: false,
+      sources: [],
+      error: {
+        code: error.code === "sqlite-unavailable" ? "sqlite-unavailable" : "storage",
+        message: localLibraryErrorMessage(error.code === "sqlite-unavailable" ? "sqlite-unavailable" : "storage", error.message),
+      },
+    };
+    this.emitState();
   }
 
   private failPending(error: Error): void {

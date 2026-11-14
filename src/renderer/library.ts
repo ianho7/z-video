@@ -1,3 +1,9 @@
+/**
+ * @deprecated Compiled by `tsconfig.renderer.json` but never loaded:
+ * `src/renderer/index.html` loads only `renderer.js`, and no module imports this
+ * file. Superseded by `src/renderer/renderer.ts`; kept as rollback reference.
+ * See docs/local-library/legacy-paths.md.
+ */
 import type {
   Classification,
   Collection,

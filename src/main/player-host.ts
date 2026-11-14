@@ -15,6 +15,7 @@ import {
 } from "../shared/local-playback-contracts";
 import { IPC_CHANNELS } from "../shared/ipc-channels";
 import { AppViewingLedger } from "./app-viewing-ledger";
+import { recordUiOperation } from "./diagnostics";
 import { MpvNativePlayer } from "./mpv-player";
 import { LocalPlaybackCoordinator, PlaybackCoordinator, type PlaybackIdentity, type PlaybackProgressSnapshot, type PlaybackTarget } from "./player";
 import { NasError, type AuthenticatedSession, type NasCollectionDetail, type NasEpisode, type NasPlaybackProgress, type NasPlaybackStream } from "./nas-client";
@@ -50,6 +51,12 @@ export interface PlaybackContext {
 
 type PlaybackFileDialog = Pick<typeof dialog, "showOpenDialog">;
 
+/**
+ * @deprecated Not on the default runtime path. `main.ts` wires
+ * `MainLocalPlaybackHost`; this NAS-backed host is only constructed by
+ * `tests/player-window-smoke.ts` and `tests/nas-player-window-smoke.ts`
+ * (rollback/reference, see docs/local-library/legacy-paths.md).
+ */
 export class MainPlaybackHost implements PlaybackHost {
   private readonly coordinator: PlaybackCoordinator;
 
@@ -192,7 +199,15 @@ export class MainLocalPlaybackHost implements LocalPlaybackHost {
     private readonly appPreferences?: AppPreferencesStore,
   ) {
     const engine = new MpvNativePlayer(window, appPreferences?.get());
-    const ledger = isViewingSessionStore(store) ? new AppViewingLedger(store) : undefined;
+    const ledger = isViewingSessionStore(store)
+      ? new AppViewingLedger(store, Date.now, (context, error) => {
+          // A lost viewing row must stay observable instead of looking like a
+          // normal playback that simply recorded nothing.
+          void recordUiOperation(`local-playback.viewing-${context}`, "error", Date.now(), {
+            errorKind: error instanceof Error ? error.name : "unknown",
+          });
+        })
+      : undefined;
     this.coordinator = new LocalPlaybackCoordinator(
       engine,
       (event) => {

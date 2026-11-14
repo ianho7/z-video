@@ -128,7 +128,7 @@
           <section id="home-scan-card" class="scan-card" aria-labelledby="home-scan-title" hidden>
             <p id="home-scan-title" class="scan-card-title"><span class="scan-pill-dot" aria-hidden="true"></span><span id="home-scan-status">正在扫描</span></p>
             <p id="home-scan-folder" class="scan-card-folder"></p>
-            <p class="scan-card-note">数量未知时不显示百分比；已加入的内容会原地出现，不反复替换整页骨架。</p>
+            <p id="home-scan-note" class="scan-card-note">数量未知时不显示百分比；已加入的内容会原地出现，不反复替换整页骨架。</p>
             <div class="scan-card-metrics"><div class="scan-metric"><b id="home-scan-scanned">0</b><span>已扫描</span></div><div class="scan-metric"><b id="home-scan-added">0</b><span>已加入</span></div><div class="scan-metric"><b id="home-scan-elapsed">0 秒</b><span>已用时间</span></div></div>
             <div class="scan-card-actions"><button id="home-scan-cancel" class="secondary-button" type="button" data-cancel-scan>取消扫描</button></div>
           </section>
@@ -158,6 +158,7 @@
               <button type="button" data-filter="unclassified" aria-pressed="false">未分类</button>
             </div>
             <div id="search-grid" class="library-grid" role="list" aria-live="polite"></div>
+            <nav id="search-pagination" class="library-pagination" aria-label="搜索结果分页" hidden></nav>
             <section id="search-empty" class="empty-state" hidden>
               <h2 id="search-empty-title">没有找到作品</h2>
               <p id="search-empty-message"></p>

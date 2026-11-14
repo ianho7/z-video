@@ -5,6 +5,8 @@
  */
 
 export interface PaginationModel {
+  /** Normalized, non-negative item count the page maths used. */
+  totalCount: number;
   totalPages: number;
   page: number;
   pages: number[];
@@ -35,6 +37,17 @@ export function parseJumpTarget(raw: string, totalPages: number): number | undef
   return clampPage(Number(text), totalPages);
 }
 
+/**
+ * Header count for one paginated result set. The total stays the owner-reported
+ * count, and the current page is written out once the set has more than one page
+ * so "共 137 部" can never be read as "all 137 are on screen".
+ */
+export function countLabel(totalCount: number, unit: string, page: number, pageSize: number): string {
+  const model = paginationModel(totalCount, pageSize, page);
+  const total = `共 ${model.totalCount} ${unit}`;
+  return model.totalPages > 1 ? `${total} · 第 ${model.page} / ${model.totalPages} 页` : total;
+}
+
 export function paginationModel(totalCount: number, pageSize: number, page: number): PaginationModel {
   const size = Math.max(1, Math.floor(pageSize));
   const count = Math.max(0, Math.floor(Number.isFinite(totalCount) ? totalCount : 0));
@@ -45,6 +58,7 @@ export function paginationModel(totalCount: number, pageSize: number, page: numb
   const pages: number[] = [];
   for (let candidate = start; candidate <= end; candidate += 1) pages.push(candidate);
   return {
+    totalCount: count,
     totalPages,
     page: current,
     pages,

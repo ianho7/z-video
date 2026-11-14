@@ -66,6 +66,9 @@ async function run(): Promise<void> {
       assert.equal(scan.status, "completed");
       assert.equal(scan.scannedFiles, count);
       assert.equal(scan.importedFiles, count);
+      const completedSource = (await database.getState()).sources.find((source) => source.sourceId === scan.sourceId);
+      assert.equal(completedSource?.available, true);
+      assert.equal(completedSource?.degraded, false, "a complete traversal of a large library never reports a degraded source");
       assert.equal(queryFinishedAt < scanFinishedAt, true);
       assert.equal(duringScan.items.length, 1);
       assert.match(duringScan.items[0]?.mediaId ?? "", /^media_[0-9a-f-]{36}$/i);
@@ -93,6 +96,9 @@ async function run(): Promise<void> {
         await rm(root, { recursive: true, force: true });
         const unavailable = await database.scanFolder(root);
         assert.equal(unavailable.status, "unavailable");
+        const offlineSource = (await database.getState()).sources.find((source) => source.sourceId === sourceId);
+        assert.equal(offlineSource?.available, false, "an unreadable root takes the source offline");
+        assert.equal(offlineSource?.degraded, false, "offline is not the degraded/partial state");
         const offlinePage = await database.list({ page: 1, pageSize: 1, sourceId });
         assert.equal(offlinePage.totalCount, count);
         assert.equal(offlinePage.items[0]?.available, false);

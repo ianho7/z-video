@@ -164,14 +164,18 @@ test("rules toggle independently and relative-large raises the A/B size cutoff f
   assert.equal(evaluateCleanupRule(facts({ sizeBytes: 6 * GB, totalPlayedSec: 1_000 }), DEFAULT_CLEANUP_SETTINGS, { nowMs: NOW, relativeLargeBytes: 4 * GB }), "A");
 });
 
-test("keep and snooze expire back into the active queue while delete-candidate stays queued", () => {
+test("keep is terminal while snooze expires back into the active queue and delete-candidate stays queued", () => {
   const settings = DEFAULT_CLEANUP_SETTINGS;
   assert.equal(effectiveCleanupState("keep", NOW + DAY_MS, NOW), "keep");
-  assert.equal(effectiveCleanupState("keep", NOW - DAY_MS, NOW), "none", "an expired keep returns to the queue");
+  // Ticket 14: a kept file never returns to the queue, even when an older client
+  // stored a deadline that has already passed.
+  assert.equal(effectiveCleanupState("keep", NOW - DAY_MS, NOW), "keep", "an expired keep deadline never resurrects the file");
+  assert.equal(effectiveCleanupState("keep", undefined, NOW), "keep");
   assert.equal(effectiveCleanupState("snooze", undefined, NOW), "none");
   assert.equal(effectiveCleanupState("snooze", NOW + 1, NOW), "snooze");
+  assert.equal(effectiveCleanupState("snooze", NOW - 1, NOW), "none", "an expired snooze returns to the queue");
   assert.equal(effectiveCleanupState("delete-candidate", undefined, NOW), "delete-candidate");
   assert.equal(effectiveCleanupState("none", NOW + DAY_MS, NOW), "none");
-  assert.equal(settings.keepDays, 180);
+  assert.equal(settings.keepDays, 180, "the saved preference keeps the field even though keep no longer uses it");
   assert.equal(settings.snoozeDays, 30);
 });

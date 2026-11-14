@@ -12,7 +12,8 @@ import { safeSourceLabel, safeSourceLocationHint } from "../src/main/local-libra
 import { localLibraryErrorMessage } from "../src/main/local-library-errors";
 
 test("local library foundation exposes the stable schema tables for metadata and playback owners", () => {
-  assert.equal(LOCAL_LIBRARY_SCHEMA_VERSION, 3);
+  // v4 adds sources.degraded (partial traversal) on top of the v3 viewing ledger.
+  assert.equal(LOCAL_LIBRARY_SCHEMA_VERSION, 4);
   assert.deepEqual(LOCAL_LIBRARY_SCHEMA_TABLES, [
     "sources",
     "collections",

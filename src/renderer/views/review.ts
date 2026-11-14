@@ -46,3 +46,16 @@ export function reviewFactsText(history: LocalViewingHistory | undefined, nowMs:
   if (!history) return `${facts.openLabel} · ${facts.playedLabel}`;
   return `${facts.openLabel} · ${facts.playedLabel} · ${facts.lastLabel}`;
 }
+
+export type ReviewDecisionState = "keep" | "snooze" | "delete-candidate";
+
+/**
+ * Ticket 14: the close-time decision copy. "保留" is terminal — it never shows
+ * an expiry date and never hints that the work returns to the queue. Only
+ * "稍后" is time-boxed, so only that branch names a day count.
+ */
+export function reviewDecisionNotice(title: string, state: ReviewDecisionState, snoozeDays: number): string {
+  if (state === "keep") return `已保留《${title}》；不会再回到整理候选，也没有到期时间。文件没有被移动或删除。`;
+  if (state === "snooze") return `已标记稍后《${title}》；${snoozeDays} 天内不再出现。文件没有被移动或删除。`;
+  return `已把《${title}》加入待删清单。应用不会删除文件，请在资源管理器中确认后手动删除。`;
+}

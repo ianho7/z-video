@@ -21,7 +21,12 @@ window.zVideo.overlay.onReset(() => {
   dragging = false;
   state = {};
   revision = -1;
+  // Ticket 06: the mirrored markup belongs to the session that just ended. A
+  // reopened overlay must repaint from the next full state push.
+  initialized = false;
   lastFocusId = undefined;
+  heading.innerHTML = "";
+  controls.innerHTML = "";
   stage.innerHTML = "";
   document.body.classList.remove("overlay-hidden", "fullscreen");
   window.zVideo.overlay.ignore(false);
@@ -41,7 +46,9 @@ function showControls() {
 
 window.zVideo.overlay.onState((next) => {
   if (!next || typeof next !== "object") return;
-  const changed = state.fullscreen !== next.fullscreen || state.playing !== next.playing || state.activity !== next.activity;
+  // Ticket 06: the play/pause edge shares a frame with the error stage, so an
+  // error appearing or clearing also counts as a change that reveals controls.
+  const changed = state.fullscreen !== next.fullscreen || state.playing !== next.playing || state.activity !== next.activity || Boolean(state.error) !== Boolean(next.error);
   state = next;
   document.body.classList.toggle("fullscreen", !!next.fullscreen);
   const structureChanged = typeof next.revision === "number" && (next.revision !== revision || !initialized);

@@ -7,7 +7,7 @@ import { app } from "electron";
 
 import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
 
-import { isOpaqueMediaId } from "../src/shared/local-library-contracts";
+import { LOCAL_LIBRARY_SCHEMA_VERSION, isOpaqueMediaId } from "../src/shared/local-library-contracts";
 import { CLEANUP_PRESETS, DAY_MS, GIB, defaultCleanupSettings } from "../src/shared/cleanup-contracts";
 import { LocalLibraryDatabase } from "../src/main/local-library-database";
 
@@ -15,6 +15,18 @@ function openSqlite(filePath: string): DatabaseSyncType {
   const sqlite = require("node:sqlite") as { DatabaseSync?: new (path: string) => DatabaseSyncType };
   if (typeof sqlite.DatabaseSync !== "function") throw new Error("node:sqlite is unavailable");
   return new sqlite.DatabaseSync(filePath);
+}
+
+/** Fail the step instead of letting a wedged call hide a hang. */
+function withDeadline<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} exceeded ${timeoutMs}ms`)), timeoutMs);
+    timer.unref();
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error: unknown) => { clearTimeout(timer); reject(error); },
+    );
+  });
 }
 
 interface RecordedSessionSeed {
@@ -197,7 +209,7 @@ async function run(): Promise<void> {
     const state = await database.start();
     assert.equal(state.status, "ready");
     assert.equal(state.sqliteAvailable, true);
-    assert.equal(state.schemaVersion, 3);
+    assert.equal(state.schemaVersion, 4);
 
     const imported = await database.importFirstMovieInFolder(fixtureRoot);
     assert.equal(imported.status, "imported");
@@ -282,6 +294,9 @@ async function run(): Promise<void> {
     assert.equal(scan.importedFiles, 3);
     assert.equal(scan.updatedFiles, 0);
     assert.equal(scan.warningCount, 1);
+    const completeSource = (await database.getState()).sources.find((source) => source.sourceId === scan.sourceId);
+    assert.equal(completeSource?.available, true);
+    assert.equal(completeSource?.degraded, false, "a complete traversal clears the degraded flag");
     const scanned = await database.list({ page: 1, pageSize: 50, query: "Metadata Movie Title" });
     assert.equal(scanned.totalCount, 1);
     assert.equal(scanned.items[0]?.title, "Metadata Movie Title");
@@ -543,13 +558,24 @@ async function run(): Promise<void> {
       updatedAtMs: Date.now(),
     });
     assert.equal(savedPlayback.positionSec, 42);
+    assert.equal(savedPlayback.subtitleTrackId, null, "the explicit subtitle-off choice is part of the saved state");
     assert.equal((await database.getPlayback(episodeId))?.audioTrackId, "audio-1");
+    assert.equal((await database.getPlayback(episodeId))?.subtitleTrackId, null, "an explicit off choice reads back as null, not as a missing field");
     const updatedDetail = await database.getDetail(episodeId);
     assert.equal(updatedDetail?.playback?.mediaId, episodeId);
     assert.equal(updatedDetail?.playback?.positionSec, 42);
     assert.equal(updatedDetail?.playback?.audioTrackId, "audio-1");
+    assert.equal(updatedDetail?.playback?.subtitleTrackId, null);
     const continueWatching = await database.listContinueWatching();
     assert.equal(continueWatching.some((entry) => entry.item.mediaId === episodeId && entry.playback.positionSec === 42), true);
+    // `undefined` means "never chosen" and must stay an absent field, distinct
+    // from the explicit off choice above (Ticket 09).
+    await database.savePlayback(episodeId, { positionSec: 42, durationSec: 180, audioTrackId: "audio-1", watched: false });
+    assert.equal(
+      Object.prototype.hasOwnProperty.call((await database.getPlayback(episodeId)) ?? {}, "subtitleTrackId"),
+      false,
+      "an unspecified subtitle preference stays an absent field",
+    );
 
     const continueScan = await database.scanFolder(continueRoot);
     assert.equal(continueScan.status, "completed");
@@ -581,10 +607,31 @@ async function run(): Promise<void> {
     assert.equal(shortMovieQualified.some((entry) => entry.collectionTitle === "Continue Short Movie"), true, "a four-percent position on a short work qualifies");
 
     const sourceCountBeforeNestedImport = (await database.getState()).sources.length;
+    const metadataWorksBeforeImport = await database.listCollections({ page: 1, pageSize: 50, sourceId: scanned.items[0]?.sourceId });
+    const episodeItemBeforeImport = await database.get(episodeId);
     const nestedImport = await database.importVideo(episodePath, showDirectory);
     assert.equal(nestedImport.status, "imported");
     if (nestedImport.status !== "imported") throw new Error("nested file import was not accepted");
     assert.equal(nestedImport.item.sourceId, scanned.items[0]?.sourceId);
+    // Ticket 07: importing an already indexed episode must not move it into a new
+    // minimal "movie" work or clear the metadata a scan derived from the NFO.
+    const importedEpisodeDetail = await database.getDetail(episodeId);
+    assert.equal(importedEpisodeDetail?.collectionKind, "show", "an import never relabels an indexed episode as a movie work");
+    assert.equal(importedEpisodeDetail?.collectionTitle, "Example Show");
+    assert.equal(importedEpisodeDetail?.episodes.length, 1);
+    assert.equal(importedEpisodeDetail?.episodes[0]?.title, "Second Episode", "the scan-derived episode title survives the import");
+    assert.equal(importedEpisodeDetail?.episodes[0]?.seasonNumber, 1);
+    assert.equal(importedEpisodeDetail?.episodes[0]?.episodeNumber, 2);
+    const episodeItemAfterImport = await database.get(episodeId);
+    assert.equal(episodeItemAfterImport?.mediaId, episodeItemBeforeImport?.mediaId);
+    assert.equal(episodeItemAfterImport?.title, episodeItemBeforeImport?.title, "the work title is not replaced by the file name");
+    assert.equal(episodeItemAfterImport?.kind, episodeItemBeforeImport?.kind);
+    assert.equal(episodeItemAfterImport?.plot, episodeItemBeforeImport?.plot, "the NFO plot survives a single-file import");
+    assert.equal(episodeItemAfterImport?.year, episodeItemBeforeImport?.year, "the NFO year survives a single-file import");
+    assert.equal(episodeItemAfterImport?.premieredDate, episodeItemBeforeImport?.premieredDate);
+    const metadataWorksAfterImport = await database.listCollections({ page: 1, pageSize: 50, sourceId: scanned.items[0]?.sourceId });
+    assert.equal(metadataWorksAfterImport.totalCount, metadataWorksBeforeImport.totalCount, "an import never creates a second work for an indexed episode");
+    assert.equal(metadataWorksAfterImport.items.find((summary) => summary.title === "Example Show")?.episodeCount, 1);
     assert.equal((await database.getState()).sources.length, sourceCountBeforeNestedImport);
 
     const overlapContainer = join(profile, "overlap-container");
@@ -616,10 +663,27 @@ async function run(): Promise<void> {
     const partialDisconnect = await database.scanFolder(disconnectRoot);
     unsubscribeDisconnect();
     assert.equal(partialDisconnect.status, "partial");
-    assert.equal((await database.getState()).sources.find((source) => source.sourceId === partialDisconnect.sourceId)?.available, false);
+    // Ticket 08: an unreadable subdirectory degrades the source instead of taking
+    // the whole folder offline, so its indexed entries stay playable.
+    const partialSource = (await database.getState()).sources.find((source) => source.sourceId === partialDisconnect.sourceId);
+    assert.equal(partialSource?.available, true, "a partial traversal no longer reports the source offline");
+    assert.equal(partialSource?.degraded, true, "the source reports a degraded index");
     const partialItems = await database.list({ page: 1, pageSize: 50, sourceId: partialDisconnect.sourceId });
     assert.equal(partialItems.totalCount, 1);
     assert.equal(partialItems.items[0]?.title, "00-first");
+    assert.equal(partialItems.items[0]?.available, true, "entries of a degraded source remain playable");
+    // A degraded source is still online, so `WHERE sources.available = 1` keeps
+    // its files in the cleanup queue instead of emptying it.
+    const partialMediaId = partialItems.items[0]?.mediaId;
+    if (!partialMediaId) throw new Error("partial fixture did not produce a mediaId");
+    const partialFactDb = openSqlite(dbPath);
+    try {
+      partialFactDb.prepare("UPDATE media_files SET size_bytes = ?, added_at = ? WHERE media_id = ?").run(3 * GIB, Date.now() - 45 * DAY_MS, partialMediaId);
+    } finally {
+      partialFactDb.close();
+    }
+    const partialQueue = await database.listCleanupQueue({ page: 1, pageSize: 50, rule: "all", state: "none" }, defaultCleanupSettings());
+    assert.equal(partialQueue.candidates.some((candidate) => candidate.item.mediaId === partialMediaId), true, "a degraded source never clears its cleanup candidates");
 
     await rm(metadataRoot, { recursive: true, force: true });
     const unavailable = await database.scanFolder(metadataRoot);
@@ -660,7 +724,7 @@ async function run(): Promise<void> {
     const reopened = new LocalLibraryDatabase({ dbPath, workerPath });
     const reopenedState = await reopened.start();
     assert.equal(reopenedState.status, "ready");
-    assert.equal(reopenedState.schemaVersion, 3);
+    assert.equal(reopenedState.schemaVersion, 4);
     const reopenedPage = await reopened.list({ page: 1, pageSize: 50 });
     assert.equal(reopenedPage.items.some((item) => item.mediaId === imported.item.mediaId), false);
     await reopened.close();
@@ -830,7 +894,19 @@ async function run(): Promise<void> {
     const kept = await cleanupDb.listCleanupQueue({ ...activeQuery, state: "keep" }, standard);
     assert.equal(kept.totalCount, 1);
     assert.equal(kept.candidates[0].item.title, "Cleanup Glanced");
-    assert.ok((kept.candidates[0].cleanupUntilMs ?? 0) > cleanupNow + 179 * DAY_MS, "keep uses the configured day count");
+    assert.equal(kept.candidates[0].cleanupUntilMs, undefined, "keep is terminal, so it stores no deadline");
+
+    // Ticket 14: a keep mark written by an older client that still stored a
+    // deadline is immediately terminal; an expired date never returns the file.
+    const legacyKeepDb = openSqlite(cleanupDbPath);
+    try {
+      legacyKeepDb.prepare("UPDATE media_history SET cleanup_state = 'keep', cleanup_until = ? WHERE media_id = ?").run(cleanupNow - DAY_MS, glancedId);
+    } finally {
+      legacyKeepDb.close();
+    }
+    const legacyKeep = await cleanupDb.listCleanupQueue({ ...activeQuery, state: "keep" }, standard);
+    assert.equal(legacyKeep.candidates.some((candidate) => candidate.item.mediaId === glancedId), true, "an expired keep deadline is ignored");
+    assert.equal((await cleanupDb.listCleanupQueue(activeQuery, standard)).candidates.some((candidate) => candidate.item.mediaId === glancedId), false, "a kept file never returns to the active queue");
 
     await cleanupDb.setCleanupState({ mediaId: fewOpensId, state: "delete-candidate" }, standard.keepDays, standard.snoozeDays);
     await cleanupDb.setCleanupState({ mediaId: lowReturnId, state: "delete-candidate" }, standard.keepDays, standard.snoozeDays);
@@ -926,6 +1002,7 @@ async function run(): Promise<void> {
     assert.ok(recoveredHistory, "the interrupted session was recovered, not dropped");
     assert.equal(recoveredHistory.openCount, 1);
     assert.equal(recoveredHistory.effectiveWatchCount, 1, "45 played seconds are an effective watch");
+    assert.equal(recoveredHistory.completedCount, 0, "recovery applies the same 90% completion rule as the live close");
     assert.equal(recoveredHistory.totalPlayedSec, 45);
     assert.equal(recoveredHistory.lastSessionWallSec, 60);
     await recovered.close();
@@ -937,6 +1014,281 @@ async function run(): Promise<void> {
     } finally {
       recoveredDb.close();
     }
+
+    // Ticket 09: the subtitle three-state choice survives a worker restart.
+    const subtitleDbPath = join(profile, "subtitle-sentinel.sqlite");
+    const subtitleRoot = join(profile, "subtitle-fixture");
+    await mkdir(subtitleRoot, { recursive: true });
+    await writeFile(join(subtitleRoot, "Subtitle Sentinels.mkv"), Buffer.from("subtitle sentinel fixture"));
+    const subtitleDb = new LocalLibraryDatabase({ dbPath: subtitleDbPath, workerPath });
+    await subtitleDb.start();
+    const subtitleScan = await subtitleDb.scanFolder(subtitleRoot);
+    const subtitleItem = (await subtitleDb.list({ page: 1, pageSize: 10, sourceId: subtitleScan.sourceId })).items[0];
+    assert.ok(subtitleItem, "subtitle fixture was indexed");
+    await subtitleDb.savePlayback(subtitleItem.mediaId, { positionSec: 10, durationSec: 600, watched: false, subtitleTrackId: null });
+    assert.equal((await subtitleDb.getPlayback(subtitleItem.mediaId))?.subtitleTrackId, null);
+    await subtitleDb.close();
+    const subtitleRaw = openSqlite(subtitleDbPath);
+    try {
+      const row = subtitleRaw.prepare("SELECT subtitle_track_id AS subtitleTrackId FROM playback_state WHERE media_id = ?").get(subtitleItem.mediaId) as { subtitleTrackId?: string | null } | undefined;
+      assert.equal(row?.subtitleTrackId, "off", "an explicit off choice is stored as the sentinel");
+    } finally {
+      subtitleRaw.close();
+    }
+    const subtitleReopened = new LocalLibraryDatabase({ dbPath: subtitleDbPath, workerPath });
+    await subtitleReopened.start();
+    assert.equal((await subtitleReopened.getPlayback(subtitleItem.mediaId))?.subtitleTrackId, null, "the off choice survives a restart");
+    await subtitleReopened.savePlayback(subtitleItem.mediaId, { positionSec: 11, durationSec: 600, watched: false, subtitleTrackId: "subtitle-track-2" });
+    assert.equal((await subtitleReopened.getPlayback(subtitleItem.mediaId))?.subtitleTrackId, "subtitle-track-2");
+    await subtitleReopened.savePlayback(subtitleItem.mediaId, { positionSec: 12, durationSec: 600, watched: false });
+    const clearedPreference = await subtitleReopened.getPlayback(subtitleItem.mediaId);
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(clearedPreference ?? {}, "subtitleTrackId"),
+      false,
+      "an unspecified subtitle preference stays an absent field after a restart",
+    );
+    await subtitleReopened.close();
+    const subtitleClearedRaw = openSqlite(subtitleDbPath);
+    try {
+      const row = subtitleClearedRaw.prepare("SELECT subtitle_track_id AS subtitleTrackId FROM playback_state WHERE media_id = ?").get(subtitleItem.mediaId) as { subtitleTrackId?: string | null } | undefined;
+      assert.equal(row?.subtitleTrackId, null, "an unspecified choice is stored as NULL");
+    } finally {
+      subtitleClearedRaw.close();
+    }
+
+    // Ticket 11: a replaced file leaves a tombstone that never becomes a card,
+    // never inflates a work's episode count, and has no detail to open.
+    const visibilityRoot = join(profile, "visibility-fixture");
+    await mkdir(visibilityRoot, { recursive: true });
+    const visibilityPath = join(visibilityRoot, "Visibility Movie.mkv");
+    await writeFile(visibilityPath, Buffer.from("visibility fixture before replacement"));
+    const visibilityDb = new LocalLibraryDatabase({ dbPath: join(profile, "visibility.sqlite"), workerPath });
+    await visibilityDb.start();
+    const visibilityScan = await visibilityDb.scanFolder(visibilityRoot);
+    assert.equal(visibilityScan.status, "completed");
+    const oldVisibilityItem = (await visibilityDb.list({ page: 1, pageSize: 10, sourceId: visibilityScan.sourceId })).items[0];
+    assert.ok(oldVisibilityItem, "visibility fixture was indexed");
+    await writeFile(visibilityPath, Buffer.from("visibility fixture after replacement, longer bytes"));
+    await utimes(visibilityPath, new Date(Date.now() + 5_000), new Date(Date.now() + 5_000));
+    const replacedScan = await visibilityDb.scanFolder(visibilityRoot);
+    assert.equal(replacedScan.status, "completed");
+    const replacedItems = await visibilityDb.list({ page: 1, pageSize: 10, sourceId: replacedScan.sourceId });
+    assert.equal(replacedItems.totalCount, 1, "a replaced file leaves one current card");
+    assert.equal(replacedItems.items.length, 1);
+    const newVisibilityItem = replacedItems.items[0];
+    assert.ok(newVisibilityItem, "the replacement was indexed");
+    assert.notEqual(newVisibilityItem.mediaId, oldVisibilityItem.mediaId, "a changed fingerprint is a new opaque identity");
+    assert.equal(await visibilityDb.getDetail(oldVisibilityItem.mediaId), undefined, "a tombstone has an explicit unavailable detail, not an empty episode list");
+    const replacedDetail = await visibilityDb.getDetail(newVisibilityItem.mediaId);
+    assert.equal(replacedDetail?.episodes.length, 1, "detail lists current files only");
+    assert.equal(replacedDetail?.episodes[0]?.mediaId, newVisibilityItem.mediaId);
+    assert.equal(JSON.stringify(replacedDetail).includes(visibilityRoot), false);
+    const replacedWorks = await visibilityDb.listCollections({ page: 1, pageSize: 10, sourceId: replacedScan.sourceId });
+    assert.equal(replacedWorks.totalCount, 1);
+    assert.equal(replacedWorks.items[0]?.episodeCount, 1, "a tombstone never inflates the work's episode count");
+    assert.equal(replacedWorks.items[0]?.availableEpisodeCount, 1);
+    assert.equal(replacedWorks.items[0]?.representativeMediaId, newVisibilityItem.mediaId);
+    assert.equal(replacedWorks.items[0]?.watchedEpisodeCount, 0);
+    const replacedSource = (await visibilityDb.getState()).sources.find((source) => source.sourceId === replacedScan.sourceId);
+    assert.equal(replacedSource?.itemCount, 1, "the folder card counts current files, not tombstones");
+    await visibilityDb.close();
+
+    // Ticket 07: one file failing to index is not a deletion. A trigger makes the
+    // per-file write fail the way an NFO parse or SQLITE error would.
+    const resilientDbPath = join(profile, "index-failure.sqlite");
+    const resilientRoot = join(profile, "index-failure-fixture");
+    await mkdir(resilientRoot, { recursive: true });
+    for (const title of ["Index Good One", "Index Broken", "Index Good Two"]) {
+      await writeFile(join(resilientRoot, `${title}.mkv`), Buffer.from(`index failure fixture ${title}`));
+    }
+    const resilientDb = new LocalLibraryDatabase({ dbPath: resilientDbPath, workerPath });
+    await resilientDb.start();
+    const resilientScan = await resilientDb.scanFolder(resilientRoot);
+    assert.equal(resilientScan.status, "completed");
+    assert.equal(resilientScan.importedFiles, 3);
+    const resilientItems = (await resilientDb.list({ page: 1, pageSize: 10, sourceId: resilientScan.sourceId })).items;
+    const brokenItem = resilientItems.find((item) => item.title === "Index Broken");
+    assert.ok(brokenItem, "the failing fixture was indexed once");
+    await recordViewingSession(resilientDb, brokenItem.mediaId, {
+      startedAtMs: 30_000,
+      playedSec: 90,
+      wallSec: 100,
+      endPositionSec: 90,
+      durationSec: 600,
+      completed: false,
+      closeReason: "user-close",
+    });
+    assert.equal((await resilientDb.getViewingHistory(brokenItem.mediaId))?.openCount, 1);
+    const resilientSqlite = openSqlite(resilientDbPath);
+    try {
+      resilientSqlite.exec(`
+        CREATE TRIGGER fail_index_broken BEFORE UPDATE ON media_files
+        WHEN NEW.relative_path = 'Index Broken.mkv'
+        BEGIN SELECT RAISE(ABORT, 'injected index failure'); END;
+      `);
+    } finally {
+      resilientSqlite.close();
+    }
+    const resilientRescan = await resilientDb.scanFolder(resilientRoot);
+    assert.equal(resilientRescan.status, "completed", "a per-file index failure does not fail the whole scan");
+    assert.equal(resilientRescan.warningCount > 0, true, "the failure is reported as a scan warning");
+    assert.equal(resilientRescan.updatedFiles, 2, "the two healthy files were still refreshed");
+    assert.equal((await resilientDb.getViewingHistory(brokenItem.mediaId))?.openCount, 1, "a failed index attempt never deletes the viewing ledger");
+    assert.equal((await resilientDb.get(brokenItem.mediaId))?.available, true, "the failed file keeps its current row");
+    // Ticket 10: a load failure never completes, even when its resume position
+    // is above 90%; only real playback or the player's `ended` completes.
+    await recordViewingSession(resilientDb, brokenItem.mediaId, {
+      startedAtMs: 40_000,
+      playedSec: 400,
+      wallSec: 410,
+      endPositionSec: 580,
+      durationSec: 600,
+      completed: false,
+      closeReason: "error",
+    });
+    const failedLoadHistory = await resilientDb.getViewingHistory(brokenItem.mediaId);
+    assert.equal(failedLoadHistory?.openCount, 2);
+    assert.equal(failedLoadHistory?.completedCount, 0, "a failed load never counts as a completed watch");
+    const resilientCheck = openSqlite(resilientDbPath);
+    try {
+      const row = resilientCheck.prepare("SELECT available FROM media_files WHERE media_id = ?").get(brokenItem.mediaId) as { available?: number } | undefined;
+      assert.equal(Number(row?.available), 1, "reconcile does not mark an unindexed-but-present file unavailable");
+      resilientCheck.exec("DROP TRIGGER IF EXISTS fail_index_broken;");
+    } finally {
+      resilientCheck.close();
+    }
+    await resilientDb.close();
+
+    // Ticket 07: an import never runs concurrently with a scan.
+    const guardRoot = join(profile, "import-guard-fixture");
+    await mkdir(guardRoot, { recursive: true });
+    for (let index = 0; index < 30; index += 1) await writeFile(join(guardRoot, `guard-${index}.mkv`), Buffer.from(`import guard ${index}`));
+    const guardDb = new LocalLibraryDatabase({ dbPath: join(profile, "import-guard.sqlite"), workerPath });
+    await guardDb.start();
+    let guardImport: Promise<{ ok: boolean; message?: string }> | undefined;
+    const unsubscribeGuard = guardDb.onScanProgress((progress) => {
+      if (!guardImport && progress.status === "running" && progress.scannedFiles === 1) {
+        guardImport = guardDb.importVideo(join(guardRoot, "guard-5.mkv"), guardRoot).then(
+          () => ({ ok: true }),
+          (error: unknown) => ({ ok: false, message: error instanceof Error ? error.message : String(error) }),
+        );
+      }
+    });
+    const guardScan = await guardDb.scanFolder(guardRoot);
+    unsubscribeGuard();
+    assert.equal(guardScan.status, "completed");
+    if (!guardImport) throw new Error("scan progress never reached the import guard");
+    const guardOutcome = await guardImport;
+    assert.equal(guardOutcome.ok, false, "an import during a scan is rejected instead of racing it");
+    assert.match(guardOutcome.message ?? "", /扫描正在进行/u);
+    await guardDb.close();
+
+    // Ticket 07: a scan run that never finished is closed as interrupted on the
+    // next initialization, and its source stays degraded until a successful scan
+    // re-reconciles.
+    const scanRunDbPath = join(profile, "scan-run-recovery.sqlite");
+    const scanRunRoot = join(profile, "scan-run-recovery-fixture");
+    await mkdir(scanRunRoot, { recursive: true });
+    await writeFile(join(scanRunRoot, "Interrupted Scan Movie.mkv"), Buffer.from("interrupted scan fixture"));
+    const scanRunDb = new LocalLibraryDatabase({ dbPath: scanRunDbPath, workerPath });
+    await scanRunDb.start();
+    const scanRunScan = await scanRunDb.scanFolder(scanRunRoot);
+    await scanRunDb.close();
+    const scanRunSqlite = openSqlite(scanRunDbPath);
+    try {
+      const generation = Number((scanRunSqlite.prepare("SELECT COALESCE(MAX(generation), 0) AS generation FROM scan_runs WHERE source_id = ?").get(scanRunScan.sourceId) as { generation?: number } | undefined)?.generation ?? 0) + 1;
+      scanRunSqlite.prepare("INSERT INTO scan_runs (scan_id, source_id, generation, completed, started_at) VALUES (?, ?, ?, 0, ?)")
+        .run("scan_11111111-2222-4333-8444-555555555555", scanRunScan.sourceId, generation, Date.now());
+    } finally {
+      scanRunSqlite.close();
+    }
+    const scanRunRecovered = new LocalLibraryDatabase({ dbPath: scanRunDbPath, workerPath });
+    await scanRunRecovered.start();
+    assert.equal(
+      (await scanRunRecovered.getState()).sources.find((source) => source.sourceId === scanRunScan.sourceId)?.degraded,
+      true,
+      "an unfinished scan run degrades its source at startup",
+    );
+    const interruptedRun = openSqlite(scanRunDbPath);
+    try {
+      const row = interruptedRun.prepare("SELECT completed, error, completed_at AS completedAt FROM scan_runs WHERE scan_id = ?").get("scan_11111111-2222-4333-8444-555555555555") as { completed?: number; error?: string; completedAt?: number } | undefined;
+      assert.equal(Number(row?.completed), 0, "an interrupted run never looks completed");
+      assert.equal(row?.error, "interrupted");
+      assert.equal(typeof row?.completedAt, "number", "the interrupted run is closed with a completion time");
+    } finally {
+      interruptedRun.close();
+    }
+    const scanRunRescan = await scanRunRecovered.scanFolder(scanRunRoot);
+    assert.equal(scanRunRescan.status, "completed");
+    assert.equal(
+      (await scanRunRecovered.getState()).sources.find((source) => source.sourceId === scanRunScan.sourceId)?.degraded,
+      false,
+      "a complete scan clears the degraded flag",
+    );
+    await scanRunRecovered.close();
+
+    // Ticket 13: an unexpected exit — including code 0 — must reject pending
+    // work, stop reporting ready, and allow one controlled restart.
+    const restartMarker = join(profile, "restart-worker-first-run.txt");
+    const restartWorkerPath = join(profile, "restart-worker.js");
+    await writeFile(restartWorkerPath, `
+const fs = require("node:fs");
+const markerPath = ${JSON.stringify(restartMarker)};
+const port = process.parentPort;
+if (!port) process.exit(1);
+if (!fs.existsSync(markerPath)) {
+  fs.writeFileSync(markerPath, "1");
+  process.exit(0);
+}
+port.on("message", (event) => {
+  const request = event.data;
+  if (request.command === "initialize") {
+    port.postMessage({ id: request.id, ok: true, result: { schemaVersion: ${LOCAL_LIBRARY_SCHEMA_VERSION}, sqliteAvailable: true, sources: [] } });
+  } else if (request.command === "list") {
+    port.postMessage({ id: request.id, ok: true, result: { totalCount: 0, items: [] } });
+  } else if (request.command === "close") {
+    port.postMessage({ id: request.id, ok: true, result: undefined });
+  }
+});
+`);
+    const restartDb = new LocalLibraryDatabase({ dbPath: join(profile, "restart.sqlite"), workerPath: restartWorkerPath });
+    const restartStateEvents: string[] = [];
+    const unsubscribeRestartState = restartDb.onState((next) => restartStateEvents.push(next.status));
+    await assert.rejects(() => restartDb.start(), "a worker that exits before initialize never becomes ready");
+    const crashedState = restartDb.getState();
+    assert.equal(crashedState.status, "error", "an unexpected exit stops reporting ready");
+    assert.equal(crashedState.sqliteAvailable, false);
+    assert.equal(typeof crashedState.error?.message, "string", "the crashed state carries a readable message");
+    assert.equal(restartStateEvents.includes("error"), true, "state listeners were notified about the crash");
+    const restartedPage = await withDeadline(restartDb.list({ page: 1, pageSize: 10 }), 10_000, "restart list");
+    assert.equal(restartedPage.totalCount, 0);
+    assert.equal(restartDb.getState().status, "ready", "one controlled restart restores the ready state");
+    unsubscribeRestartState();
+    await restartDb.close();
+
+    // Ticket 13: a worker that never answers rejects the call instead of leaving
+    // the renderer's busy state forever.
+    const hangingWorkerPath = join(profile, "hanging-worker.js");
+    await writeFile(hangingWorkerPath, `
+const port = process.parentPort;
+if (!port) process.exit(1);
+port.on("message", (event) => {
+  const request = event.data;
+  if (request.command === "initialize") {
+    port.postMessage({ id: request.id, ok: true, result: { schemaVersion: ${LOCAL_LIBRARY_SCHEMA_VERSION}, sqliteAvailable: true, sources: [] } });
+  } else if (request.command === "close") {
+    port.postMessage({ id: request.id, ok: true, result: undefined });
+  }
+});
+`);
+    const hangingDb = new LocalLibraryDatabase({ dbPath: join(profile, "hanging.sqlite"), workerPath: hangingWorkerPath, callTimeoutMs: 3_000 });
+    assert.equal((await hangingDb.start()).status, "ready", "the stub answers initialization");
+    await assert.rejects(
+      () => withDeadline(hangingDb.list({ page: 1, pageSize: 10 }), 10_000, "timed-out call"),
+      /本地片库/u,
+      "a wedged worker rejects the call with a readable error instead of hanging",
+    );
+    await hangingDb.close();
 
     // v2 → v3 migration: an existing v2 database gains the two ledger tables
     // without touching its rows, and re-opening is idempotent.
@@ -956,20 +1308,66 @@ async function run(): Promise<void> {
       v2.close();
     }
     const v2Db = new LocalLibraryDatabase({ dbPath: versionTwoPath, workerPath });
-    assert.equal((await v2Db.start()).schemaVersion, 3);
+    assert.equal((await v2Db.start()).schemaVersion, 4);
     await v2Db.close();
     const v3 = openSqlite(versionTwoPath);
     try {
       const version = v3.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
-      assert.equal(Number(version?.user_version), 3);
+      assert.equal(Number(version?.user_version), 4);
       const tables = v3.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('viewing_sessions', 'media_history') ORDER BY name").all() as Array<{ name?: string }>;
-      assert.deepEqual(tables.map((row) => row.name), ["media_history", "viewing_sessions"], "v3 migration creates both ledger tables");
+      assert.deepEqual(tables.map((row) => row.name), ["media_history", "viewing_sessions"], "the v3 step of the migration creates both ledger tables");
     } finally {
       v3.close();
     }
     const v2Again = new LocalLibraryDatabase({ dbPath: versionTwoPath, workerPath });
-    assert.equal((await v2Again.start()).schemaVersion, 3, "re-running the v3 migration is idempotent");
+    assert.equal((await v2Again.start()).schemaVersion, 4, "re-running the v2 → v4 migration is idempotent");
     await v2Again.close();
+
+    // v3 → v4 (Ticket 08): an existing v3 database gains sources.degraded with
+    // default 0, keeps every row and viewing record, and re-running is a no-op.
+    const versionThreePath = join(profile, "version-three.sqlite");
+    const v3Snapshot = openSqlite(dbPath);
+    try {
+      v3Snapshot.exec(`VACUUM INTO '${versionThreePath.replace(/'/g, "''")}'`);
+    } finally {
+      v3Snapshot.close();
+    }
+    let mediaRowsBeforeV4 = 0;
+    let historyRowsBeforeV4 = 0;
+    const v3Shaped = openSqlite(versionThreePath);
+    try {
+      v3Shaped.exec("ALTER TABLE sources DROP COLUMN degraded;");
+      v3Shaped.exec("PRAGMA user_version = 3;");
+      mediaRowsBeforeV4 = Number((v3Shaped.prepare("SELECT COUNT(*) AS count FROM media_files").get() as { count?: number } | undefined)?.count ?? 0);
+      historyRowsBeforeV4 = Number((v3Shaped.prepare("SELECT COUNT(*) AS count FROM media_history").get() as { count?: number } | undefined)?.count ?? 0);
+      const v3Columns = v3Shaped.prepare("PRAGMA table_info(sources)").all() as Array<{ name?: string }>;
+      assert.equal(v3Columns.some((column) => column.name === "degraded"), false);
+    } finally {
+      v3Shaped.close();
+    }
+    const v3Db = new LocalLibraryDatabase({ dbPath: versionThreePath, workerPath });
+    const v4State = await v3Db.start();
+    assert.equal(v4State.schemaVersion, 4);
+    assert.equal(v4State.sources.length > 0, true, "the migrated database keeps its sources");
+    assert.equal(v4State.sources.every((source) => source.degraded === false), true, "pre-v4 rows read as not degraded");
+    await v3Db.close();
+    const v4File = openSqlite(versionThreePath);
+    try {
+      const version = v4File.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
+      assert.equal(Number(version?.user_version), 4);
+      const columns = v4File.prepare("PRAGMA table_info(sources)").all() as Array<{ name?: string; dflt_value?: string | null; notnull?: number }>;
+      const degraded = columns.find((column) => column.name === "degraded");
+      assert.ok(degraded, "v4 migration adds sources.degraded");
+      assert.equal(Number(degraded?.notnull), 1, "degraded is NOT NULL");
+      assert.equal(String(degraded?.dflt_value), "0", "existing rows default to not degraded");
+      assert.equal(Number((v4File.prepare("SELECT COUNT(*) AS count FROM media_files").get() as { count?: number } | undefined)?.count), mediaRowsBeforeV4, "migration never drops media rows");
+      assert.equal(Number((v4File.prepare("SELECT COUNT(*) AS count FROM media_history").get() as { count?: number } | undefined)?.count), historyRowsBeforeV4, "migration never drops viewing history");
+    } finally {
+      v4File.close();
+    }
+    const v3Again = new LocalLibraryDatabase({ dbPath: versionThreePath, workerPath });
+    assert.equal((await v3Again.start()).schemaVersion, 4, "re-running the v3 → v4 migration is idempotent");
+    await v3Again.close();
 
     const legacyPath = join(profile, "legacy-v1.sqlite");
     const snapshot = openSqlite(dbPath);
@@ -982,6 +1380,7 @@ async function run(): Promise<void> {
     try {
       legacy.exec("DROP INDEX IF EXISTS collections_premiered_at;");
       legacy.exec("ALTER TABLE collections DROP COLUMN premiered_at;");
+      legacy.exec("ALTER TABLE sources DROP COLUMN degraded;");
       legacy.exec("PRAGMA user_version = 1;");
       const legacyVersion = legacy.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
       assert.equal(Number(legacyVersion?.user_version), 1);
@@ -991,13 +1390,13 @@ async function run(): Promise<void> {
       legacy.close();
     }
     const legacyDb = new LocalLibraryDatabase({ dbPath: legacyPath, workerPath });
-    assert.equal((await legacyDb.start()).schemaVersion, 3);
+    assert.equal((await legacyDb.start()).schemaVersion, 4);
     const migratedPage = await legacyDb.list({ page: 1, pageSize: 50, sort: "released_desc" });
     assert.equal(migratedPage.totalCount > 0, true);
     assert.equal(migratedPage.items.every((item) => item.premieredDate === null), true, "migration never guesses a date for old rows");
     await legacyDb.close();
     const migratedAgain = new LocalLibraryDatabase({ dbPath: legacyPath, workerPath });
-    assert.equal((await migratedAgain.start()).schemaVersion, 3, "re-running the migration is idempotent");
+    assert.equal((await migratedAgain.start()).schemaVersion, 4, "re-running the migration is idempotent");
     const migratedAgainPage = await migratedAgain.list({ page: 1, pageSize: 50, sort: "released_desc" });
     assert.equal(migratedAgainPage.totalCount, migratedPage.totalCount);
     assert.equal(migratedAgainPage.items.every((item) => item.premieredDate === null), true);
@@ -1005,15 +1404,17 @@ async function run(): Promise<void> {
     const migratedDb = openSqlite(legacyPath);
     try {
       const version = migratedDb.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
-      assert.equal(Number(version?.user_version), 3);
+      assert.equal(Number(version?.user_version), 4);
       const columns = migratedDb.prepare("PRAGMA table_info(collections)").all() as Array<{ name?: string }>;
       assert.equal(columns.some((column) => column.name === "premiered_at"), true);
       const index = migratedDb.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'collections_premiered_at'").get();
       assert.ok(index, "v2 migration creates the premiere-date index");
+      const sourceColumns = migratedDb.prepare("PRAGMA table_info(sources)").all() as Array<{ name?: string }>;
+      assert.equal(sourceColumns.some((column) => column.name === "degraded"), true, "v4 migration adds sources.degraded to a v1 database");
     } finally {
       migratedDb.close();
     }
-    process.stdout.write("PASS: local DB owner imported one fixture, reused stable opaque mediaId, listed without paths, resolved only in main owner, parsed real premiere dates, sorted released_desc with unknown dates last, and migrated v1 data without guessing dates\n");
+    process.stdout.write("PASS: local DB owner imported one fixture, reused stable opaque mediaId, listed without paths, resolved only in main owner, parsed real premiere dates, sorted released_desc with unknown dates last, split partial scans from offline sources, and migrated v1/v2/v3 data without guessing dates or dropping rows\n");
   } finally {
     await rm(profile, { recursive: true, force: true }).catch(() => undefined);
   }

@@ -109,6 +109,20 @@ export function mpvTracksFromProperties(readProperty: (name: string) => string |
   return { audio, subtitles };
 }
 
+export type MpvProjectedState = "playing" | "paused" | "ended";
+
+/**
+ * Projects the polled mpv properties into one engine state. `loaded` is the
+ * gate: mpv is `idle-active=yes` before FILE_LOADED, and reporting that as
+ * `ended` would mark the attempt watched and start the auto-next countdown.
+ * An unloaded idle player is therefore not projected at all.
+ */
+export function mpvProjectedState(input: { loaded: boolean; idle: boolean; eofReached: boolean; paused: boolean }): MpvProjectedState | undefined {
+  if (input.eofReached) return "ended";
+  if (input.idle) return input.loaded ? "ended" : undefined;
+  return input.paused ? "paused" : "playing";
+}
+
 export class MpvNativePlayer implements PlayerEngine {
   private readonly parent: BrowserWindow;
   private host: NativeVideoWindow | undefined;
@@ -122,6 +136,8 @@ export class MpvNativePlayer implements PlayerEngine {
   private lastTrackSignature: string | undefined;
   private lastSettingsSignature: string | undefined;
   private settings: AppPlaybackPreferences;
+  /** Set by MPV_EVENT_FILE_LOADED; gates the idle→ended projection. */
+  private loaded = false;
 
   constructor(parent: BrowserWindow, settings: AppPlaybackPreferences = { volume: 100, muted: false, speed: 1 }) {
     this.parent = parent;
@@ -179,6 +195,7 @@ export class MpvNativePlayer implements PlayerEngine {
     this.lastState = undefined;
     this.lastTrackSignature = undefined;
     this.lastSettingsSignature = undefined;
+    this.loaded = false;
     if (api && handle) api.terminateDestroy(handle);
   }
 
@@ -258,6 +275,7 @@ export class MpvNativePlayer implements PlayerEngine {
       const event = koffi.decode(pointer, MPV_EVENT) as { event_id: number; error: number; data: bigint };
       switch (event.event_id) {
         case MPV_EVENT_FILE_LOADED:
+          this.loaded = true;
           if (this.pendingStartPosition !== undefined) {
             this.setProperty("time-pos", String(this.pendingStartPosition));
             this.pendingStartPosition = undefined;
@@ -288,6 +306,9 @@ export class MpvNativePlayer implements PlayerEngine {
     if (!pointer) return;
     const end = koffi.decode(pointer, MPV_END_FILE) as { reason: number; error: number };
     if (end.error < 0) {
+      // The file never became playable: keep the pre-load gate closed so the
+      // following idle state cannot masquerade as a normal end of playback.
+      this.loaded = false;
       this.emit({ type: "error", message: "本地媒体加载失败。" });
       return;
     }
@@ -299,18 +320,21 @@ export class MpvNativePlayer implements PlayerEngine {
 
   private syncState(force = false): void {
     if (!this.handle) return;
+    this.syncSettings();
+    // Before FILE_LOADED the player is idle by definition; a position or track
+    // list read then would report the previous file (or zero), not this one.
+    if (!this.loaded) return;
     const paused = this.readProperty("pause") === "yes";
     const idle = this.readProperty("idle-active") === "yes";
     const eofReached = this.readProperty("eof-reached") === "yes";
     const position = this.readNumber("time-pos");
     const duration = this.readNumber("duration");
-    const state = idle || eofReached ? "ended" : paused ? "paused" : "playing";
-    if (force || this.lastState !== state) {
+    const state = mpvProjectedState({ loaded: this.loaded, idle, eofReached, paused });
+    if (state !== undefined && (force || this.lastState !== state)) {
       this.lastState = state;
       this.emit({ type: "state", state });
     }
     if (position !== undefined) this.emit({ type: "position", positionSec: position, durationSec: duration });
-    this.syncSettings();
     this.emitTracks();
   }
 

@@ -39,6 +39,8 @@ class MemoryPlaybackStore implements LocalPlaybackStore {
   readonly paths = new Map<string, string>();
   readonly states = new Map<string, LocalPlaybackState>();
   readonly saves: LocalPlaybackState[] = [];
+  /** Test hook: blocking the gate keeps one save in flight (close must await it). */
+  saveGate?: Promise<void>;
 
   resolveMediaPath(mediaId: LocalPlaybackState["mediaId"]): Promise<string | undefined> {
     return Promise.resolve(this.paths.get(mediaId));
@@ -49,10 +51,11 @@ class MemoryPlaybackStore implements LocalPlaybackStore {
     return Promise.resolve(state ? { ...state } : undefined);
   }
 
-  savePlayback(state: LocalPlaybackState): Promise<LocalPlaybackState> {
+  async savePlayback(state: LocalPlaybackState): Promise<LocalPlaybackState> {
+    if (this.saveGate) await this.saveGate;
     this.saves.push({ ...state });
     this.states.set(state.mediaId, { ...state });
-    return Promise.resolve({ ...state });
+    return { ...state };
   }
 }
 
@@ -70,7 +73,7 @@ class FakeViewingLedger implements ViewingLedger {
   readonly begins: Array<{ mediaId: string; startPositionSec: number }> = [];
   readonly playing: boolean[] = [];
   readonly positions: Array<{ positionSec: number; durationSec?: number }> = [];
-  readonly finishes: Array<{ reason: LocalViewingCloseReason; positionSec: number; durationSec?: number }> = [];
+  readonly finishes: Array<{ reason: LocalViewingCloseReason; positionSec?: number; durationSec?: number }> = [];
   pauseCount = 0;
   seekCount = 0;
   speeds: number[] = [];
@@ -101,8 +104,12 @@ class FakeViewingLedger implements ViewingLedger {
 
   async heartbeat(): Promise<void> {}
 
-  async finish(reason: LocalViewingCloseReason, positionSec: number, durationSec?: number): Promise<void> {
-    this.finishes.push({ reason, positionSec, ...(durationSec === undefined ? {} : { durationSec }) });
+  async finish(reason: LocalViewingCloseReason, positionSec: number | undefined, durationSec?: number): Promise<void> {
+    this.finishes.push({
+      reason,
+      ...(positionSec === undefined ? {} : { positionSec }),
+      ...(durationSec === undefined ? {} : { durationSec }),
+    });
   }
 }
 
@@ -263,7 +270,7 @@ test("a failed local load never overwrites the previous playback state", async (
   ]);
 });
 
-test("missing persisted track IDs are ignored when native tracks are enumerated", async () => {
+test("saved track preferences that this file does not offer are kept instead of cleared", async () => {
   const engine = new FakeLocalEngine();
   const store = new MemoryPlaybackStore();
   store.paths.set(mediaOne, "first.mp4");
@@ -281,9 +288,50 @@ test("missing persisted track IDs are ignored when native tracks are enumerated"
   engine.starts[0].onEvent({ type: "position", positionSec: 5, durationSec: 20 });
   await coordinator.close();
 
+  // The saved preference survives the missing target and nothing was dispatched.
   assert.deepEqual(engine.calls, ["stop", "stop"]);
-  assert.equal(store.saves[0]?.audioTrackId, undefined);
-  assert.equal(store.saves[0]?.subtitleTrackId, undefined);
+  assert.equal(store.saves[0]?.audioTrackId, "missing-audio");
+  assert.equal(store.saves[0]?.subtitleTrackId, "missing-subtitle");
+});
+
+test("an empty track list never consumes the preference latch", async () => {
+  const engine = new FakeLocalEngine();
+  const store = new MemoryPlaybackStore();
+  store.paths.set(mediaOne, "first.mp4");
+  store.states.set(mediaOne, {
+    mediaId: mediaOne,
+    positionSec: 0,
+    audioTrackId: "2",
+    subtitleTrackId: "7",
+    watched: false,
+    updatedAtMs: 1,
+  });
+  const coordinator = createCoordinator(engine, store, []);
+  await coordinator.open(mediaOne);
+  engine.starts[0].onEvent({ type: "tracks", audio: [], subtitles: [] });
+  engine.starts[0].onEvent({ type: "tracks", audio: [{ id: "1", label: "English" }, { id: "2", label: "中文" }], subtitles: [{ id: "7", label: "简体" }] });
+  engine.starts[0].onEvent({ type: "position", positionSec: 5, durationSec: 20 });
+  await coordinator.close();
+
+  assert.equal(engine.calls.includes("audio:2"), true, "the saved audio track is applied once real tracks arrive");
+  assert.equal(engine.calls.includes("subtitle:7"), true, "the saved subtitle is applied on the same event");
+  assert.equal(store.saves[0]?.audioTrackId, "2", "the pre-application default must not overwrite the applied preference");
+  assert.equal(store.saves[0]?.subtitleTrackId, "7");
+});
+
+test("an explicit subtitle-off preference dispatches sid=no when the file lists subtitles", async () => {
+  const engine = new FakeLocalEngine();
+  const store = new MemoryPlaybackStore();
+  store.paths.set(mediaOne, "first.mp4");
+  store.states.set(mediaOne, { mediaId: mediaOne, positionSec: 0, subtitleTrackId: null, watched: false, updatedAtMs: 1 });
+  const coordinator = createCoordinator(engine, store, []);
+  await coordinator.open(mediaOne);
+  engine.starts[0].onEvent({ type: "tracks", audio: [{ id: "1", label: "English" }], subtitles: [{ id: "7", label: "简体", selected: true }] });
+  engine.starts[0].onEvent({ type: "position", positionSec: 5, durationSec: 20 });
+  await coordinator.close();
+
+  assert.equal(engine.calls.includes("subtitle:off"), true);
+  assert.equal(store.saves[0]?.subtitleTrackId, null, "the explicit off preference stays null and is not replaced by the default track");
 });
 
 test("switching files flushes the first media and fresh open restores its committed position", async () => {
@@ -426,4 +474,139 @@ test("switching local media and native close both finish the previous viewing se
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(ledger.finishes.map((entry) => entry.reason), ["user-close", "user-close"]);
   assert.equal(ledger.finishes.at(-1)?.positionSec, 4);
+});
+
+test("two close commands emit closed exactly once", async () => {
+  const engine = new FakeLocalEngine();
+  const store = new MemoryPlaybackStore();
+  store.paths.set(mediaOne, "first.mp4");
+  const events: LocalPlaybackEvent[] = [];
+  const coordinator = createCoordinator(engine, store, events);
+
+  await coordinator.open(mediaOne);
+  engine.starts[0].onEvent({ type: "position", positionSec: 5, durationSec: 20 });
+  await Promise.all([coordinator.close(), coordinator.close()]);
+
+  assert.equal(events.filter((event) => event.type === "closed").length, 1);
+  assert.equal(store.saves.length, 1);
+});
+
+test("a native shutdown and close converge on exactly one closed event", async () => {
+  const engine = new FakeLocalEngine();
+  const store = new MemoryPlaybackStore();
+  store.paths.set(mediaOne, "first.mp4");
+  store.paths.set(mediaTwo, "second.mp4");
+  const events: LocalPlaybackEvent[] = [];
+  const coordinator = createCoordinator(engine, store, events);
+
+  // close() first, then the native shutdown arrives while it is still settling.
+  await coordinator.open(mediaOne);
+  engine.starts[0].onEvent({ type: "position", positionSec: 5, durationSec: 20 });
+  const closing = coordinator.close();
+  engine.starts[0].onEvent({ type: "closed" });
+  await closing;
+  assert.equal(events.filter((event) => event.type === "closed").length, 1);
+
+  // The other order: the shutdown starts the exit and close() joins it.
+  await coordinator.open(mediaTwo);
+  engine.starts[1].onEvent({ type: "position", positionSec: 3, durationSec: 20 });
+  engine.starts[1].onEvent({ type: "closed" });
+  await coordinator.close();
+  assert.equal(events.filter((event) => event.type === "closed").length, 2);
+});
+
+test("a failed load keeps no usable active session", async () => {
+  const engine = new FakeLocalEngine();
+  const store = new MemoryPlaybackStore();
+  store.paths.set(mediaOne, "broken.mp4");
+  engine.startError = new Error("decoder failed");
+  const events: LocalPlaybackEvent[] = [];
+  const coordinator = createCoordinator(engine, store, events);
+
+  await coordinator.open(mediaOne);
+  // Late engine reports for the failed attempt are dropped instead of being
+  // projected as a working player.
+  engine.starts[0].onEvent({ type: "ready", durationSec: 90 });
+  engine.starts[0].onEvent({ type: "position", positionSec: 1, durationSec: 90 });
+  engine.starts[0].onEvent({ type: "tracks", audio: [{ id: "1", label: "English" }], subtitles: [] });
+  await coordinator.handle({ type: "play" });
+  await coordinator.handle({ type: "seek", positionSec: 4 });
+  await coordinator.handle({ type: "set-volume", volume: 20 });
+  await coordinator.close();
+
+  assert.deepEqual(events.map((event) => event.type), ["loading", "error", "closed"]);
+  assert.deepEqual(engine.calls.filter((call) => call !== "stop"), [], "no control command reaches the engine after a failed load");
+  assert.deepEqual(store.saves, []);
+});
+
+test("close waits for the queued progress write of the same state", async () => {
+  const engine = new FakeLocalEngine();
+  const store = new MemoryPlaybackStore();
+  store.paths.set(mediaOne, "first.mp4");
+  let releaseSave!: () => void;
+  store.saveGate = new Promise<void>((resolve) => { releaseSave = resolve; });
+  const events: LocalPlaybackEvent[] = [];
+  const coordinator = createCoordinator(engine, store, events);
+
+  await coordinator.open(mediaOne);
+  engine.starts[0].onEvent({ type: "position", positionSec: 29, durationSec: 30 });
+  engine.starts[0].onEvent({ type: "state", state: "ended" });
+  let closed = false;
+  const closing = coordinator.close().then(() => { closed = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(closed, false, "close must not resolve while the same state is still being written");
+  assert.equal(events.some((event) => event.type === "closed"), false);
+
+  releaseSave();
+  await closing;
+  assert.equal(closed, true);
+  assert.equal(store.saves.length, 1, "the identical state is written once");
+  assert.equal(store.saves[0]?.watched, true);
+  assert.equal(events.filter((event) => event.type === "closed").length, 1);
+});
+
+test("an ended attempt without a position event still persists watched", async () => {
+  const engine = new FakeLocalEngine();
+  const store = new MemoryPlaybackStore();
+  store.paths.set(mediaOne, "first.mp4");
+  const coordinator = createCoordinator(engine, store, []);
+
+  await coordinator.open(mediaOne);
+  engine.starts[0].onEvent({ type: "ready", durationSec: 600 });
+  engine.starts[0].onEvent({ type: "state", state: "ended" });
+  await coordinator.close();
+
+  assert.equal(store.saves.length, 1);
+  assert.equal(store.saves[0]?.watched, true, "watched is not dropped just because the engine never reported a position");
+  assert.equal(store.saves[0]?.positionSec, 600, "the duration is the end position of a completed attempt");
+});
+
+test("replay after ended starts a new viewing attempt and clears watched", async () => {
+  const engine = new FakeLocalEngine();
+  const store = new MemoryPlaybackStore();
+  store.paths.set(mediaOne, "first.mp4");
+  const ledger = new FakeViewingLedger();
+  const coordinator = createCoordinator(engine, store, [], [], ledger);
+
+  await coordinator.open(mediaOne);
+  engine.starts[0].onEvent({ type: "position", positionSec: 95, durationSec: 100 });
+  engine.starts[0].onEvent({ type: "state", state: "ended" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(store.saves.at(-1)?.watched, true);
+
+  await coordinator.handle({ type: "play" });
+
+  assert.equal(engine.calls.includes("play"), true);
+  assert.deepEqual(ledger.finishes, [{ reason: "ended", positionSec: 95, durationSec: 100 }], "the completed attempt is recorded once");
+  assert.deepEqual(ledger.begins, [
+    { mediaId: mediaOne, startPositionSec: 0 },
+    { mediaId: mediaOne, startPositionSec: 0 },
+  ], "the replay opens a new viewing session from the start");
+
+  engine.starts[0].onEvent({ type: "position", positionSec: 6, durationSec: 100 });
+  await coordinator.close();
+
+  assert.equal(store.saves.at(-1)?.watched, false, "the replayed attempt is not completed");
+  assert.equal(store.saves.at(-1)?.positionSec, 6);
+  assert.equal(ledger.finishes.at(-1)?.reason, "user-close");
 });

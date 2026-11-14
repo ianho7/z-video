@@ -1,3 +1,10 @@
+/**
+ * @deprecated Not on the default runtime path: the default app adds library
+ * folders through the OS picker and performs no NAS discovery. Only
+ * `tests/discovery.test.ts` and the deprecated `ipc.ts` use this service.
+ * Superseded by the local-library source picker; kept as rollback reference.
+ * See docs/local-library/legacy-paths.md.
+ */
 import { networkInterfaces } from "node:os";
 
 import type { AppError, DiscoveryOutcome, DiscoveryReport as PublicDiscoveryReport } from "../shared/contracts";

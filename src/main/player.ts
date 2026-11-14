@@ -86,6 +86,7 @@ interface ActiveLocalPlayback {
   trackPreferencesApplied: boolean;
   lastPersistedFingerprint?: string;
   queuedPersistFingerprint?: string;
+  queuedPersist?: Promise<void>;
 }
 
 /**
@@ -98,6 +99,8 @@ export class LocalPlaybackCoordinator {
   private active: ActiveLocalPlayback | undefined;
   private progressTimer: NodeJS.Timeout | undefined;
   private flushQueue: Promise<void> = Promise.resolve();
+  /** In-flight single terminal exit; a racing close joins it instead of adding another. */
+  private pendingTermination: Promise<void> | undefined;
 
   constructor(
     private readonly engine: PlayerEngine,
@@ -163,9 +166,14 @@ export class LocalPlaybackCoordinator {
       return;
     }
     const active = this.active;
-    if (!active) return;
+    // A failed attempt keeps no usable active session, so a control command
+    // must not reach the engine (that was the control-error storm) and nothing
+    // may look like working playback again.
+    if (!active || active.loadFailed) return;
     switch (command.type) {
       case "play":
+        // `play` after the player reported the end is a new viewing attempt.
+        if (active.endedObserved) this.restartAfterEnded(active);
         await this.engine.play();
         break;
       case "pause":
@@ -220,21 +228,51 @@ export class LocalPlaybackCoordinator {
   }
 
   async close(reason: LocalViewingCloseReason = "user-close"): Promise<void> {
-    const generation = ++this.generation;
-    const previous = this.active;
-    const mediaId = previous?.mediaId;
+    await this.terminate(reason);
+  }
+
+  /**
+   * The single terminal exit of one playback attempt. Every close path
+   * (`close()`, a native shutdown, app quit) funnels through here, so `closed`
+   * is emitted exactly once: the second caller joins the settlement that is
+   * already running instead of taking the session over, and a later
+   * generation change can no longer suppress the event.
+   */
+  private async terminate(reason: LocalViewingCloseReason): Promise<void> {
+    const active = this.active;
+    if (!active) {
+      await this.pendingTermination;
+      return;
+    }
     this.active = undefined;
     this.clearProgressTimer();
     this.setWindowFullscreen(false);
-    await this.flushProgress(previous, generation);
-    await this.finishViewing(previous, reason);
-    if (generation !== this.generation) return;
-    await this.engine.stop();
-    await this.engine.destroy?.();
-    if (mediaId) this.emit({ type: "closed", mediaId });
+    const settlement = this.settleSession(active, reason);
+    this.pendingTermination = settlement;
+    try {
+      await settlement;
+    } finally {
+      if (this.pendingTermination === settlement) this.pendingTermination = undefined;
+    }
+  }
+
+  private async settleSession(active: ActiveLocalPlayback, reason: LocalViewingCloseReason): Promise<void> {
+    await this.flushProgress(active, active.generation).catch(() => undefined);
+    await this.finishViewing(active, reason).catch(() => undefined);
+    try {
+      await this.engine.stop();
+      await this.engine.destroy?.();
+    } catch {
+      // The engine is going away regardless: the terminal event still has to
+      // land, otherwise the renderer view would wait for its 1.5 s fallback.
+    }
+    this.emit({ type: "closed", mediaId: active.mediaId });
   }
 
   private async beginTransition(): Promise<number | undefined> {
+    // A terminal exit that is still writing progress stays ordered before the
+    // next attempt, so `closed` never lands after the replacement `loading`.
+    await this.pendingTermination;
     const generation = ++this.generation;
     const previous = this.active;
     this.active = undefined;
@@ -252,14 +290,19 @@ export class LocalPlaybackCoordinator {
     if (!active || !this.ledger || active.viewingFinished) return;
     active.viewingFinished = true;
     const effectiveReason = active.endedObserved && reason !== "error" ? "ended" : reason;
-    await this.ledger.finish(effectiveReason, Math.max(0, active.positionSec), finiteNonNegative(active.durationSec)).catch(() => undefined);
+    // Only a position the engine actually reported counts as an end position;
+    // a resume position from the store is never completion evidence.
+    const endPositionSec = active.observedPosition ? Math.max(0, active.positionSec) : undefined;
+    await this.ledger.finish(effectiveReason, endPositionSec, finiteNonNegative(active.durationSec)).catch(() => undefined);
   }
 
   private async flushProgress(active: ActiveLocalPlayback | undefined, generation: number): Promise<void> {
-    if (!active || active.loadFailed || !active.observedPosition || !finiteNonNegative(active.positionSec)) return;
+    if (!active || active.loadFailed) return;
+    const positionSec = this.persistPosition(active);
+    if (positionSec === undefined) return;
     const state: LocalPlaybackState = {
       mediaId: active.mediaId,
-      positionSec: Math.max(0, active.positionSec),
+      positionSec,
       ...(finiteNonNegative(active.durationSec) === undefined ? {} : { durationSec: active.durationSec }),
       ...(active.audioTrackId === undefined ? {} : { audioTrackId: active.audioTrackId }),
       ...(active.subtitleTrackId === undefined ? {} : { subtitleTrackId: active.subtitleTrackId }),
@@ -274,18 +317,46 @@ export class LocalPlaybackCoordinator {
       subtitleTrackId: state.subtitleTrackId,
       watched: state.watched,
     });
-    if (active.lastPersistedFingerprint === fingerprint || active.queuedPersistFingerprint === fingerprint) return;
-    active.queuedPersistFingerprint = fingerprint;
-    await this.enqueueFlush(async () => {
+    if (active.lastPersistedFingerprint === fingerprint) return;
+    // The same state is already on its way to the store: wait for that write
+    // instead of reporting success, otherwise close() can return before
+    // `watched` reaches disk.
+    if (active.queuedPersistFingerprint === fingerprint && active.queuedPersist) {
+      await active.queuedPersist;
+      return;
+    }
+    const queued = this.enqueueFlush(async () => {
       try {
         await this.store.savePlayback(state);
         active.lastPersistedFingerprint = fingerprint;
       } catch {
-        if (generation === this.generation) this.emit({ type: "error", mediaId: active.mediaId, message: "播放进度保存失败。" });
-      } finally {
-        if (active.queuedPersistFingerprint === fingerprint) active.queuedPersistFingerprint = undefined;
+        if (this.isCurrent(generation, active.mediaId)) this.emit({ type: "error", mediaId: active.mediaId, message: "播放进度保存失败。" });
       }
     });
+    active.queuedPersistFingerprint = fingerprint;
+    active.queuedPersist = queued;
+    try {
+      await queued;
+    } finally {
+      if (active.queuedPersist === queued) {
+        active.queuedPersist = undefined;
+        if (active.queuedPersistFingerprint === fingerprint) active.queuedPersistFingerprint = undefined;
+      }
+    }
+  }
+
+  /**
+   * The position to persist. When the player reported the end without ever
+   * reporting a position, the duration is the end position: dropping the write
+   * would leave `playback_state.watched` behind the viewing ledger.
+   */
+  private persistPosition(active: ActiveLocalPlayback): number | undefined {
+    if (active.observedPosition) {
+      const observed = finiteNonNegative(active.positionSec);
+      if (observed !== undefined) return observed;
+    }
+    if (active.endedObserved) return finiteNonNegative(active.durationSec);
+    return undefined;
   }
 
   private enqueueFlush(work: () => Promise<void>): Promise<void> {
@@ -297,6 +368,9 @@ export class LocalPlaybackCoordinator {
   private onEngineEvent(generation: number, mediaId: LocalPlaybackMediaId, event: PlayerEngineEvent): void {
     const active = this.active;
     if (!active || !this.isCurrent(generation, mediaId)) return;
+    // A failed attempt emits nothing further except the native shutdown that
+    // still has to reach the renderer as one terminal `closed`.
+    if (active.loadFailed && event.type !== "closed") return;
     switch (event.type) {
       case "ready":
         active.durationSec = finiteNonNegative(event.durationSec) ?? active.durationSec;
@@ -332,8 +406,9 @@ export class LocalPlaybackCoordinator {
         this.emit({ type: "control-error", mediaId, message: event.message });
         break;
       case "tracks":
-        this.applyTrackPreferences(active, event);
-        this.updateSelectedTracks(active, event);
+        // The event that applies a saved preference must not feed the engine's
+        // pre-application default track back into the attempt.
+        if (!this.applyTrackPreferences(active, event)) this.updateSelectedTracks(active, event);
         this.emit({ type: "tracks", mediaId, audio: event.audio, subtitles: event.subtitles });
         break;
       case "error":
@@ -343,49 +418,78 @@ export class LocalPlaybackCoordinator {
         this.emit({ type: "error", mediaId, message: "本地媒体加载失败。" });
         break;
       case "closed":
-        void this.handleNativeClosed(active, generation);
+        void this.handleNativeClosed(active);
         break;
     }
   }
 
-  private async handleNativeClosed(active: ActiveLocalPlayback, generation: number): Promise<void> {
-    if (!this.active || this.active !== active) return;
-    this.generation += 1;
-    this.active = undefined;
-    this.clearProgressTimer();
-    this.setWindowFullscreen(false);
-    await this.flushProgress(active, this.generation);
-    await this.finishViewing(active, "user-close");
-    await this.engine.destroy?.();
-    if (this.generation === generation + 1) this.emit({ type: "closed", mediaId: active.mediaId });
+  private handleNativeClosed(active: ActiveLocalPlayback): void {
+    if (this.active !== active) return;
+    void this.terminate("user-close");
   }
 
-  private applyTrackPreferences(active: ActiveLocalPlayback, event: Extract<PlayerEngineEvent, { type: "tracks" }>): void {
-    if (active.trackPreferencesApplied) return;
-    active.trackPreferencesApplied = true;
-    if (active.audioTrackId !== undefined) {
-      if (event.audio.some((track) => track.id === active.audioTrackId)) {
-        void Promise.resolve(this.engine.setAudioTrack(active.audioTrackId)).catch(() => undefined);
+  /**
+   * Applies the saved audio/subtitle preferences once the engine lists real
+   * tracks. An empty track list proves nothing about this file, so it must not
+   * consume the latch; a saved track that is missing from the list keeps its
+   * preference (and stays retryable) instead of being cleared.
+   */
+  private applyTrackPreferences(active: ActiveLocalPlayback, event: Extract<PlayerEngineEvent, { type: "tracks" }>): boolean {
+    if (active.trackPreferencesApplied) return false;
+    if (event.audio.length === 0 && event.subtitles.length === 0) return false;
+    let dispatched = false;
+    let unresolved = false;
+    const audioTrackId = active.audioTrackId;
+    if (audioTrackId !== undefined) {
+      if (event.audio.some((track) => track.id === audioTrackId)) {
+        void Promise.resolve(this.engine.setAudioTrack(audioTrackId)).catch(() => undefined);
+        dispatched = true;
       } else {
-        active.audioTrackId = undefined;
+        unresolved = true;
       }
     }
-    if (active.subtitleTrackId === null) {
-      void Promise.resolve(this.engine.setSubtitleTrack(null)).catch(() => undefined);
-    } else if (active.subtitleTrackId !== undefined) {
-      if (event.subtitles.some((track) => track.id === active.subtitleTrackId)) {
-        void Promise.resolve(this.engine.setSubtitleTrack(active.subtitleTrackId)).catch(() => undefined);
+    const subtitleTrackId = active.subtitleTrackId;
+    if (subtitleTrackId === null) {
+      // An explicit "subtitles off" needs a subtitle list to be meaningful.
+      if (event.subtitles.length > 0) {
+        void Promise.resolve(this.engine.setSubtitleTrack(null)).catch(() => undefined);
+        dispatched = true;
       } else {
-        active.subtitleTrackId = undefined;
+        unresolved = true;
+      }
+    } else if (subtitleTrackId !== undefined) {
+      if (event.subtitles.some((track) => track.id === subtitleTrackId)) {
+        void Promise.resolve(this.engine.setSubtitleTrack(subtitleTrackId)).catch(() => undefined);
+        dispatched = true;
+      } else {
+        unresolved = true;
       }
     }
+    if (dispatched && !unresolved) active.trackPreferencesApplied = true;
+    return dispatched;
   }
 
+  /**
+   * Adopts the engine's selected tracks. Before the saved preferences are
+   * applied only a channel without a preference may follow the engine default;
+   * afterwards every new track list reflects the applied preference.
+   */
   private updateSelectedTracks(active: ActiveLocalPlayback, event: Extract<PlayerEngineEvent, { type: "tracks" }>): void {
     const selectedAudio = event.audio.find((track) => track.selected);
     const selectedSubtitle = event.subtitles.find((track) => track.selected);
-    if (selectedAudio) active.audioTrackId = selectedAudio.id;
-    if (selectedSubtitle) active.subtitleTrackId = selectedSubtitle.id;
+    if (selectedAudio && (active.trackPreferencesApplied || active.audioTrackId === undefined)) active.audioTrackId = selectedAudio.id;
+    if (selectedSubtitle && (active.trackPreferencesApplied || active.subtitleTrackId === undefined)) active.subtitleTrackId = selectedSubtitle.id;
+  }
+
+  /** A replay after `ended` starts a new attempt: it must not inherit watched or the finished session. */
+  private restartAfterEnded(active: ActiveLocalPlayback): void {
+    void this.finishViewing(active, "ended");
+    active.endedObserved = false;
+    active.viewingFinished = false;
+    active.watched = false;
+    active.positionSec = 0;
+    active.observedPosition = true;
+    this.ledger?.begin(active.mediaId, 0);
   }
 
   private startProgressTimer(generation: number, mediaId: LocalPlaybackMediaId): void {

@@ -1,3 +1,10 @@
+/**
+ * @deprecated Not on the default runtime path: the default app performs no NAS
+ * HTTP calls. The module is still loaded transitively by `player-host.ts`
+ * (`NasError` value import), but `NasApiClient` is only instantiated by the
+ * deprecated `ipc.ts` and tests. Superseded by the local-library worker.
+ * See docs/local-library/legacy-paths.md.
+ */
 import { constants, createHash, createPublicKey, publicEncrypt } from "node:crypto";
 
 import { recordNasRequest } from "./diagnostics";

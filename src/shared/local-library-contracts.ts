@@ -11,7 +11,7 @@ import type {
  * may resolve those values.
  */
 
-export const LOCAL_LIBRARY_SCHEMA_VERSION = 3 as const;
+export const LOCAL_LIBRARY_SCHEMA_VERSION = 4 as const;
 
 export const LOCAL_LIBRARY_SCHEMA_TABLES = [
   "sources",
@@ -38,10 +38,20 @@ export interface LocalSourceSummary {
   label: string;
   /** Drive or parent-folder clue only; never a full/relative root path. */
   locationHint: string;
+  /**
+   * False only when the source root itself cannot be read: the whole folder is
+   * offline and its files cannot be played.
+   */
   available: boolean;
-  /** Indexed files for this source, including files kept while the source is offline. */
+  /**
+   * True when the last scan could read the root but not every subdirectory or
+   * file (or when a previous scan never finished). Indexed files stay playable;
+   * the UI must show "部分目录未读取" rather than "离线". Schema v4.
+   */
+  degraded: boolean;
+  /** Current (non-tombstone) files for this source, including files kept while the source is offline. */
   itemCount: number;
-  /** Works (collections) aggregated from this source's indexed files. */
+  /** Works (collections) aggregated from this source's current indexed files. */
   collectionCount: number;
 }
 
@@ -114,6 +124,12 @@ export interface LocalPlaybackState {
   positionSec: number;
   durationSec?: number;
   audioTrackId?: string;
+  /**
+   * Renderer contract: a string selects a subtitle track, `null` means the user
+   * explicitly turned subtitles off, and an absent field means "never chosen".
+   * The database stores the explicit-off case as the `"off"` sentinel and keeps
+   * the absent case as NULL, so the three states survive a restart.
+   */
   subtitleTrackId?: string | null;
   watched: boolean;
   updatedAtMs: number;
@@ -181,7 +197,17 @@ export function isEffectiveWatch(playedSec: number, durationSec?: number): boole
   return playedSec * 100 >= durationSec * EFFECTIVE_WATCH_MIN_PERCENT;
 }
 
-/** Completion = the player reported the end, or 90% plus at least 30 played seconds. */
+/**
+ * The single completion rule shared by the live close, the recovered session
+ * and the recorded aggregate: an attempt completes only through the player
+ * reporting the end (`ended`, which callers pass as `completed: true`) or
+ * through real playback reaching 90% for at least 30 played seconds.
+ *
+ * Position alone never completes: a resume position or a seek to the end with
+ * little played time fails the 30-second floor. A failed load
+ * (`closeReason === "error"`) is not a watch attempt at all, so callers must
+ * not consult this function for it.
+ */
 export function isCompletedWatch(playedSec: number, durationSec: number | undefined, endPositionSec: number): boolean {
   if (!Number.isFinite(playedSec) || playedSec < EFFECTIVE_WATCH_MIN_SEC) return false;
   if (durationSec === undefined || !Number.isFinite(durationSec) || durationSec <= 0) return false;

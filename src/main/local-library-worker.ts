@@ -101,9 +101,21 @@ const workerPort = port;
 const supportedVideoExtensions = new Set([".avi", ".m2ts", ".m4v", ".mkv", ".mov", ".mp4", ".ts", ".webm"]);
 const supportedArtworkExtensions = new Set([".avif", ".jpeg", ".jpg", ".png", ".webp"]);
 const maxNfoBytes = 2 * 1024 * 1024;
+/** TEMP table holding one traversal's seen source-relative paths (reconcile). */
+const SEEN_PATHS_TABLE = "seen_relative_paths";
 let database: DatabaseSyncType | undefined;
 let activeScan: Promise<LocalScanResult> | undefined;
-const scanCancellation = new Map<string, { requested: boolean }>();
+/**
+ * One in-flight scan's cancellation token. `requested` is honored at every
+ * traversal step; `terminal` turns true once the traversal has returned, from
+ * which point the reconcile transaction and the result are uninterruptible and
+ * `cancel-scan` must answer `false` instead of pretending it cancelled anything.
+ */
+interface ScanCancellation {
+  requested: boolean;
+  terminal: boolean;
+}
+const scanCancellation = new Map<string, ScanCancellation>();
 
 type ScanProfileStage = "enumeration" | "realpath" | "lstat" | "stat" | "nfo" | "artwork" | "database";
 
@@ -290,6 +302,7 @@ function openDatabase(dbPath: string): void {
         root_path TEXT NOT NULL UNIQUE,
         label TEXT NOT NULL,
         available INTEGER NOT NULL DEFAULT 1,
+        degraded INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
@@ -402,6 +415,7 @@ function openDatabase(dbPath: string): void {
     ensureColumn("collections", "source_id", "TEXT");
     ensureColumn("collections", "relative_path", "TEXT");
     ensureColumn("collections", "premiered_at", "TEXT");
+    ensureColumn("sources", "degraded", "INTEGER NOT NULL DEFAULT 0");
     ensureColumn("media_files", "display_title", "TEXT");
     ensureColumn("media_files", "media_kind", "TEXT NOT NULL DEFAULT 'movie'");
     ensureColumn("media_files", "season_number", "INTEGER");
@@ -420,10 +434,13 @@ function openDatabase(dbPath: string): void {
     db.exec("CREATE INDEX IF NOT EXISTS media_history_last_opened ON media_history(last_opened_at);");
     db.exec("CREATE INDEX IF NOT EXISTS media_history_cleanup_state ON media_history(cleanup_state);");
     // Incremental migrations: v2 adds collections.premiered_at; v3 adds the
-    // viewing_sessions/media_history ledger tables. No existing column is
-    // rewritten and no history is backfilled from playback_state.
+    // viewing_sessions/media_history ledger tables; v4 adds
+    // sources.degraded (default 0, so old rows keep their previous meaning).
+    // No existing column is rewritten and no history is backfilled from
+    // playback_state; every step is idempotent and re-running it is a no-op.
     if (existingVersion < LOCAL_LIBRARY_SCHEMA_VERSION) db.exec(`PRAGMA user_version = ${LOCAL_LIBRARY_SCHEMA_VERSION};`);
     recoverInterruptedViewingSessions();
+    recoverInterruptedScanRuns();
   } catch (error) {
     throw new LocalWorkerError("storage", localLibraryErrorMessage("storage"));
   }
@@ -821,16 +838,19 @@ async function discoverMedia(
   };
 }
 
-function upsertCollection(metadata: CollectionMetadata, timestamp: number, preferredCollectionId?: string): string {
+function upsertCollection(metadata: CollectionMetadata, timestamp: number, preferredCollectionId?: string, preserveExisting = false): string {
   const db = requireDatabase();
   const preferred = preferredCollectionId
     ? profileSync("database", () => db.prepare("SELECT collection_id AS collectionId, identity_key AS identityKey FROM collections WHERE collection_id = ?").get(preferredCollectionId) as { collectionId?: string; identityKey?: string | null } | undefined)
     : undefined;
-  // A previously directory-grouped movie row can share an old collection with
-  // other files. Reuse it only when the work identity is unchanged; otherwise
-  // split the movies into one collection per file.
-  const existing = preferred?.collectionId && preferred.identityKey === metadata.identityKey
-    ? { collectionId: String(preferred.collectionId) }
+  const preferredId = preferred?.collectionId ? String(preferred.collectionId) : undefined;
+  // A single-file import (Ticket 07) constructs minimal movie metadata; it must
+  // never move an indexed episode to a new "movie" work or clear NFO fields.
+  // A scan keeps the identity check so old directory-grouped movie rows split
+  // into one work per file.
+  const reusePreferred = preferredId !== undefined && (preserveExisting || preferred?.identityKey === metadata.identityKey);
+  const existing = reusePreferred
+    ? { collectionId: preferredId as string }
     : profileSync("database", () => db.prepare(`
     SELECT collection_id AS collectionId
     FROM collections
@@ -839,10 +859,25 @@ function upsertCollection(metadata: CollectionMetadata, timestamp: number, prefe
   `).get(metadata.identityKey, metadata.sourceId, metadata.relativePath) as { collectionId?: string } | undefined);
   const collectionId = existing?.collectionId ?? makeId("collection");
   if (existing?.collectionId) {
-    profileSync("database", () => db.prepare(`
-      UPDATE collections SET title = ?, kind = ?, year = ?, premiered_at = ?, plot = ?, genre_json = ?, rating = ?, identity_key = ?, source_id = ?, relative_path = ?, updated_at = ?
-      WHERE collection_id = ?
-    `).run(metadata.title, metadata.kind, metadata.year ?? null, metadata.premieredDate ?? null, metadata.plot ?? null, JSON.stringify(metadata.genres), metadata.rating ?? null, metadata.identityKey, metadata.sourceId, metadata.relativePath, timestamp, collectionId));
+    if (preserveExisting) {
+      // Import only fills what is still missing; title, kind, identity and the
+      // source-relative grouping stay exactly as the last scan wrote them.
+      profileSync("database", () => db.prepare(`
+        UPDATE collections SET
+          year = COALESCE(year, ?),
+          premiered_at = COALESCE(premiered_at, ?),
+          plot = COALESCE(plot, ?),
+          genre_json = CASE WHEN genre_json IS NULL OR genre_json = '' OR genre_json = '[]' THEN ? ELSE genre_json END,
+          rating = COALESCE(rating, ?),
+          updated_at = ?
+        WHERE collection_id = ?
+      `).run(metadata.year ?? null, metadata.premieredDate ?? null, metadata.plot ?? null, JSON.stringify(metadata.genres), metadata.rating ?? null, timestamp, collectionId));
+    } else {
+      profileSync("database", () => db.prepare(`
+        UPDATE collections SET title = ?, kind = ?, year = ?, premiered_at = ?, plot = ?, genre_json = ?, rating = ?, identity_key = ?, source_id = ?, relative_path = ?, updated_at = ?
+        WHERE collection_id = ?
+      `).run(metadata.title, metadata.kind, metadata.year ?? null, metadata.premieredDate ?? null, metadata.plot ?? null, JSON.stringify(metadata.genres), metadata.rating ?? null, metadata.identityKey, metadata.sourceId, metadata.relativePath, timestamp, collectionId));
+    }
   } else {
     profileSync("database", () => db.prepare(`
       INSERT INTO collections (collection_id, title, kind, year, premiered_at, plot, genre_json, rating, identity_key, source_id, relative_path, created_at, updated_at)
@@ -907,9 +942,22 @@ function upsertArtwork(
   }
 }
 
-async function upsertMedia(rootPath: string, discovered: DiscoveredMedia, includeItem = true): Promise<{ item?: LocalMediaItem; created: boolean }> {
+interface UpsertMediaOptions {
+  /** Load the row back as a renderer-safe item (single-file import). */
+  includeItem?: boolean;
+  /**
+   * Single-file import: reuse the file's current work and media row and only
+   * fill missing values. The scan path replaces NFO-derived data because the
+   * scan is the metadata owner.
+   */
+  preserveExistingMetadata?: boolean;
+}
+
+async function upsertMedia(rootPath: string, discovered: DiscoveredMedia, options: UpsertMediaOptions = {}): Promise<{ item?: LocalMediaItem; created: boolean }> {
   const db = requireDatabase();
   const timestamp = now();
+  const includeItem = options.includeItem ?? true;
+  const preserveExistingMetadata = options.preserveExistingMetadata === true;
   const preparedArtwork = await prepareArtwork(rootPath, discovered.collection.sourceId, discovered.artwork);
   try {
     profileSync("database", () => db.exec("BEGIN IMMEDIATE"));
@@ -918,15 +966,27 @@ async function upsertMedia(rootPath: string, discovered: DiscoveredMedia, includ
       FROM media_files
       WHERE source_id = ? AND relative_path = ? AND size_bytes = ? AND modified_at_ms = ?
     `).get(discovered.collection.sourceId, discovered.relativePath, discovered.sizeBytes, discovered.modifiedAtMs) as { mediaId?: string; collectionId?: string } | undefined);
-    const collectionId = upsertCollection(discovered.collection, timestamp, existing?.collectionId);
+    const collectionId = upsertCollection(discovered.collection, timestamp, existing?.collectionId, preserveExistingMetadata);
     let mediaId: string;
     let created = false;
     if (existing?.mediaId) {
       mediaId = String(existing.mediaId);
-      profileSync("database", () => db.prepare(`
-        UPDATE media_files SET collection_id = ?, display_title = ?, media_kind = ?, season_number = ?, episode_number = ?, available = 1, updated_at = ?
-        WHERE media_id = ?
-      `).run(collectionId, discovered.displayTitle, discovered.mediaKind, discovered.seasonNumber ?? null, discovered.episodeNumber ?? null, timestamp, mediaId));
+      if (preserveExistingMetadata) {
+        // Import must not relabel an indexed episode as a movie or drop its
+        // season/episode numbers that a scan derived from the file name or NFO.
+        profileSync("database", () => db.prepare(`
+          UPDATE media_files SET collection_id = ?, display_title = COALESCE(NULLIF(display_title, ''), ?),
+            media_kind = CASE WHEN media_kind = 'unclassified' THEN ? ELSE media_kind END,
+            season_number = COALESCE(season_number, ?), episode_number = COALESCE(episode_number, ?),
+            available = 1, updated_at = ?
+          WHERE media_id = ?
+        `).run(collectionId, discovered.displayTitle, discovered.mediaKind, discovered.seasonNumber ?? null, discovered.episodeNumber ?? null, timestamp, mediaId));
+      } else {
+        profileSync("database", () => db.prepare(`
+          UPDATE media_files SET collection_id = ?, display_title = ?, media_kind = ?, season_number = ?, episode_number = ?, available = 1, updated_at = ?
+          WHERE media_id = ?
+        `).run(collectionId, discovered.displayTitle, discovered.mediaKind, discovered.seasonNumber ?? null, discovered.episodeNumber ?? null, timestamp, mediaId));
+      }
     } else {
       profileSync("database", () => db.prepare(`
         DELETE FROM viewing_sessions WHERE media_id IN (
@@ -975,12 +1035,17 @@ async function upsertMedia(rootPath: string, discovered: DiscoveredMedia, includ
 
 function sourceSummaries(): LocalSourceSummary[] {
   const db = requireDatabase();
+  // Tombstone rows (available = 0) are not part of the folder's current
+  // contents, so the folder card counts only current files; a file kept while
+  // the source is offline still counts. `degraded` distinguishes "some
+  // subdirectories could not be read" from "the whole folder is offline".
   const rows = db.prepare(`
-    SELECT sources.source_id AS sourceId, sources.root_path AS rootPath, sources.label, sources.available,
+    SELECT sources.source_id AS sourceId, sources.root_path AS rootPath, sources.label,
+      sources.available, sources.degraded,
       COUNT(media_files.media_id) AS itemCount,
       COUNT(DISTINCT media_files.collection_id) AS collectionCount
     FROM sources
-    LEFT JOIN media_files ON media_files.source_id = sources.source_id
+    LEFT JOIN media_files ON media_files.source_id = sources.source_id AND media_files.available = 1
     GROUP BY sources.source_id
     ORDER BY sources.label COLLATE NOCASE
   `).all() as Array<Record<string, unknown>>;
@@ -991,6 +1056,7 @@ function sourceSummaries(): LocalSourceSummary[] {
       label: rootPath ? safeSourceLabel(rootPath) : safeSourceLabel(String(row.label ?? "")),
       locationHint: rootPath ? safeSourceLocationHint(rootPath) : "所选文件夹",
       available: Number(row.available) === 1,
+      degraded: Number(row.degraded) === 1,
       itemCount: Number(row.itemCount),
       collectionCount: Number(row.collectionCount),
     };
@@ -1005,7 +1071,11 @@ function state(): { schemaVersion: typeof LOCAL_LIBRARY_SCHEMA_VERSION; sqliteAv
 function list(query: LocalLibraryQuery): { totalCount: number; items: LocalMediaItem[] } {
   const db = requireDatabase();
   const text = query.query?.trim() ?? "";
-  const clauses = ["1 = 1"];
+  // A replaced/deleted file keeps its row as a tombstone (available = 0) so
+  // playback and viewing history stay attributable, but it is never a card in
+  // the file list. An offline source is different: its rows stay available and
+  // are listed (greyed out) because the file itself is still indexed.
+  const clauses = ["media_files.available = 1"];
   const parameters: Array<string | number> = [];
   if (text) {
     clauses.push("(collections.title LIKE ? OR media_files.display_title LIKE ?)");
@@ -1073,7 +1143,7 @@ function listCollections(query: LocalCollectionQuery): { totalCount: number; ite
   const clauses: string[] = [];
   const parameters: Array<string | number> = [];
   if (text) {
-    clauses.push("(collections.title LIKE ? OR collections.collection_id IN (SELECT match_media.collection_id FROM media_files match_media WHERE match_media.display_title LIKE ?))");
+    clauses.push("(collections.title LIKE ? OR collections.collection_id IN (SELECT match_media.collection_id FROM media_files match_media WHERE match_media.available = 1 AND match_media.display_title LIKE ?))");
     parameters.push(`%${text}%`, `%${text}%`);
   }
   if (query.filter && query.filter !== "all") {
@@ -1085,10 +1155,13 @@ function listCollections(query: LocalCollectionQuery): { totalCount: number; ite
     parameters.push(query.sourceId);
   }
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const currentWhere = clauses.length ? `WHERE aggregate.episodeCount > 0 AND ${clauses.join(" AND ")}` : "WHERE aggregate.episodeCount > 0";
+  // Only works with at least one current file are listed or counted; a work
+  // whose files are all tombstones has nothing to open.
   const count = db.prepare(`
     SELECT COUNT(*) AS count
     FROM collections
-      JOIN (SELECT collection_id FROM media_files GROUP BY collection_id) scoped ON scoped.collection_id = collections.collection_id
+      JOIN (SELECT collection_id FROM media_files WHERE available = 1 GROUP BY collection_id) scoped ON scoped.collection_id = collections.collection_id
     ${where}
   `).get(...parameters) as { count?: number } | undefined;
   const sort = query.sort ?? "recent";
@@ -1106,7 +1179,7 @@ function listCollections(query: LocalCollectionQuery): { totalCount: number; ite
   const rows = db.prepare(`
     WITH aggregate AS (
       SELECT media_files.collection_id AS collectionId,
-        COUNT(*) AS episodeCount,
+        SUM(CASE WHEN media_files.available = 1 THEN 1 ELSE 0 END) AS episodeCount,
         SUM(CASE WHEN media_files.available = 1 AND sources.available = 1 THEN 1 ELSE 0 END) AS availableEpisodeCount,
         MAX(media_files.added_at) AS addedAtMs,
         MAX(media_files.updated_at) AS updatedAtMs
@@ -1116,6 +1189,7 @@ function listCollections(query: LocalCollectionQuery): { totalCount: number; ite
     played AS (
       SELECT media_files.collection_id AS collectionId, MAX(playback_state.updated_at) AS lastPlayedAtMs
       FROM media_files JOIN playback_state ON playback_state.media_id = media_files.media_id
+      WHERE media_files.available = 1
       GROUP BY media_files.collection_id
     )
     SELECT collections.collection_id AS collectionId, collections.title, collections.kind,
@@ -1125,7 +1199,7 @@ function listCollections(query: LocalCollectionQuery): { totalCount: number; ite
     FROM collections
       JOIN aggregate ON aggregate.collectionId = collections.collection_id
       LEFT JOIN played ON played.collectionId = collections.collection_id
-    ${where}
+    ${currentWhere}
     ORDER BY ${orderBy}
     LIMIT ? OFFSET ?
   `).all(...parameters, query.pageSize, (query.page - 1) * query.pageSize) as Array<Record<string, unknown>>;
@@ -1146,7 +1220,7 @@ function collectionSummaries(rows: Array<Record<string, unknown>>, text: string)
       playback_state.duration_sec AS durationSec, playback_state.updated_at AS updatedAtMs
     FROM media_files JOIN sources ON sources.source_id = media_files.source_id
       LEFT JOIN playback_state ON playback_state.media_id = media_files.media_id
-    WHERE media_files.collection_id IN (${placeholders})
+    WHERE media_files.collection_id IN (${placeholders}) AND media_files.available = 1
     ORDER BY media_files.season_number IS NULL, media_files.season_number, media_files.episode_number IS NULL,
       media_files.episode_number, media_files.display_title COLLATE NOCASE, media_files.media_id
   `).all(...collectionIds) as CollectionEpisodeRow[];
@@ -1164,7 +1238,7 @@ function collectionSummaries(rows: Array<Record<string, unknown>>, text: string)
         media_files.display_title AS displayTitle, media_files.season_number AS seasonNumber,
         media_files.episode_number AS episodeNumber
       FROM media_files
-      WHERE media_files.collection_id IN (${placeholders}) AND media_files.display_title LIKE ?
+      WHERE media_files.collection_id IN (${placeholders}) AND media_files.available = 1 AND media_files.display_title LIKE ?
       ORDER BY media_files.collection_id, media_files.season_number IS NULL, media_files.season_number,
         media_files.episode_number IS NULL, media_files.episode_number, media_files.display_title COLLATE NOCASE
     `).all(...collectionIds, `%${text}%`) as CollectionEpisodeRow[];
@@ -1264,6 +1338,10 @@ function getDetail(mediaId: string): LocalMediaDetail | undefined {
   const item = get(mediaId);
   if (!item) return undefined;
   const db = requireDatabase();
+  // A tombstone row (replaced or scan-confirmed missing) is a clear "no longer
+  // available" result, never a successful detail with an empty episode list.
+  const ownRow = db.prepare("SELECT available FROM media_files WHERE media_id = ?").get(mediaId) as { available?: number } | undefined;
+  if (Number(ownRow?.available) !== 1) return undefined;
   const playback = getPlayback(item.mediaId);
   const episodePlayback = getCollectionPlayback(item.collectionId);
   // A cleanup "keep/snooze/delete" mark may create a zero aggregate row before
@@ -1279,15 +1357,17 @@ function getDetail(mediaId: string): LocalMediaDetail | undefined {
       collections.title, collections.kind, collections.year, collections.plot,
       collections.genre_json AS genreJson, collections.rating, collections.premiered_at AS premieredAt
     FROM media_files JOIN collections USING (collection_id) JOIN sources USING (source_id)
-    WHERE media_files.collection_id = ?
+    WHERE media_files.collection_id = ? AND media_files.available = 1
     ORDER BY media_files.season_number IS NULL, media_files.season_number, media_files.episode_number IS NULL,
       media_files.episode_number, media_files.display_title COLLATE NOCASE
   `).all(item.collectionId) as Array<Record<string, unknown>>;
+  const episodes = rows.map(toPublicItem);
+  if (episodes.length === 0) return undefined;
   return {
     item,
     ...(collection?.title ? { collectionTitle: collection.title } : {}),
     ...(collection?.kind === "movie" || collection?.kind === "show" || collection?.kind === "unclassified" ? { collectionKind: collection.kind } : {}),
-    episodes: rows.map(toPublicItem),
+    episodes,
     ...(playback ? { playback } : {}),
     ...(episodePlayback.length > 0 ? { episodePlayback } : {}),
     ...(viewing ? { viewing } : {}),
@@ -1321,6 +1401,7 @@ function listContinueWatching(): LocalContinueWatchingItem[] {
         JOIN collections USING (collection_id)
         JOIN sources USING (source_id)
       WHERE playback_state.watched = 0
+        AND media_files.available = 1
         AND playback_state.position_sec > 0
         AND (
           playback_state.position_sec >= 30
@@ -1339,15 +1420,7 @@ function listContinueWatching(): LocalContinueWatchingItem[] {
   `).all() as Array<Record<string, unknown>>;
   return rows.map((row) => ({
     item: toPublicItem(row),
-    playback: {
-      mediaId: String(row.mediaId) as LocalPlaybackState["mediaId"],
-      positionSec: Number(row.positionSec),
-      ...(row.durationSec === null || row.durationSec === undefined ? {} : { durationSec: Number(row.durationSec) }),
-      ...(row.audioTrackId === null || row.audioTrackId === undefined ? {} : { audioTrackId: String(row.audioTrackId) }),
-      ...(row.subtitleTrackId === null || row.subtitleTrackId === undefined ? {} : { subtitleTrackId: String(row.subtitleTrackId) }),
-      watched: false,
-      updatedAtMs: Number(row.updatedAtMs),
-    },
+    playback: playbackFromRow(row),
     collectionTitle: String(row.collectionTitle ?? row.title ?? ""),
     collectionKind: row.collectionKind === "movie" || row.collectionKind === "show" ? row.collectionKind : "unclassified",
     episodeTitle: String(row.displayTitle ?? ""),
@@ -1421,13 +1494,34 @@ async function resolvePath(mediaId: string): Promise<string | undefined> {
   return path;
 }
 
+/** `playback_state.subtitle_track_id` stores an explicit "off" choice as the sentinel. */
+const SUBTITLE_OFF_SENTINEL = "off";
+
+/**
+ * DB → DTO subtitle mapping. `"off"` reads back as `null` (the user explicitly
+ * turned subtitles off); NULL omits the field (never chosen). Ticket 09 keeps the
+ * DTO contract at `string | null | undefined`, so no schema version is added.
+ */
+function subtitleTrackFromRow(value: unknown): string | null | undefined {
+  if (typeof value !== "string" || value.length === 0) return undefined;
+  return value === SUBTITLE_OFF_SENTINEL ? null : value;
+}
+
+/** DTO → DB subtitle mapping: `null` persists the sentinel, `undefined` clears the column. */
+function subtitleTrackToColumn(value: string | null | undefined): string | null {
+  if (value === null) return SUBTITLE_OFF_SENTINEL;
+  if (value === undefined) return null;
+  return value;
+}
+
 function playbackFromRow(row: Record<string, unknown>): LocalPlaybackState {
+  const subtitleTrackId = subtitleTrackFromRow(row.subtitleTrackId);
   return {
     mediaId: String(row.mediaId) as LocalPlaybackState["mediaId"],
     positionSec: Number(row.positionSec),
     ...(row.durationSec === null || row.durationSec === undefined ? {} : { durationSec: Number(row.durationSec) }),
     ...(row.audioTrackId === null || row.audioTrackId === undefined ? {} : { audioTrackId: String(row.audioTrackId) }),
-    ...(row.subtitleTrackId === null || row.subtitleTrackId === undefined ? {} : { subtitleTrackId: String(row.subtitleTrackId) }),
+    ...(subtitleTrackId === undefined ? {} : { subtitleTrackId }),
     watched: Number(row.watched) === 1,
     updatedAtMs: Number(row.updatedAtMs),
   };
@@ -1447,13 +1541,15 @@ function getPlayback(mediaId: string): LocalPlaybackState | undefined {
 /** Every saved episode state in one collection, ordered by season/episode. */
 function getCollectionPlayback(collectionId: string): LocalPlaybackState[] {
   const db = requireDatabase();
+  // Only current files: detail.episodes lists no tombstone, so a tombstone's
+  // saved state must not appear as an episode that cannot be selected.
   const rows = db.prepare(`
     SELECT playback_state.media_id AS mediaId, playback_state.position_sec AS positionSec,
       playback_state.duration_sec AS durationSec, playback_state.audio_track_id AS audioTrackId,
       playback_state.subtitle_track_id AS subtitleTrackId, playback_state.watched,
       playback_state.updated_at AS updatedAtMs
     FROM playback_state JOIN media_files USING (media_id)
-    WHERE media_files.collection_id = ?
+    WHERE media_files.collection_id = ? AND media_files.available = 1
     ORDER BY media_files.season_number IS NULL, media_files.season_number,
       media_files.episode_number IS NULL, media_files.episode_number,
       media_files.display_title COLLATE NOCASE
@@ -1474,7 +1570,7 @@ function savePlayback(stateValue: LocalPlaybackState): LocalPlaybackState {
     ON CONFLICT(media_id) DO UPDATE SET position_sec = excluded.position_sec, duration_sec = excluded.duration_sec,
       audio_track_id = excluded.audio_track_id, subtitle_track_id = excluded.subtitle_track_id,
       watched = excluded.watched, updated_at = excluded.updated_at
-  `).run(stateValue.mediaId, stateValue.positionSec, stateValue.durationSec ?? null, stateValue.audioTrackId ?? null, stateValue.subtitleTrackId ?? null, stateValue.watched ? 1 : 0, updatedAtMs);
+  `).run(stateValue.mediaId, stateValue.positionSec, stateValue.durationSec ?? null, stateValue.audioTrackId ?? null, subtitleTrackToColumn(stateValue.subtitleTrackId), stateValue.watched ? 1 : 0, updatedAtMs);
   return { ...stateValue, updatedAtMs };
 }
 
@@ -1637,7 +1733,9 @@ function listCleanupQueue(query: LocalCleanupQueueQuery, settings: CleanupSettin
   });
 
   const deleteEntries = evaluated.filter((entry) => entry.state === "delete-candidate");
-  deleteEntries.sort((left, right) => Number(right.row.sizeBytes ?? 0) - Number(left.row.sizeBytes ?? 0) || String(left.row.mediaId).localeCompare(String(right.row.mediaId)));
+  deleteEntries.sort((left, right) => Number(right.row.sizeBytes ?? 0) - Number(left.row.sizeBytes ?? 0)
+    || String(left.row.title ?? "").localeCompare(String(right.row.title ?? ""))
+    || String(left.row.mediaId).localeCompare(String(right.row.mediaId)));
   const deleteBytes = deleteEntries.reduce((sum, entry) => sum + Number(entry.row.sizeBytes ?? 0), 0);
   const deleteQueue: LocalCleanupQueueItem[] = deleteEntries.slice(0, 200).map((entry) => {
     const viewing = viewingForCandidate(entry.row);
@@ -1679,6 +1777,11 @@ function compareCleanupRows(left: CleanupEvaluatedRow, right: CleanupEvaluatedRo
   if (leftRank !== rightRank) return leftRank - rightRank;
   const sizeDelta = Number(right.row.sizeBytes ?? 0) - Number(left.row.sizeBytes ?? 0);
   if (sizeDelta !== 0) return sizeDelta;
+  // Ties must not depend on the generated media id: that is a random UUID, so
+  // the queue order would change between runs. Title first keeps the list
+  // stable for the user and reproducible for tests.
+  const titleDelta = String(left.row.title ?? "").localeCompare(String(right.row.title ?? ""));
+  if (titleDelta !== 0) return titleDelta;
   return String(left.row.mediaId).localeCompare(String(right.row.mediaId));
 }
 
@@ -1703,11 +1806,13 @@ function setCleanupState(input: LocalCleanupStateInput, nowMs: number, keepDays:
   if (!isCleanupState(input.state)) throw new LocalWorkerError("invalid-input", "清理状态无效");
   const media = db.prepare("SELECT media_files.media_id AS mediaId, media_files.added_at AS addedAtMs FROM media_files WHERE media_id = ?").get(input.mediaId) as { mediaId?: string; addedAtMs?: number } | undefined;
   if (!media?.mediaId) throw new LocalWorkerError("invalid-input", "媒体不存在");
-  const until = input.state === "keep"
-    ? nowMs + Math.max(1, Math.trunc(keepDays)) * DAY_MS
-    : input.state === "snooze"
-      ? nowMs + Math.max(1, Math.trunc(snoozeDays)) * DAY_MS
-      : null;
+  // `keep` is terminal (Ticket 14): it never stores a deadline, so an expired
+  // date cannot resurrect the file. `keepDays` stays in the IPC contract for the
+  // saved preference but no longer sets a keep window. Only `snooze` expires.
+  void keepDays;
+  const until = input.state === "snooze"
+    ? nowMs + Math.max(1, Math.trunc(snoozeDays)) * DAY_MS
+    : null;
   // The cleanup mark lives on media_history, which is created on demand. A mark
   // is not a viewing session, so zero counters never render as a "record".
   db.prepare(`
@@ -1770,13 +1875,31 @@ interface AggregatedViewingSession {
   closeReason: string;
 }
 
+/**
+ * The one completion conclusion for a finished attempt. The live close, the
+ * aggregate write and the interrupted-session recovery all go through it, so
+ * the same session can never be "completed" in one path and "not completed" in
+ * another.
+ *
+ * A failed load (`closeReason: "error"`) never completes: its end position came
+ * from the resume point, not from playback. Otherwise the player's own `ended`
+ * report completes, and a close without that report still completes when real
+ * playback reached the 90% rule (`isCompletedWatch`).
+ */
+function sessionCompletes(session: AggregatedViewingSession): boolean {
+  if (session.closeReason === "error") return false;
+  if (session.completed) return true;
+  if (session.closeReason === "ended") return true;
+  return isCompletedWatch(session.playedSec, session.durationSec, session.endPositionSec);
+}
+
 /** Fold one finished or recovered session into the per-media aggregate. */
 function aggregateViewingSession(session: AggregatedViewingSession): void {
   const db = requireDatabase();
   const playedSec = finiteNonNegative(session.playedSec);
   const effective = isEffectiveWatch(playedSec, session.durationSec) ? 1 : 0;
   const inspection = effective ? 0 : 1;
-  const completed = session.completed || session.closeReason === "ended" || isCompletedWatch(playedSec, session.durationSec, session.endPositionSec) ? 1 : 0;
+  const completed = sessionCompletes(session) ? 1 : 0;
   const lastPlayedAt = playedSec > 0 ? session.endedAtMs : null;
   const durationSec = session.durationSec === undefined ? null : finiteNonNegative(session.durationSec);
   db.prepare(`
@@ -1830,6 +1953,19 @@ function finishViewingSession(session: LocalViewingSessionFinishInput): LocalVie
   const playedSec = finiteNonNegative(session.playedSec);
   const durationSec = session.durationSec === undefined ? undefined : finiteNonNegative(session.durationSec);
   const closeReason = session.closeReason;
+  const finished: AggregatedViewingSession = {
+    mediaId: String(row.mediaId),
+    startedAtMs,
+    endedAtMs,
+    playedSec,
+    wallSec: finiteNonNegative(session.wallSec),
+    endPositionSec: finiteNonNegative(session.endPositionSec),
+    ...(durationSec === undefined ? {} : { durationSec }),
+    completed: session.completed,
+    closeReason,
+  };
+  // The stored session row and the aggregate share one completion conclusion.
+  const completed = sessionCompletes(finished);
   db.exec("BEGIN IMMEDIATE");
   try {
     db.prepare(`
@@ -1842,7 +1978,7 @@ function finishViewingSession(session: LocalViewingSessionFinishInput): LocalVie
       playedSec,
       finiteNonNegative(session.endPositionSec),
       durationSec ?? null,
-      session.completed ? 1 : 0,
+      completed ? 1 : 0,
       Math.max(0, Math.trunc(finiteNonNegative(session.pauseCount))),
       Math.max(0, Math.trunc(finiteNonNegative(session.seekCount))),
       typeof session.speed === "number" && Number.isFinite(session.speed) && session.speed > 0 ? session.speed : 1,
@@ -1850,17 +1986,7 @@ function finishViewingSession(session: LocalViewingSessionFinishInput): LocalVie
       endedAtMs,
       session.sessionId,
     );
-    aggregateViewingSession({
-      mediaId: String(row.mediaId),
-      startedAtMs,
-      endedAtMs,
-      playedSec,
-      wallSec: finiteNonNegative(session.wallSec),
-      endPositionSec: finiteNonNegative(session.endPositionSec),
-      ...(durationSec === undefined ? {} : { durationSec }),
-      completed: session.completed,
-      closeReason,
-    });
+    aggregateViewingSession(finished);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
@@ -1891,10 +2017,7 @@ function recoverInterruptedViewingSessions(): void {
       const wallSec = Math.max(finiteNonNegative(row.wallSec), Math.max(0, endedAtMs - startedAtMs) / 1000);
       const durationSec = row.durationSec === null || row.durationSec === undefined ? undefined : finiteNonNegative(row.durationSec);
       const endPositionSec = finiteNonNegative(row.endPositionSec);
-      const completed = isCompletedWatch(playedSec, durationSec, endPositionSec);
-      db.prepare("UPDATE viewing_sessions SET ended_at = ?, wall_sec = ?, close_reason = 'interrupted', completed = ?, last_heartbeat_at = ? WHERE session_id = ? AND ended_at IS NULL")
-        .run(endedAtMs, wallSec, completed ? 1 : 0, endedAtMs, String(row.sessionId));
-      aggregateViewingSession({
+      const pending: AggregatedViewingSession = {
         mediaId: String(row.mediaId),
         startedAtMs,
         endedAtMs,
@@ -1902,9 +2025,15 @@ function recoverInterruptedViewingSessions(): void {
         wallSec,
         endPositionSec,
         ...(durationSec === undefined ? {} : { durationSec }),
-        completed,
+        completed: Number(row.completed) === 1,
         closeReason: "interrupted",
-      });
+      };
+      // Recovery uses the same completion rule as the live close; the stored
+      // row and the aggregate never disagree.
+      const completed = sessionCompletes(pending);
+      db.prepare("UPDATE viewing_sessions SET ended_at = ?, wall_sec = ?, close_reason = 'interrupted', completed = ?, last_heartbeat_at = ? WHERE session_id = ? AND ended_at IS NULL")
+        .run(endedAtMs, wallSec, completed ? 1 : 0, endedAtMs, String(row.sessionId));
+      aggregateViewingSession(pending);
     }
     db.exec("COMMIT");
   } catch (error) {
@@ -1920,17 +2049,36 @@ function isSessionId(value: unknown): value is string {
 /**
  * Delete ledger rows for media the scan confirmed missing while the source was
  * readable. Media rows stay unavailable so the ordinary scan contract does not
- * change; only the viewing history is removed.
+ * change; only the viewing history is removed. The current traversal result is
+ * read from the TEMP table so the statement has a fixed number of parameters.
  */
-function clearMissingViewingRecords(sourceId: string, seenRelativePaths: Set<string>): void {
+function clearMissingViewingRecords(sourceId: string): void {
   const db = requireDatabase();
-  const seen = [...seenRelativePaths];
-  const predicate = seen.length === 0
-    ? "source_id = ?"
-    : `source_id = ? AND relative_path NOT IN (${seen.map(() => "?").join(",")})`;
-  const params: Array<string> = [sourceId, ...seen];
-  db.prepare(`DELETE FROM viewing_sessions WHERE media_id IN (SELECT media_id FROM media_files WHERE ${predicate})`).run(...params);
-  db.prepare(`DELETE FROM media_history WHERE media_id IN (SELECT media_id FROM media_files WHERE ${predicate})`).run(...params);
+  const predicate = `source_id = ? AND relative_path NOT IN (SELECT relative_path FROM ${SEEN_PATHS_TABLE})`;
+  db.prepare(`DELETE FROM viewing_sessions WHERE media_id IN (SELECT media_id FROM media_files WHERE ${predicate})`).run(sourceId);
+  db.prepare(`DELETE FROM media_history WHERE media_id IN (SELECT media_id FROM media_files WHERE ${predicate})`).run(sourceId);
+}
+
+/**
+ * A ~20k-file library exceeds SQLite's bound-variable limit, so reconcile must
+ * not build `NOT IN (?,…)`. A per-connection TEMP table keeps the statement
+ * shape constant; it is created and dropped inside the reconcile transaction.
+ * An empty set means "saw nothing", which marks every indexed row unavailable.
+ */
+function replaceSeenRelativePaths(seenRelativePaths: Set<string>): void {
+  const db = requireDatabase();
+  db.exec(`DROP TABLE IF EXISTS temp.${SEEN_PATHS_TABLE}; CREATE TEMP TABLE ${SEEN_PATHS_TABLE} (relative_path TEXT PRIMARY KEY);`);
+  const insert = db.prepare(`INSERT OR IGNORE INTO ${SEEN_PATHS_TABLE} (relative_path) VALUES (?)`);
+  for (const relativePath of seenRelativePaths) insert.run(relativePath);
+}
+
+function dropSeenRelativePaths(): void {
+  if (!database) return;
+  try {
+    database.exec(`DROP TABLE IF EXISTS temp.${SEEN_PATHS_TABLE};`);
+  } catch {
+    // A failed cleanup of a TEMP table is harmless; the next scan recreates it.
+  }
 }
 
 function addScanRun(sourceId: string, scanId: string): number {
@@ -1946,6 +2094,44 @@ function finishScan(scanId: string, completed: boolean, error?: string): void {
   profileSync("database", () => db.prepare("UPDATE scan_runs SET completed = ?, error = ?, completed_at = ? WHERE scan_id = ?").run(completed ? 1 : 0, error ?? null, now(), scanId));
 }
 
+/** Internal marker for a scan run whose worker died before `finishScan`. */
+const INTERRUPTED_SCAN_ERROR = "interrupted";
+
+/**
+ * `scan_runs` is a fact source, not a write-only log. A run that never reached
+ * `finishScan` (worker crash or forced quit) is closed as `interrupted` on the
+ * next initialization, so nothing looks complete that never finished.
+ *
+ * The same startup decision also marks the affected source `degraded = 1`: the
+ * last traversal did not prove the index complete, so the next successful scan
+ * of that source must re-reconcile, and the UI must not claim the folder was
+ * fully read in the meantime. `generation` is the per-source attempt counter
+ * used here to find each source's newest run.
+ */
+function recoverInterruptedScanRuns(): void {
+  const db = requireDatabase();
+  const recoveredAt = now();
+  const pending = db.prepare("SELECT scan_id AS scanId FROM scan_runs WHERE completed_at IS NULL").all() as Array<{ scanId?: string }>;
+  if (pending.length === 0) return;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("UPDATE scan_runs SET completed = 0, error = ?, completed_at = ? WHERE completed_at IS NULL").run(INTERRUPTED_SCAN_ERROR, recoveredAt);
+    db.prepare(`
+      UPDATE sources SET degraded = 1, updated_at = ?
+      WHERE source_id IN (
+        SELECT run.source_id FROM scan_runs run
+        JOIN (SELECT source_id, MAX(generation) AS generation FROM scan_runs GROUP BY source_id) latest
+          ON latest.source_id = run.source_id AND latest.generation = run.generation
+        WHERE run.completed = 0 AND run.error = ?
+      )
+    `).run(recoveredAt, INTERRUPTED_SCAN_ERROR);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 interface ScanCounters {
   scannedFiles: number;
   importedFiles: number;
@@ -1954,6 +2140,7 @@ interface ScanCounters {
   seenRelativePaths: Set<string>;
   sourceLabel?: string;
 }
+
 
 function progressFor(scanId: string, sourceId: string, status: LocalScanProgress["status"], counters: ScanCounters, sourceLabel = counters.sourceLabel): LocalScanProgress {
   return {
@@ -1978,7 +2165,7 @@ async function scanDirectory(
   currentDirectory: string,
   sourceId: string,
   scanId: string,
-  cancellation: { requested: boolean },
+  cancellation: ScanCancellation,
   counters: ScanCounters,
   showContext: { directory: string; metadata?: ParsedNfo; artwork: Array<{ kind: "poster" | "fanart"; filePath: string }> } | undefined,
 ): Promise<boolean> {
@@ -2048,13 +2235,21 @@ async function scanDirectory(
     counters.scannedFiles += 1;
     try {
       const discovered = await discoverMedia(rootPath, sourceId, safeChild, fileMetadata, entries, localShowContext, counters.warnings);
-      const result = await upsertMedia(rootPath, discovered, false);
+      const result = await upsertMedia(rootPath, discovered, { includeItem: false });
       if (result.created) counters.importedFiles += 1;
       else counters.updatedFiles += 1;
       counters.seenRelativePaths.add(discovered.relativePath);
     } catch (error) {
       profileError(error);
       counters.warnings.push("视频条目无法索引，已保留此前索引");
+      // A failed index attempt (NFO parse, SQLITE_BUSY, …) is not proof the file
+      // was deleted. Record it as seen so reconcile never marks the row
+      // unavailable and never deletes its viewing ledger.
+      try {
+        counters.seenRelativePaths.add(makeRelative(rootPath, safeChild));
+      } catch {
+        counters.warnings.push("无法确认失败条目的相对路径，已保留此前索引");
+      }
     }
     emitProgress(progressFor(scanId, sourceId, "running", counters));
     await yieldImmediate();
@@ -2069,7 +2264,7 @@ async function scanRoot(rootPath: string): Promise<LocalScanResult> {
   let profileStatus: ScanProfileReport["status"] = "error";
   let source: ReturnType<typeof ensureSource> | undefined;
   let scanId: string | undefined;
-  let cancellation: { requested: boolean } | undefined;
+  let cancellation: ScanCancellation | undefined;
   try {
     profiler = beginScanProfiler();
     scanProfiler = profiler;
@@ -2082,12 +2277,14 @@ async function scanRoot(rootPath: string): Promise<LocalScanResult> {
     source = scanSource;
     counters.sourceLabel = scanSource.label;
     scanId = makeId("scan");
-    cancellation = { requested: false };
+    cancellation = { requested: false, terminal: false };
     scanCancellation.set(scanId, cancellation);
     addScanRun(scanSource.sourceId, scanId);
+    // Root not canonical/readable: the whole folder is offline. Files keep their
+    // rows but nothing in it is playable, so `available = 0` and `degraded = 0`.
     if (!canonicalRoot) {
       const db = requireDatabase();
-      profileSync("database", () => db.prepare("UPDATE sources SET available = 0, updated_at = ? WHERE source_id = ?").run(now(), scanSource.sourceId));
+      profileSync("database", () => db.prepare("UPDATE sources SET available = 0, degraded = 0, updated_at = ? WHERE source_id = ?").run(now(), scanSource.sourceId));
       const result: LocalScanResult = { ...progressFor(scanId, scanSource.sourceId, "unavailable", counters), warnings: [], error: "来源不可用，已保留此前索引和播放历史" };
       finishScan(scanId, false, result.error);
       emitProgress(result);
@@ -2097,9 +2294,17 @@ async function scanRoot(rootPath: string): Promise<LocalScanResult> {
     const rootStat = await profileAsync("lstat", () => lstat(canonicalRoot), "lstat");
     if (!rootStat.isDirectory()) throw new LocalWorkerError("invalid-input", "选择的片库目录不可用");
     const db = requireDatabase();
+    // The root is readable, so the source is online. Whether every subdirectory
+    // could be read is decided after traversal (`degraded`).
     profileSync("database", () => db.prepare("UPDATE sources SET available = 1, updated_at = ? WHERE source_id = ?").run(now(), scanSource.sourceId));
     emitProgress(progressFor(scanId, scanSource.sourceId, "running", counters));
     const traversalComplete = await scanDirectory(canonicalRoot, canonicalRoot, scanSource.sourceId, scanId, cancellation, counters, undefined);
+    // Terminal window: after the traversal returns there is no further await
+    // before the reconcile transaction and `finishScan`, so a later cancel
+    // request cannot interrupt anything. Marking the token terminal makes
+    // `cancel-scan` answer `false` instead of promising a cancellation that
+    // will still finish as completed/partial.
+    cancellation.terminal = true;
     if (cancellation.requested) throw new LocalWorkerError("storage", "scan-cancelled");
     if (traversalComplete) {
       db.exec("BEGIN IMMEDIATE");
@@ -2107,26 +2312,31 @@ async function scanRoot(rootPath: string): Promise<LocalScanResult> {
         // The source was readable and traversal completed, so any indexed file
         // that was not seen is confirmed missing. Forgotten by design: remove
         // its ledger rows explicitly; only the media row stays unavailable.
-        clearMissingViewingRecords(scanSource.sourceId, counters.seenRelativePaths);
-        if (counters.seenRelativePaths.size === 0) {
-          profileSync("database", () => db.prepare("UPDATE media_files SET available = 0, updated_at = ? WHERE source_id = ?").run(now(), scanSource.sourceId));
-        } else {
-          const placeholders = [...counters.seenRelativePaths].map(() => "?").join(",");
-          profileSync("database", () => db.prepare(`UPDATE media_files SET available = 0, updated_at = ? WHERE source_id = ? AND relative_path NOT IN (${placeholders})`).run(now(), scanSource.sourceId, ...counters.seenRelativePaths));
-        }
+        // Reconcile reads the seen set from a TEMP table so a 20k-file library
+        // never hits SQLite's bound-variable limit.
+        replaceSeenRelativePaths(counters.seenRelativePaths);
+        clearMissingViewingRecords(scanSource.sourceId);
+        profileSync("database", () => db.prepare(`UPDATE media_files SET available = 0, updated_at = ? WHERE source_id = ? AND available = 1 AND relative_path NOT IN (SELECT relative_path FROM ${SEEN_PATHS_TABLE})`).run(now(), scanSource.sourceId));
         db.exec("COMMIT");
       } catch (error) {
         db.exec("ROLLBACK");
         throw error;
+      } finally {
+        dropSeenRelativePaths();
       }
+      profileSync("database", () => db.prepare("UPDATE sources SET available = 1, degraded = 0, updated_at = ? WHERE source_id = ?").run(now(), scanSource.sourceId));
       finishScan(scanId, true);
       const result: LocalScanResult = { ...progressFor(scanId, scanSource.sourceId, "completed", counters), warnings: [...counters.warnings] };
       emitProgress(result);
       profileStatus = "completed";
       return result;
     }
+    // The root was readable but traversal was incomplete (a subdirectory or file
+    // failed). Indexed entries stay playable, so the source stays available and
+    // is only marked degraded; `WHERE sources.available = 1` keeps its cleanup
+    // queue.
     const error = "部分目录无法读取，已保留此前索引和播放历史";
-    profileSync("database", () => db.prepare("UPDATE sources SET available = 0, updated_at = ? WHERE source_id = ?").run(now(), scanSource.sourceId));
+    profileSync("database", () => db.prepare("UPDATE sources SET available = 1, degraded = 1, updated_at = ? WHERE source_id = ?").run(now(), scanSource.sourceId));
     finishScan(scanId, false, error);
     const result: LocalScanResult = { ...progressFor(scanId, scanSource.sourceId, "partial", counters), warnings: [...counters.warnings], error };
     emitProgress(result);
@@ -2154,6 +2364,10 @@ async function scanRoot(rootPath: string): Promise<LocalScanResult> {
 
 async function importVideo(filePath: string, rootPath: string): Promise<LocalMediaItem> {
   const db = requireDatabase();
+  // A single-file import and a folder scan both write sources/media_files, so
+  // they must never run concurrently. The contract is a readable rejection
+  // rather than a silent parallel write.
+  if (activeScan) throw new LocalWorkerError("invalid-input", "已有本地片库扫描正在进行，请等待扫描结束后再打开视频");
   assertSupportedVideo(filePath);
   const existingSource = await containingSource(filePath);
   const paths = await assertRootAndFile(existingSource?.rootPath ?? rootPath, filePath);
@@ -2176,7 +2390,7 @@ async function importVideo(filePath: string, rootPath: string): Promise<LocalMed
     },
     artwork: [],
   };
-  const result = await upsertMedia(paths.root, discovered);
+  const result = await upsertMedia(paths.root, discovered, { preserveExistingMetadata: true });
   db.prepare("UPDATE sources SET available = 1, updated_at = ? WHERE source_id = ?").run(now(), source.sourceId);
   if (!result.item) throw new LocalWorkerError("storage", "本地视频导入结果不可用");
   return result.item;
@@ -2210,7 +2424,9 @@ async function handle(request: WorkerRequest): Promise<unknown> {
   }
   if (request.command === "cancel-scan") {
     const token = scanCancellation.get(request.scanId);
-    if (!token) return false;
+    // Answering `true` for a scan that already returned would promise a
+    // cancellation the result can no longer honor.
+    if (!token || token.terminal) return false;
     token.requested = true;
     return true;
   }

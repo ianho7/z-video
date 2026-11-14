@@ -127,7 +127,7 @@ export const CLEANUP_PRESET_LABELS: Record<CleanupPreset, string> = {
 
 export const CLEANUP_STATE_LABELS: Record<CleanupState, string> = {
   none: "待整理",
-  keep: "保留",
+  keep: "已保留",
   snooze: "稍后",
   "delete-candidate": "待删",
 };
@@ -301,11 +301,17 @@ export function evaluateCleanupRule(facts: CleanupRuleFacts, settings: CleanupSe
   return undefined;
 }
 
-/** Keep/snooze only hide a file while their window is still open. */
+/**
+ * The state a mark has right now. `keep` is terminal: the user asked the app to
+ * stop proposing the file, so no `cleanup_until` value (including a stale one
+ * written before this rule) ever returns it to the queue. `snooze` still expires
+ * back into the active queue, and `delete-candidate` never expires.
+ */
 export function effectiveCleanupState(state: CleanupState, cleanupUntilMs: number | undefined, nowMs: number): CleanupState {
   if (state === "delete-candidate") return "delete-candidate";
-  if (state === "keep" || state === "snooze") {
-    return cleanupUntilMs !== undefined && Number.isFinite(cleanupUntilMs) && cleanupUntilMs > nowMs ? state : "none";
+  if (state === "keep") return "keep";
+  if (state === "snooze") {
+    return cleanupUntilMs !== undefined && Number.isFinite(cleanupUntilMs) && cleanupUntilMs > nowMs ? "snooze" : "none";
   }
   return "none";
 }

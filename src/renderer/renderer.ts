@@ -1,6 +1,6 @@
 import { coverData, generatedCover } from "./cover.js";
 import { AppListbox, type AppListboxOption } from "./menu.js";
-import { paginationModel, parseJumpTarget } from "./pagination.js";
+import { paginationModel, parseJumpTarget, countLabel } from "./pagination.js";
 import { captureFlightSource, fadeIn, motionAllowsTransform, motionDuration, skipFlight, startFlight } from "./motion.js";
 document.querySelectorAll<HTMLButtonElement>("[data-window-action]").forEach((button) => {
   button.addEventListener("click", () => {
@@ -21,7 +21,7 @@ import { renderSources } from "./views/sources.js";
 import { episodeRows, renderMovieFileInfo, renderSeasonTabs, renderViewingRecord } from "./views/detail.js";
 import { renderContinueCards } from "./views/home.js";
 import { cleanupSettingsSummary, renderCleanupCandidate, renderCleanupDeleteItem } from "./views/cleanup.js";
-import { reviewFactsText } from "./views/review.js";
+import { reviewDecisionNotice, reviewFactsText } from "./views/review.js";
 import { biscuitPath, wavePath } from "./shapes.js";
 import type {
   LocalArtworkReference,
@@ -106,6 +106,7 @@ const searchCount = document.querySelector<HTMLElement>("#search-count");
 const searchBackPath = document.querySelector<HTMLElement>("#search-back-path");
 const searchBackButton = document.querySelector<HTMLButtonElement>("#search-back");
 const searchGrid = document.querySelector<HTMLElement>("#search-grid");
+const searchPagination = document.querySelector<HTMLElement>("#search-pagination");
 const searchEmpty = document.querySelector<HTMLElement>("#search-empty");
 const searchEmptyTitle = document.querySelector<HTMLElement>("#search-empty-title");
 const searchEmptyMessage = document.querySelector<HTMLElement>("#search-empty-message");
@@ -119,6 +120,7 @@ const homeScanFolder = document.querySelector<HTMLElement>("#home-scan-folder");
 const homeScanScanned = document.querySelector<HTMLElement>("#home-scan-scanned");
 const homeScanAdded = document.querySelector<HTMLElement>("#home-scan-added");
 const homeScanElapsed = document.querySelector<HTMLElement>("#home-scan-elapsed");
+const homeScanNote = document.querySelector<HTMLElement>("#home-scan-note");
 const appNotice = document.querySelector<HTMLElement>("#app-notice");
 const appNoticeTitle = document.querySelector<HTMLElement>("#app-notice-title");
 const appNoticeBody = document.querySelector<HTMLElement>("#app-notice-body");
@@ -270,11 +272,24 @@ let searchActive = false;
 let searchQuery: string | undefined;
 let searchFilter: LocalLibraryFilter = "all";
 let searchPage = 1;
+/** Ticket 12: the last rendered search page, so the pager knows its total. */
+let searchPageView: { totalCount: number; page: number; pageSize: number } | undefined;
 let searchOrigin: SearchOrigin | undefined;
 let requestEpoch = 0;
 let continueEpoch = 0;
 let scanId: string | undefined;
 let scanProgress: LocalScanProgress | undefined;
+/**
+ * Ticket 08: a finished scan stops owning `scanProgress`; the last result stays
+ * on the home card instead of keeping the scan panel mounted.
+ */
+let lastScanSummary: { progress: LocalScanProgress & { error?: string }; elapsedMs: number | undefined } | undefined;
+/**
+ * The terminal scan notice owns the status and counts while it is on screen, so
+ * the home result card only takes over after that notice is dismissed. This
+ * keeps one summary on one surface instead of two.
+ */
+let pendingScanSummary = false;
 let scanStartedAtMs: number | undefined;
 let scanStartedScanId: string | undefined;
 let scanElapsedTimer: number | undefined;
@@ -299,6 +314,15 @@ const playerReturnList = document.querySelector<HTMLButtonElement>("#player-retu
 const playerSettings = document.querySelector<HTMLElement>("#player-settings");
 const playerSettingsButton = document.querySelector<HTMLButtonElement>("#player-settings-button");
 let nextTimer: number | undefined;
+/**
+ * Ticket 06: one playback session has exactly one exit. `playerSessionOpen`
+ * marks a live session, `playerClosing` marks a close that awaits main's
+ * `closed`, and the fallback timer tears the view down once if that event is
+ * lost. `handlePlayerClosed()` is the only teardown and is idempotent.
+ */
+let playerSessionOpen = false;
+let playerClosing = false;
+let playerCloseFallback: number | undefined;
 let playerState: "playing" | "paused" | "buffering" | "ended" = "paused";
 let playerDurationSec = 0;
 let playerFullscreen = false;
@@ -362,6 +386,9 @@ const sortListbox = sortMenuContainer && sortMenuTrigger && sortMenuPopover ? ne
     onSelect: (value) => {
       const sort = value as LocalSort;
       applyQuery({ sort, page: 1 });
+      // Ticket 12: ordering is part of the result identity, so an active search
+      // restarts at page 1 with the new order.
+      if (searchActive) { searchPage = 1; void loadSearch(); }
       void window.zVideo.appPreferences.setSort(sort).catch(() => setMessage("排序偏好保存失败，本次排序仍已应用。", true));
     },
   },
@@ -605,6 +632,11 @@ function showSearchView(): void {
 
 function showSearchFailure(message: string): void {
   if (searchGrid) searchGrid.replaceChildren();
+  if (searchPagination) {
+    searchPagination.replaceChildren();
+    searchPagination.hidden = true;
+  }
+  searchPageView = undefined;
   if (searchEmpty) searchEmpty.hidden = false;
   if (searchEmptyTitle) searchEmptyTitle.textContent = "搜索暂时不可用";
   if (searchEmptyMessage) searchEmptyMessage.textContent = message;
@@ -613,16 +645,20 @@ function showSearchFailure(message: string): void {
   setMessage(message, true);
 }
 
-function renderSearchPage(page: { mode: "collection"; items: LocalCollectionSummary[]; totalCount: number } | { mode: "media"; items: LocalMediaItem[]; totalCount: number }): void {
+function renderSearchPage(page: { mode: "collection"; items: LocalCollectionSummary[]; totalCount: number; page: number; pageSize: number } | { mode: "media"; items: LocalMediaItem[]; totalCount: number; page: number; pageSize: number }): void {
   if (!searchGrid) return;
   artworkObserver?.disconnect();
+  searchPage = page.page;
   const includeReleaseDate = currentQuery.sort === "released_desc";
   const cards = page.mode === "collection"
     ? page.items.map((collection) => collectionCard(collection, includeReleaseDate, { showMatchedEpisode: true }))
     : page.items.map((item) => card(item, includeReleaseDate));
   searchGrid.replaceChildren(...cards);
-  if (searchCount) searchCount.textContent = `${page.mode === "collection" ? `共 ${page.totalCount} 部作品` : `共 ${page.totalCount} 集`} · ${filterLabel(searchFilter)}`;
+  if (searchCount) searchCount.textContent = `${countLabel(page.totalCount, page.mode === "collection" ? "部作品" : "集", page.page, page.pageSize)} · ${filterLabel(searchFilter)}`;
   animateCount(searchCount);
+  // Ticket 12: the search result set pages through the same control as the list.
+  searchPageView = { totalCount: page.totalCount, page: page.page, pageSize: page.pageSize };
+  renderPager("search", searchPageView);
   const empty = page.items.length === 0;
   if (searchEmpty) searchEmpty.hidden = !empty;
   if (empty) {
@@ -646,6 +682,12 @@ async function loadSearch(): Promise<void> {
     searchGrid.setAttribute("aria-busy", "true");
   }
   if (searchEmpty) searchEmpty.hidden = true;
+  // Ticket 12: the pager never mirrors a page that is no longer on screen.
+  searchPageView = undefined;
+  if (searchPagination) {
+    searchPagination.replaceChildren();
+    searchPagination.hidden = true;
+  }
   if (searchCount) searchCount.textContent = `正在搜索「${searchQuery}」…`;
   try {
     if (filter === "episode") {
@@ -681,8 +723,9 @@ async function enterSearch(query: string): Promise<void> {
   if (!searchActive || detailVisible) {
     searchOrigin = captureSearchOrigin();
     searchFilter = searchOrigin.libraryQuery.filter ?? "all";
-    searchPage = 1;
   }
+  // Ticket 12: a new term starts at page 1 even when a search view is already open.
+  if (text !== searchQuery) searchPage = 1;
   searchQuery = text;
   searchActive = true;
   if (searchInput) searchInput.value = text;
@@ -701,8 +744,13 @@ function exitSearchState(): void {
   searchQuery = undefined;
   searchOrigin = undefined;
   searchPage = 1;
+  searchPageView = undefined;
   if (searchSection) searchSection.hidden = true;
   if (searchGrid) searchGrid.replaceChildren();
+  if (searchPagination) {
+    searchPagination.replaceChildren();
+    searchPagination.hidden = true;
+  }
   if (searchEmpty) searchEmpty.hidden = true;
   if (searchInput) searchInput.value = "";
   if (searchClear) searchClear.hidden = true;
@@ -790,6 +838,13 @@ async function restoreSortPreference(): Promise<void> {
 
 function showPlayer(visible: boolean): void {
   const wasVisible = playerView ? !playerView.hidden : false;
+  if (visible) {
+    // Ticket 06: showing the player always starts (or restarts) one session, so
+    // a late event from a torn-down session can never reopen this view.
+    playerSessionOpen = true;
+    playerClosing = false;
+    clearPlayerCloseFallback();
+  }
   if (appShell) appShell.hidden = visible;
   if (playerView) playerView.hidden = !visible;
   const nextTitle = visible ? activePlaybackTitle : "";
@@ -801,7 +856,15 @@ function showPlayer(visible: boolean): void {
     playerSurface?.focus();
     fadeIn(document.querySelector<HTMLElement>(".player-shell"), motionDuration("--mo-2", 140));
   }
-  if (wasVisible !== visible) window.zVideo.overlay.visible(visible);
+  if (wasVisible !== visible) {
+    window.zVideo.overlay.visible(visible);
+    if (visible) {
+      // Ticket 06: the overlay document is cleared while it is hidden, so every
+      // reopen needs one full structural push instead of a values-only diff.
+      markPlayerUiStructureChanged();
+      sendOverlayState();
+    }
+  }
   updateScanUi();
 }
 
@@ -824,8 +887,7 @@ interface ReviewTarget {
   returnQuery: LocalCleanupQueueQuery;
 }
 let reviewTarget: ReviewTarget | undefined;
-let reviewBusy = false;
-let reviewPendingState: CleanupState | undefined;
+let reviewPendingState: ReviewDecision | undefined;
 
 function playerOriginLabel(origin: PlayerOrigin = playerOrigin): string {
   if (origin === "cleanup") return "返回整理";
@@ -1008,24 +1070,62 @@ function containerChips(kind: PlayerMenuKind): HTMLButtonElement[] {
   return Array.from(document.querySelectorAll<HTMLButtonElement>(`#player-${kind}-chips .player-chip`));
 }
 
-function applyPlayerMenuValue(kind: PlayerMenuKind, value: string): void {
-  if (kind === "speed") {
-    const speed = Number(value);
-    if (Number.isFinite(speed) && speed > 0) {
-      playerSpeedValue = speed;
-      void sendLocalPlaybackCommand({ type: "set-speed", speed });
-    }
-  } else if (kind === "audio") {
-    playerAudioTracks = playerAudioTracks.map((track) => ({ ...track, selected: track.id === value }));
-    if (value) void sendLocalPlaybackCommand({ type: "set-audio-track", trackId: value });
-  } else {
-    playerSubtitleTracks = playerSubtitleTracks.map((track) => ({ ...track, selected: track.id === value }));
-    void sendLocalPlaybackCommand({ type: "set-subtitle-track", trackId: value || null });
-  }
+/** Re-draw one menu mirror after its optimistic value changed. */
+function syncPlayerMenuUi(kind: PlayerMenuKind): void {
   renderPlayerMenuValue(kind);
   syncPlayerChipSelection(kind);
   playerListboxes[kind]?.syncSelection();
   sendOverlayState();
+}
+
+/**
+ * Ticket 09: a rejected speed/track command rolls the optimistic UI back to the
+ * value the player last reported, the same way volume and mute already do.
+ */
+function restorePlayerPreferenceUi(): void {
+  renderPlayerSettings(true);
+  for (const kind of ["speed", "audio", "subtitle"] as const) {
+    if (playerListboxes[kind]?.isOpen) renderPlayerMenu(kind);
+  }
+  markPlayerUiStructureChanged();
+  sendOverlayState();
+  setPlayerStatus("播放设置没有生效，已恢复为播放器当前的设置。", true);
+}
+
+function applyPlayerMenuValue(kind: PlayerMenuKind, value: string): void {
+  if (kind === "speed") {
+    const speed = Number(value);
+    if (!Number.isFinite(speed) || speed <= 0) return;
+    const previous = playerSpeedValue;
+    playerSpeedValue = speed;
+    syncPlayerMenuUi(kind);
+    void sendLocalPlaybackCommand({ type: "set-speed", speed }).then((sent) => {
+      if (sent) return;
+      playerSpeedValue = previous;
+      restorePlayerPreferenceUi();
+    });
+    return;
+  }
+  if (kind === "audio") {
+    const previous = playerAudioTracks;
+    playerAudioTracks = playerAudioTracks.map((track) => ({ ...track, selected: track.id === value }));
+    syncPlayerMenuUi(kind);
+    if (!value) return;
+    void sendLocalPlaybackCommand({ type: "set-audio-track", trackId: value }).then((sent) => {
+      if (sent) return;
+      playerAudioTracks = previous;
+      restorePlayerPreferenceUi();
+    });
+    return;
+  }
+  const previous = playerSubtitleTracks;
+  playerSubtitleTracks = playerSubtitleTracks.map((track) => ({ ...track, selected: track.id === value }));
+  syncPlayerMenuUi(kind);
+  void sendLocalPlaybackCommand({ type: "set-subtitle-track", trackId: value || null }).then((sent) => {
+    if (sent) return;
+    playerSubtitleTracks = previous;
+    restorePlayerPreferenceUi();
+  });
 }
 
 function openPlayerMenuKind(): PlayerMenuKind | undefined {
@@ -1324,7 +1424,64 @@ function showPlaybackEnded(): void {
   }, 1000);
 }
 
+const PLAYER_CLOSE_FALLBACK_MS = 1_500;
+
+function clearPlayerCloseFallback(): void {
+  if (playerCloseFallback === undefined) return;
+  window.clearTimeout(playerCloseFallback);
+  playerCloseFallback = undefined;
+}
+
+/**
+ * Ticket 06: every close entry (close button, return-to-list, error return)
+ * enters the same "closing" state. Main emits exactly one `closed`; if that
+ * event is lost, the local teardown still runs once after 1.5s so the player
+ * view can never stay stuck in front of the library.
+ */
+function requestPlayerClose(returnToDetail = false): void {
+  if (!playerSessionOpen || playerClosing) return;
+  playerReturnToDetail = returnToDetail;
+  playerClosing = true;
+  clearNextTimer();
+  setPlayerControlsEnabled(false);
+  setPlayerStatus("正在关闭播放器…");
+  playerCloseFallback = window.setTimeout(() => {
+    playerCloseFallback = undefined;
+    if (playerClosing) handlePlayerClosed();
+  }, PLAYER_CLOSE_FALLBACK_MS);
+  void sendLocalPlaybackCommand({ type: "close" });
+}
+
+/** A failed open never became a session, so its markers must not survive. */
+function discardPlayerSession(): void {
+  playerSessionOpen = false;
+  playerClosing = false;
+  clearPlayerCloseFallback();
+}
+
+function resetPlayerSessionMirror(): void {
+  // Ticket 06: the next session starts from a clean mirror instead of showing
+  // the previous session's state until its first event arrives.
+  playerState = "paused";
+  playerDurationSec = 0;
+  playerVolumeLevel = 100;
+  playerMuted = false;
+  playerMuteCommandValue = undefined;
+  playerSpeedValue = 1;
+  renderPlayerSettings();
+}
+
+/**
+ * The single teardown for one playback session. It is idempotent: the normal
+ * `closed` event and the 1.5s fallback both call it, and only the first call
+ * dismantles the view or reloads library data.
+ */
 function handlePlayerClosed(): void {
+  if (!playerSessionOpen && !playerClosing) return;
+  playerSessionOpen = false;
+  playerClosing = false;
+  clearPlayerCloseFallback();
+  resetPlayerSessionMirror();
   clearNextTimer();
   if (playerEnded) playerEnded.hidden = true;
   if (playerCountdownAnnouncement) playerCountdownAnnouncement.textContent = "";
@@ -1374,6 +1531,9 @@ function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
     handlePlayerClosed();
     return;
   }
+  // Ticket 06: a session that was torn down (or is closing) must not reopen the
+  // player view through a late event from main.
+  if (!playerSessionOpen || playerClosing) return;
   showPlayer(true);
   switch (event.type) {
     case "loading":
@@ -1490,6 +1650,9 @@ function renderState(next: LocalLibraryState): void {
     if (cleanupSection) cleanupSection.hidden = true;
     cleanupVisible = false;
     cleanupRequestEpoch += 1;
+    // Ticket 14: the cleanup view is hidden here, so a pending close-time
+    // decision must not pop up over a hidden page once playback closes.
+    if (reviewTarget) clearReviewTarget();
   }
   if (collectionSection && !isDetailOrPlayerVisible() && !cleanupVisible) collectionSection.hidden = next.status === "error" || homeVisible || searchActive;
   renderSources(next, scanProgress, sourceList, { singleVideoSourceIds });
@@ -1498,16 +1661,30 @@ function renderState(next: LocalLibraryState): void {
   if (next.status === "error") setMessage(next.error?.message ?? "本地片库不可用。", true);
 }
 
+/**
+ * Ticket 08: a degraded source read some of its directories, so its indexed
+ * entries still play. Only `available === false` means offline.
+ */
 function renderOfflineNotice(): void {
   if (!libraryOfflineNotice) return;
-  const offline = state?.status !== "error" ? (state?.sources ?? []).filter((source) => !source.available) : [];
-  const visible = offline.length > 0 && !homeVisible && !isDetailOrPlayerVisible() && !cleanupVisible;
+  const sources = state?.status !== "error" ? (state?.sources ?? []) : [];
+  const offline = sources.filter((source) => !source.available);
+  const degraded = sources.filter((source) => source.available && source.degraded);
+  const visible = (offline.length > 0 || degraded.length > 0) && !homeVisible && !isDetailOrPlayerVisible() && !cleanupVisible;
   libraryOfflineNotice.hidden = !visible;
   if (!visible) return;
   if (libraryOfflineText) {
-    libraryOfflineText.textContent = offline.length === 1
-      ? `「${offline[0].label}」文件夹离线，其中的作品暂时不能播放。重新连接驱动器或网络位置后，在文件夹页重新扫描。`
-      : `${offline.length} 个文件夹离线，其中的作品暂时不能播放。重新连接驱动器或网络位置后，在文件夹页重新扫描。`;
+    if (offline.length > 0) {
+      libraryOfflineText.textContent = offline.length === 1
+        ? `「${offline[0].label}」文件夹离线，其中的作品暂时不能播放。重新连接驱动器或网络位置后，在文件夹页重新扫描。`
+        : `${offline.length} 个文件夹离线，其中的作品暂时不能播放。重新连接驱动器或网络位置后，在文件夹页重新扫描。`;
+    } else {
+      // Degraded is not offline: playback still works, only the unread
+      // directories are missing from the index.
+      libraryOfflineText.textContent = degraded.length === 1
+        ? `「${degraded[0].label}」中有部分目录这次没读到；已加入的作品仍可播放，接回这些目录后在文件夹页重新扫描可补齐。`
+        : `${degraded.length} 个文件夹中有部分目录这次没读到；已加入的作品仍可播放，接回这些目录后在文件夹页重新扫描可补齐。`;
+    }
   }
 }
 
@@ -1577,7 +1754,7 @@ function renderPage(page: LibraryPageView): void {
     if (page.totalCount) pageScope.textContent = page.mode === "collection" ? `共 ${page.totalCount} 部作品 · 第 ${page.page} 页` : `共 ${page.totalCount} 集 · 第 ${page.page} 页`;
     else pageScope.textContent = "";
   }
-  renderPagination(page);
+  renderPager("library", page);
   observeArtworkGrid(libraryGrid);
   restoreGridFocus(focusedMediaId);
   playFirstContentMotion(libraryGrid.querySelector<HTMLElement>(".media-card"));
@@ -1600,40 +1777,68 @@ function observeArtworkGrid(container: HTMLElement): void {
 
 function renderSourceFilters(): void {
   if (!sourceFilters || !state) return;
-  const add = (label: string, sourceId?: string, available = true) => {
+  const add = (label: string, sourceId?: string, availability: "ok" | "degraded" | "offline" = "ok") => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "chip source-filter-chip";
     button.textContent = label;
     button.setAttribute("aria-pressed", String(currentQuery.sourceId === sourceId));
     if (sourceId) button.dataset.sourceFilterId = sourceId;
-    if (!available) button.dataset.available = "false";
+    if (availability === "offline") button.dataset.available = "false";
+    else if (availability === "degraded") button.dataset.degraded = "true";
     sourceFilters.append(button);
   };
   sourceFilters.replaceChildren();
   add("全部来源");
-  for (const source of state.sources) add(`${source.label}${source.available ? "" : " · 离线"}`, source.sourceId, source.available);
+  for (const source of state.sources) {
+    const availability = !source.available ? "offline" : source.degraded ? "degraded" : "ok";
+    const suffix = availability === "offline" ? " · 离线" : availability === "degraded" ? " · 部分目录未读取" : "";
+    add(`${source.label}${suffix}`, source.sourceId, availability);
+  }
 }
 
-function renderPagination(page: { totalCount: number; page: number; pageSize: number }): void {
-  if (!libraryPagination) return;
-  const model = paginationModel(page.totalCount, page.pageSize, page.page);
-  libraryPagination.replaceChildren();
-  if (page.totalCount === 0) {
-    libraryPagination.hidden = true;
+type PagerTarget = "library" | "search";
+interface PagerView { totalCount: number; page: number; pageSize: number }
+
+function pagerHost(target: PagerTarget): HTMLElement | null {
+  return target === "search" ? searchPagination : libraryPagination;
+}
+
+/** The list pager keeps its historical `pagination-*` ids; search uses its own. */
+function pagerId(target: PagerTarget, suffix: string): string {
+  return target === "search" ? `search-pagination-${suffix}` : `pagination-${suffix}`;
+}
+
+function pagerView(target: PagerTarget): PagerView | undefined {
+  return target === "search" ? searchPageView : activePage;
+}
+
+/**
+ * One pager implementation for the library list and (Ticket 12) the search
+ * results. Only the host element, the page-button attribute and the control ids
+ * differ, so both lists share the same keyboard and clamping behaviour.
+ */
+function renderPager(target: PagerTarget, view: PagerView): void {
+  const host = pagerHost(target);
+  if (!host) return;
+  const model = paginationModel(view.totalCount, view.pageSize, view.page);
+  host.replaceChildren();
+  if (view.totalCount === 0) {
+    host.hidden = true;
     return;
   }
-  libraryPagination.hidden = false;
-  const addButton = (label: string, target: number, options: { disabled?: boolean; current?: boolean; role?: string; ariaLabel?: string } = {}) => {
+  host.hidden = false;
+  const pageAttribute = target === "search" ? "data-search-page" : "data-page";
+  const addButton = (label: string, pageTarget: number, options: { disabled?: boolean; current?: boolean; role?: string; ariaLabel?: string } = {}) => {
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = label;
-    button.dataset.page = String(target);
+    button.setAttribute(pageAttribute, String(pageTarget));
     if (options.role) button.dataset.pageRole = options.role;
     if (options.ariaLabel) button.setAttribute("aria-label", options.ariaLabel);
     button.disabled = Boolean(options.disabled);
     if (options.current) button.setAttribute("aria-current", "page");
-    libraryPagination?.append(button);
+    host.append(button);
   };
   addButton("首页", 1, { disabled: model.firstDisabled, role: "first", ariaLabel: "首页" });
   addButton("上一页", model.page - 1, { disabled: model.previousDisabled, role: "previous", ariaLabel: "上一页" });
@@ -1642,19 +1847,19 @@ function renderPagination(page: { totalCount: number; page: number; pageSize: nu
   addButton("末页", model.totalPages, { disabled: model.lastDisabled, role: "last", ariaLabel: `末页，第 ${model.totalPages} 页` });
 
   const status = document.createElement("span");
-  status.id = "pagination-status";
+  status.id = pagerId(target, "status");
   status.className = "page-status";
   status.textContent = model.status;
   status.setAttribute("aria-live", "polite");
 
   const form = document.createElement("form");
-  form.id = "pagination-jump";
+  form.id = pagerId(target, "jump");
   form.className = "jump-form";
   const label = document.createElement("label");
-  label.htmlFor = "pagination-jump-input";
+  label.htmlFor = pagerId(target, "jump-input");
   label.textContent = "跳至";
   const input = document.createElement("input");
-  input.id = "pagination-jump-input";
+  input.id = pagerId(target, "jump-input");
   input.className = "jump-input";
   input.type = "text";
   input.inputMode = "numeric";
@@ -1666,19 +1871,20 @@ function renderPagination(page: { totalCount: number; page: number; pageSize: nu
   submit.className = "secondary-button";
   submit.textContent = "前往";
   const jumpError = document.createElement("span");
-  jumpError.id = "pagination-jump-error";
+  jumpError.id = pagerId(target, "jump-error");
   jumpError.className = "jump-error";
   jumpError.setAttribute("role", "alert");
   jumpError.hidden = true;
   form.append(label, input, submit);
-  libraryPagination.append(status, form, jumpError);
+  host.append(status, form, jumpError);
   animateCount(status);
 }
 
-function showPaginationJumpError(message: string | undefined): void {
-  if (!libraryPagination) return;
-  const error = libraryPagination.querySelector<HTMLElement>("#pagination-jump-error");
-  const input = libraryPagination.querySelector<HTMLInputElement>("#pagination-jump-input");
+function showPaginationJumpError(target: PagerTarget, message: string | undefined): void {
+  const host = pagerHost(target);
+  if (!host) return;
+  const error = host.querySelector<HTMLElement>(`#${pagerId(target, "jump-error")}`);
+  const input = host.querySelector<HTMLInputElement>(`#${pagerId(target, "jump-input")}`);
   if (message) {
     input?.setAttribute("aria-invalid", "true");
     if (error) { error.textContent = message; error.hidden = false; }
@@ -1688,21 +1894,28 @@ function showPaginationJumpError(message: string | undefined): void {
   }
 }
 
-function submitPaginationJump(): void {
-  if (!activePage || !libraryPagination) return;
-  const input = libraryPagination.querySelector<HTMLInputElement>("#pagination-jump-input");
-  const totalPages = paginationModel(activePage.totalCount, activePage.pageSize, activePage.page).totalPages;
-  const target = parseJumpTarget(input?.value ?? "", totalPages);
-  if (target === undefined) {
-    showPaginationJumpError(`请输入 1–${totalPages} 之间的页码。`);
+function submitPaginationJump(target: PagerTarget): void {
+  const host = pagerHost(target);
+  const view = pagerView(target);
+  if (!host || !view) return;
+  const input = host.querySelector<HTMLInputElement>(`#${pagerId(target, "jump-input")}`);
+  const totalPages = paginationModel(view.totalCount, view.pageSize, view.page).totalPages;
+  const next = parseJumpTarget(input?.value ?? "", totalPages);
+  if (next === undefined) {
+    showPaginationJumpError(target, `请输入 1–${totalPages} 之间的页码。`);
     input?.focus();
     return;
   }
-  showPaginationJumpError(undefined);
+  showPaginationJumpError(target, undefined);
   if (input) input.value = "";
-  if (target === currentQuery.page) return;
-  setQuery({ page: target });
+  if (next === view.page) return;
   scrollResultsToTop();
+  if (target === "search") {
+    searchPage = next;
+    void loadSearch();
+    return;
+  }
+  setQuery({ page: next });
   void loadLibrary();
 }
 
@@ -1966,7 +2179,11 @@ let cleanupQueue: LocalCleanupQueue | undefined;
 let cleanupQuery: LocalCleanupQueueQuery = { page: 1, pageSize: 50, rule: "all", state: "none" };
 let cleanupSettingsDraft: CleanupSettings | undefined;
 let cleanupRequestEpoch = 0;
-let cleanupBusy = false;
+/**
+ * Ticket 14: card marks and close-time decisions write the same column, so they
+ * share one mutex. A second mark cannot start while either path is in flight.
+ */
+let cleanupMarkBusy = false;
 
 function cleanupRuleText(rule: CleanupRuleId): string {
   return `${rule} · ${CLEANUP_RULE_LABELS[rule]}`;
@@ -2136,13 +2353,14 @@ function hideCleanup(returnFocus = true): void {
 }
 
 async function setCleanupMark(mediaId: string, state: CleanupState): Promise<void> {
-  if (cleanupBusy) return;
-  cleanupBusy = true;
+  if (cleanupMarkBusy) return;
+  cleanupMarkBusy = true;
   if (cleanupMessage) cleanupMessage.textContent = "正在更新标记…";
   try {
     await window.zVideo.localLibrary.setCleanupState({ mediaId: mediaId as `media_${string}`, state });
     const notice = state === "keep"
-      ? `已标记保留；${cleanupSettings.keepDays} 天内不会再出现在候选里。`
+      // Ticket 14: "保留" is terminal. It never names an expiry, because there is none.
+      ? "已保留；不会再回到整理候选，也没有到期时间。"
       : state === "snooze"
         ? `已标记稍后；${cleanupSettings.snoozeDays} 天内不再出现。`
         : state === "delete-candidate"
@@ -2154,14 +2372,15 @@ async function setCleanupMark(mediaId: string, state: CleanupState): Promise<voi
   } catch (error) {
     if (cleanupMessage) cleanupMessage.textContent = error instanceof Error ? error.message : "标记失败，请重试。";
   } finally {
-    cleanupBusy = false;
+    cleanupMarkBusy = false;
   }
 }
 
-function reviewMarkNotice(target: ReviewTarget, state: CleanupState): string {
-  if (state === "keep") return `已标记保留《${target.title}》；${cleanupSettings.keepDays} 天内不会再出现在候选里。文件没有被移动或删除。`;
-  if (state === "snooze") return `已标记稍后《${target.title}》；${cleanupSettings.snoozeDays} 天内不再出现。文件没有被移动或删除。`;
-  return `已把《${target.title}》加入待删清单。应用不会删除文件，请在资源管理器中确认后手动删除。`;
+/** The close-time decision can only be one of the three real marks. */
+type ReviewDecision = Exclude<CleanupState, "none">;
+
+function reviewMarkNotice(target: ReviewTarget, state: ReviewDecision): string {
+  return reviewDecisionNotice(target.title, state, cleanupSettings.snoozeDays);
 }
 
 function setReviewDialogBusy(busy: boolean): void {
@@ -2190,24 +2409,31 @@ function openReviewDecision(): void {
   }
   if (reviewRetryButton) reviewRetryButton.hidden = true;
   reviewPendingState = undefined;
-  reviewBusy = false;
   setReviewDialogBusy(false);
   if (!reviewDecisionDialog) return;
   if (!reviewDecisionDialog.open) reviewDecisionDialog.showModal();
   reviewKeepButton?.focus({ preventScroll: true });
 }
 
-/** Escape or “返回队列”: keep the old mark and focus the candidate that started the check. */
-function returnToReviewQueue(): void {
-  const target = reviewTarget;
+/**
+ * Ticket 14: drop a pending decision without touching the cleanup page. The
+ * library error state hides that page, so clearing the target here is enough to
+ * keep a late player close from opening the decision dialog over it.
+ */
+function clearReviewTarget(): void {
   reviewTarget = undefined;
-  reviewBusy = false;
   reviewPendingState = undefined;
   if (reviewDecisionError) {
     reviewDecisionError.textContent = "";
     reviewDecisionError.hidden = true;
   }
   if (reviewDecisionDialog?.open) reviewDecisionDialog.close();
+}
+
+/** Escape or “返回队列”: keep the old mark and focus the candidate that started the check. */
+function returnToReviewQueue(): void {
+  const target = reviewTarget;
+  clearReviewTarget();
   if (!target) return;
   // Keep the card DOM that opened the review. This playback has just changed
   // the A1 facts (open count / last-open time), so a reload could legitimately
@@ -2220,10 +2446,10 @@ function returnToReviewQueue(): void {
 }
 
 /** Persist one close-time decision, then show the marked state with the card focused. */
-async function markReviewDecision(state: CleanupState): Promise<void> {
+async function markReviewDecision(state: ReviewDecision): Promise<void> {
   const target = reviewTarget;
-  if (!target || reviewBusy) return;
-  reviewBusy = true;
+  if (!target || cleanupMarkBusy) return;
+  cleanupMarkBusy = true;
   reviewPendingState = state;
   setReviewDialogBusy(true);
   if (reviewDecisionError) {
@@ -2252,7 +2478,7 @@ async function markReviewDecision(state: CleanupState): Promise<void> {
     const chosen = state === "keep" ? reviewKeepButton : state === "snooze" ? reviewSnoozeButton : reviewDeleteButton;
     chosen?.focus({ preventScroll: true });
   } finally {
-    reviewBusy = false;
+    cleanupMarkBusy = false;
   }
 }
 
@@ -2268,6 +2494,7 @@ async function openReviewMedia(): Promise<void> {
   try {
     await window.zVideo.localPlayback.open(target.mediaId);
   } catch (error) {
+    discardPlayerSession();
     showPlayer(false);
     updateReviewBar();
     setMessage(error instanceof Error ? error.message : "检查播放失败，请重试。", true);
@@ -2276,7 +2503,7 @@ async function openReviewMedia(): Promise<void> {
 }
 
 function startReview(candidate: LocalCleanupCandidate): void {
-  if (reviewTarget || playerView?.hidden === false || cleanupBusy) return;
+  if (reviewTarget || playerView?.hidden === false || cleanupMarkBusy) return;
   if (!cleanupVisible) return;
   reviewTarget = {
     mediaId: candidate.item.mediaId,
@@ -2380,33 +2607,43 @@ function renderCleanupSettingsForm(): void {
   }
   const dayHost = document.querySelector<HTMLElement>("#cleanup-day-fields");
   if (dayHost) {
-    dayHost.replaceChildren(...([
-      { key: "snooze", label: "稍后默认天数", value: draft.snoozeDays },
-      { key: "keep", label: "保留默认天数", value: draft.keepDays },
-    ] as const).map((field) => {
+    const dayField = (key: "snooze", labelText: string, value: number): HTMLElement => {
       const wrapper = document.createElement("div");
       wrapper.className = "cleanup-field";
       const label = document.createElement("label");
-      label.htmlFor = `cleanup-days-${field.key}`;
-      label.textContent = field.label;
+      label.htmlFor = `cleanup-days-${key}`;
+      label.textContent = labelText;
       const control = document.createElement("div");
       control.className = "cleanup-field-control";
       const input = document.createElement("input");
-      input.id = `cleanup-days-${field.key}`;
+      input.id = `cleanup-days-${key}`;
       input.type = "number";
       input.inputMode = "numeric";
       input.min = "1";
       input.max = "3650";
       input.step = "1";
-      input.value = String(field.value);
-      input.dataset.cleanupDays = field.key;
+      input.value = String(value);
+      input.dataset.cleanupDays = key;
       const unit = document.createElement("span");
       unit.className = "cleanup-field-unit";
       unit.textContent = "天";
       control.append(input, unit);
       wrapper.append(label, control);
       return wrapper;
-    }));
+    };
+    dayHost.replaceChildren(dayField("snooze", "稍后默认天数", draft.snoozeDays));
+    // Ticket 14: "保留" is terminal, so `keepDays` expires nothing. The stored
+    // preference still round-trips through a hidden control so saving this dialog
+    // does not reset a value the settings contract still requires.
+    const keepDays = document.createElement("input");
+    keepDays.type = "hidden";
+    keepDays.id = "cleanup-days-keep";
+    keepDays.value = String(draft.keepDays);
+    keepDays.dataset.cleanupDays = "keep";
+    const keepNote = document.createElement("p");
+    keepNote.className = "cleanup-field-note muted";
+    keepNote.textContent = "“保留”是终态，不再需要天数；只有“稍后”会在到期后回到候选。";
+    dayHost.append(keepDays, keepNote);
   }
   syncCleanupSettingsSummary();
 }
@@ -2671,21 +2908,37 @@ function clearDetailContent(): void {
   }
 }
 
-function setDetailViewState(viewState: "loading" | "ready" | "error"): void {
+function setDetailViewState(viewState: "loading" | "ready" | "error" | "unavailable"): void {
   if (detail) {
     detail.dataset.state = viewState;
     if (viewState === "loading") detail.setAttribute("aria-busy", "true");
     else detail.removeAttribute("aria-busy");
   }
   if (detailSkeleton) detailSkeleton.hidden = viewState !== "loading";
-  if (detailError) detailError.hidden = viewState !== "error";
+  if (detailError) detailError.hidden = viewState !== "error" && viewState !== "unavailable";
   if (detailContent) detailContent.hidden = viewState !== "ready";
 }
 
 function showDetailError(message: string): void {
   clearDetailContent();
+  if (detailErrorTitle) detailErrorTitle.textContent = "详情加载失败";
   if (detailErrorMessage) detailErrorMessage.textContent = message;
+  if (detailErrorRetry) detailErrorRetry.hidden = false;
   setDetailViewState("error");
+  detailErrorTitle?.focus({ preventScroll: true });
+}
+
+/**
+ * A tombstoned or stale `mediaId` no longer resolves to a detail (the owner
+ * returns nothing). That is one item being gone, not the page failing: show a
+ * readable state with a way back instead of the retryable load error.
+ */
+function showDetailUnavailable(): void {
+  clearDetailContent();
+  if (detailErrorTitle) detailErrorTitle.textContent = "该文件已不可用";
+  if (detailErrorMessage) detailErrorMessage.textContent = "它可能已被移动、删除或从来源移除，片库已没有这条记录。重新扫描来源后，列表会按索引结果更新。";
+  if (detailErrorRetry) detailErrorRetry.hidden = true;
+  setDetailViewState("unavailable");
   detailErrorTitle?.focus({ preventScroll: true });
 }
 
@@ -2732,7 +2985,15 @@ async function openDetail(mediaId: string, returnFocusTarget?: HTMLElement, rest
     const result = await window.zVideo.localLibrary.get(mediaId);
     if (epoch !== requestEpoch) return;
     const loaded = result.detail ?? (result.item ? { item: result.item, episodes: [result.item] } : undefined);
-    if (!loaded) throw new Error("媒体条目已不存在，可能已被移除来源");
+    if (!loaded) {
+      // Ticket 11 owner contract: a tombstoned media id resolves to nothing.
+      activeDetail = undefined;
+      activeDetailPlayback = undefined;
+      detailFlightStarted = false;
+      showDetailUnavailable();
+      setMessage("该文件已不可用。", true);
+      return;
+    }
     activeDetail = loaded;
     // Reveal the content before measuring text so the plot disclosure sees a
     // real layout box instead of a hidden ancestor with no computed line height.
@@ -2943,20 +3204,31 @@ function closeDetail(): void {
   }
   updateHeaderSearch();
   updateScanUi();
-  if (origin?.kind === "search" && searchActive) {
-    if (searchSection) searchSection.hidden = false;
-    if (collectionSection) collectionSection.hidden = true;
-    if (libraryContent) libraryContent.hidden = false;
-    if (origin) applyDetailNav(origin.nav);
-    void loadSearch().then(() => {
-      if (!origin) return;
-      const target = origin.focusMediaId && origin.focusContainerId
-        ? document.querySelector<HTMLButtonElement>(`${origin.focusContainerId} [data-media-id="${cssEscape(origin.focusMediaId)}"]`)
-        : origin.focusMediaId ? document.querySelector<HTMLButtonElement>(`#search-grid [data-media-id="${cssEscape(origin.focusMediaId)}"]`) : null;
-      target?.focus({ preventScroll: true });
-      restoreDetailScroll(origin);
-    });
-    return;
+  if (origin?.kind === "search") {
+    if (searchActive && searchQuery) {
+      if (searchSection) searchSection.hidden = false;
+      if (collectionSection) collectionSection.hidden = true;
+      if (libraryContent) libraryContent.hidden = false;
+      if (origin) applyDetailNav(origin.nav);
+      void loadSearch().then(() => {
+        if (!origin) return;
+        const target = origin.focusMediaId && origin.focusContainerId
+          ? document.querySelector<HTMLButtonElement>(`${origin.focusContainerId} [data-media-id="${cssEscape(origin.focusMediaId)}"]`)
+          : origin.focusMediaId ? document.querySelector<HTMLButtonElement>(`#search-grid [data-media-id="${cssEscape(origin.focusMediaId)}"]`) : null;
+        target?.focus({ preventScroll: true });
+        restoreDetailScroll(origin);
+      });
+      return;
+    }
+    // Ticket 12: a detail opened from search must never leave a visible but
+    // unloaded search page behind; drop back to the list instead.
+    if (searchSection) searchSection.hidden = true;
+    if (searchGrid) searchGrid.replaceChildren();
+    if (searchPagination) {
+      searchPagination.replaceChildren();
+      searchPagination.hidden = true;
+    }
+    searchPageView = undefined;
   }
   if (collectionSection) collectionSection.hidden = homeVisible;
   renderOfflineNotice();
@@ -2989,6 +3261,7 @@ async function openSelectedLocalMedia(restart = false): Promise<void> {
   try {
     await window.zVideo.localPlayback.open(selectedMediaId, restart ? { restart: true } : undefined);
   } catch (error: unknown) {
+    discardPlayerSession();
     showPlayer(false);
     setMessage(error instanceof Error ? error.message : "本地播放请求失败。", true);
   }
@@ -3240,6 +3513,10 @@ function showAppNotice(title: string, body: string, tone: "info" | "warning" | "
 
 function hideAppNotice(): void {
   if (appNotice) appNotice.hidden = true;
+  if (!pendingScanSummary) return;
+  // Ticket 08: the dismissed summary hands over to the home result card.
+  pendingScanSummary = false;
+  updateScanUi();
 }
 
 function stopScanElapsedTimer(): void {
@@ -3263,6 +3540,17 @@ function noteScanStarted(progress: LocalScanProgress): void {
   }, 1_000);
 }
 
+/** Folder-page scan panel title and the home result card use different wording. */
+function scanStatusLabel(status: LocalScanProgress["status"]): string {
+  return ({ running: "正在扫描", completed: "扫描完成", cancelled: "扫描已取消", partial: "扫描部分完成", unavailable: "来源不可用" })[status];
+}
+
+function scanResultLabel(status: LocalScanProgress["status"]): string {
+  // Ticket 08: `partial` means degraded — some directories were not read, and
+  // the indexed entries stay playable. Only `unavailable` is a real offline.
+  return ({ running: "扫描中", completed: "扫描完成", cancelled: "扫描已取消", partial: "部分完成 · 部分目录未读取", unavailable: "来源离线" })[status];
+}
+
 function updateScanUi(): void {
   const running = scanProgress?.status === "running";
   if (scanStatus) {
@@ -3272,17 +3560,34 @@ function updateScanUi(): void {
       if (scanStatusText.textContent !== text) scanStatusText.textContent = text;
     }
   }
-  const showCard = Boolean(running && homeVisible && !searchActive && !cleanupVisible && !isDetailOrPlayerVisible());
-  if (homeScanCard) homeScanCard.hidden = !showCard;
-  onboarding?.classList.toggle("is-compact", showCard);
-  if (showCard && scanProgress) {
+  const homeIdle = homeVisible && !searchActive && !cleanupVisible && !isDetailOrPlayerVisible();
+  const lastSummary = running || pendingScanSummary ? undefined : lastScanSummary;
+  const showCard = Boolean(homeIdle && (running || lastSummary));
+  if (homeScanCard) {
+    homeScanCard.hidden = !showCard;
+    // Ticket 08: only a running scan pulses; the kept result card stays still.
+    homeScanCard.dataset.state = running ? "running" : "done";
+  }
+  onboarding?.classList.toggle("is-compact", Boolean(showCard && running));
+  if (showCard && running && scanProgress) {
     const label = scanSourceLabel(scanProgress);
     const pending = scanProgress.scanId === "pending";
     if (homeScanStatus) homeScanStatus.textContent = pending ? "正在准备扫描…" : `正在扫描「${label}」`;
     if (homeScanFolder) homeScanFolder.textContent = pending ? "选择文件夹后开始只读扫描；不会移动、改名或上传文件。" : `当前文件夹：${label} · 只读取，不移动、不改名、不上传文件。`;
+    if (homeScanNote) homeScanNote.textContent = "数量未知时不显示百分比；已加入的内容会原地出现，不反复替换整页骨架。";
     if (homeScanScanned) homeScanScanned.textContent = String(scanProgress.scannedFiles);
     if (homeScanAdded) homeScanAdded.textContent = String(scanProgress.importedFiles);
     if (homeScanElapsed) homeScanElapsed.textContent = scanStartedAtMs === undefined ? "计算中" : formatScanElapsed(Date.now() - scanStartedAtMs);
+  } else if (showCard && lastSummary) {
+    // Ticket 08: the finished scan keeps a result card with its status and counts.
+    const label = scanSourceLabel(lastSummary.progress);
+    const warnings = lastSummary.progress.warningCount ? ` · ${lastSummary.progress.warningCount} 条警告` : "";
+    if (homeScanStatus) homeScanStatus.textContent = `上次扫描：${scanResultLabel(lastSummary.progress.status)}`;
+    if (homeScanFolder) homeScanFolder.textContent = `「${label}」· 新增 ${lastSummary.progress.importedFiles} · 更新 ${lastSummary.progress.updatedFiles}${warnings}`;
+    if (homeScanNote) homeScanNote.textContent = "结果保留到下一次扫描；重新扫描不会删除已有作品和观看进度。";
+    if (homeScanScanned) homeScanScanned.textContent = String(lastSummary.progress.scannedFiles);
+    if (homeScanAdded) homeScanAdded.textContent = String(lastSummary.progress.importedFiles);
+    if (homeScanElapsed) homeScanElapsed.textContent = lastSummary.elapsedMs === undefined ? "未知" : formatScanElapsed(lastSummary.elapsedMs);
   }
   const canCancel = Boolean(running && scanId);
   document.querySelectorAll<HTMLButtonElement>("[data-cancel-scan]").forEach((button) => {
@@ -3305,7 +3610,7 @@ function renderScanProgress(progress: LocalScanProgress): void {
   if (scanPanel) scanPanel.hidden = false;
   const panelTitle = document.querySelector<HTMLElement>("#scan-panel-title");
   const counts = document.querySelector<HTMLElement>("#scan-counts");
-  if (panelTitle) panelTitle.textContent = ({ running: "正在扫描", completed: "扫描完成", cancelled: "扫描已取消", partial: "扫描部分完成", unavailable: "来源不可用" })[progress.status];
+  if (panelTitle) panelTitle.textContent = scanStatusLabel(progress.status);
   if (counts) counts.textContent = "已扫描 " + progress.scannedFiles + " · 新增 " + progress.importedFiles + " · 更新 " + progress.updatedFiles + " · 警告 " + progress.warningCount;
   const commit = progress.importedFiles + progress.updatedFiles;
   if (progress.status === "running") {
@@ -3323,6 +3628,19 @@ function renderScanProgress(progress: LocalScanProgress): void {
     if (!isDetailOrPlayerVisible()) requestEpoch += 1;
     const notice = scanNotice(progress);
     if (notice) showAppNotice(notice.title, notice.body, notice.tone, progress.status === "completed");
+    // Ticket 08: a terminal scan hands its status and counts to the home result
+    // card, releases `scanProgress` and collapses the folder-page panel. While
+    // its summary notice is up, that notice is the one visible summary.
+    lastScanSummary = {
+      progress,
+      elapsedMs: scanStartedAtMs === undefined ? undefined : Math.max(0, Date.now() - scanStartedAtMs),
+    };
+    pendingScanSummary = Boolean(notice);
+    scanProgress = undefined;
+    scanId = undefined;
+    scanStartedAtMs = undefined;
+    scanStartedScanId = undefined;
+    if (scanPanel) scanPanel.hidden = true;
   }
   updateScanUi();
 }
@@ -3573,7 +3891,7 @@ detailPlotToggle?.addEventListener("click", () => {
 });
 detailOpen?.addEventListener("click", () => { void openSelectedLocalMedia(detailOpen.dataset.playbackMode === "restart"); });
 detailRestart?.addEventListener("click", () => { void openSelectedLocalMedia(true); });
-playerCloseButton?.addEventListener("click", () => { clearNextTimer(); void sendLocalPlaybackCommand({ type: "close" }); });
+playerCloseButton?.addEventListener("click", () => requestPlayerClose());
 playerToggleButton?.addEventListener("click", () => {
   void sendLocalPlaybackCommand({ type: playerState === "playing" ? "pause" : "play" });
 });
@@ -3601,19 +3919,24 @@ document.addEventListener("pointerdown", (event) => {
 });
 playerNextButton?.addEventListener("click", () => { void playNextEpisode(); });
 playerPlayNext?.addEventListener("click", () => { void playNextEpisode(); });
-playerCancelNext?.addEventListener("click", () => { clearNextTimer(); if (playerCountdown) playerCountdown.textContent = "已取消自动播放"; if (playerCountdownAnnouncement) playerCountdownAnnouncement.textContent = "已取消自动播放下一集。"; });
+playerCancelNext?.addEventListener("click", () => {
+  // Ticket 06: cancel goes through the one ended-panel exit instead of clearing
+  // the countdown inline.
+  resetPlaybackEndedPanel();
+  if (playerCountdown) playerCountdown.textContent = "已取消自动播放";
+  setPlayerStatus("已取消自动播放下一集。");
+  sendOverlayState();
+});
 playerReplay?.addEventListener("click", () => { resetPlaybackEndedPanel(); void openSelectedLocalMedia(true); });
 playerReturnList?.addEventListener("click", () => {
-  clearNextTimer();
-  playerReturnToDetail = !reviewTarget && !currentItemIsMovie();
-  void sendLocalPlaybackCommand({ type: "close" });
+  requestPlayerClose(!reviewTarget && !currentItemIsMovie());
 });
 playerErrorRetry?.addEventListener("click", () => {
   hidePlayerError();
   if (reviewTarget) void openReviewMedia();
   else void openSelectedLocalMedia();
 });
-playerErrorBack?.addEventListener("click", () => { clearNextTimer(); void sendLocalPlaybackCommand({ type: "close" }); });
+playerErrorBack?.addEventListener("click", () => requestPlayerClose());
 for (const [selector, offset] of [["#player-back-10", -10], ["#player-forward-10", 10]] as const) {
   document.querySelector<HTMLButtonElement>(selector)?.addEventListener("click", () => {
     const positionSec = Math.max(0, Math.min(playerDurationSec, Number(playerSeek?.value ?? 0) + offset));
@@ -3700,10 +4023,27 @@ libraryPagination?.addEventListener("click", (event) => {
 libraryPagination?.addEventListener("submit", (event) => {
   if ((event.target as HTMLElement).id !== "pagination-jump") return;
   event.preventDefault();
-  submitPaginationJump();
+  submitPaginationJump("library");
 });
 libraryPagination?.addEventListener("input", (event) => {
-  if ((event.target as HTMLElement).id === "pagination-jump-input") showPaginationJumpError(undefined);
+  if ((event.target as HTMLElement).id === "pagination-jump-input") showPaginationJumpError("library", undefined);
+});
+/* Ticket 12 · the search result set pages through the same control. */
+searchPagination?.addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-search-page]");
+  const page = Number(button?.dataset.searchPage);
+  if (!button || !Number.isInteger(page) || page < 1 || button.disabled || page === searchPage) return;
+  searchPage = page;
+  scrollResultsToTop();
+  void loadSearch();
+});
+searchPagination?.addEventListener("submit", (event) => {
+  if ((event.target as HTMLElement).id !== "search-pagination-jump") return;
+  event.preventDefault();
+  submitPaginationJump("search");
+});
+searchPagination?.addEventListener("input", (event) => {
+  if ((event.target as HTMLElement).id === "search-pagination-jump-input") showPaginationJumpError("search", undefined);
 });
 /* A2 · cleanup view wiring. */
 cleanupEntry?.addEventListener("click", () => { void showCleanup(); });
@@ -3790,7 +4130,7 @@ reviewDecisionDialog?.addEventListener("cancel", (event) => {
 });
 reviewDecisionDialog?.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" && event.key !== " ") return;
-  if (event.defaultPrevented || reviewBusy) return;
+  if (event.defaultPrevented || cleanupMarkBusy) return;
   const active = document.activeElement;
   if (!(active instanceof HTMLButtonElement) || !reviewDecisionDialog?.contains(active) || active.disabled) return;
   event.preventDefault();
