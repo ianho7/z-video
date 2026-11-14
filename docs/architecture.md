@@ -49,6 +49,12 @@ libmpv 是优先评估候选，不是已批准依赖。尚未决定版本、绑�
 
 `LocalLibraryDatabase` is the main-side lifecycle owner for one bounded child utility process. It owns worker request correlation, storage errors, schema initialization, opaque ID reuse and main-only path resolution. The worker is the only code that opens SQLite. `local-library-ipc.ts` validates page/mediaId inputs and never returns root or relative paths. The renderer can browse and request detail, but cannot call `node:sqlite`, `fs`, or native playback directly.
 
+## 活路径与遗留路径（Ticket 16）
+
+默认启动（`src/main/main.ts`）只装配三条活链路：`local-library-ipc.ts`（只读扫描 + SQLite + opaque `mediaId`）、`local-playback-ipc.ts`（main-owned native playback）和 `app-preferences-ipc.ts`。活 renderer（`src/renderer/renderer.ts`，由 `index.html` 唯一脚本入口加载）只调用 `localLibrary`、`localPlayback`、`appPreferences`、`overlay`、`windowAction`、`onWindowMaximized`。
+
+NAS-first 时期的 `ipc.ts`、`session-controller.ts`、`library-controller.ts`、`discovery.ts`、`secure-session-store.ts`、`nas-client.ts`，`player-host.ts` 的 `MainPlaybackHost`，`preload.ts` 的 `session`/`library`/`discovery`/`player`/`appearance` 命名空间，以及 `src/renderer/library.ts` 都**不在默认运行路径**上：只被 `tests/**` 的单测或 window-smoke 使用，或完全零引用。它们按 AGENTS.md 的 rollback/reference 要求保留，源文件头已标 `@deprecated`，逐项的引用者、可否删除与删除前置条件见 [遗留路径清单](local-library/legacy-paths.md)；对应的隐式状态机见 [state-machines.md](local-library/state-machines.md)。
+
 ## 历史 NAS 模块边界（rollback reference）
 
 ```text
