@@ -27,6 +27,13 @@ const defaultMpvSources = [
 const mpvSource = resolve(process.env.Z_VIDEO_MPV_DLL ?? defaultMpvSources.find((candidate) => existsSync(candidate)) ?? defaultMpvSources[0]);
 const packageLinkMode = process.env.Z_VIDEO_PACKAGE_LINK_MODE ?? "reuse";
 if (packageLinkMode !== "reuse" && packageLinkMode !== "copy") throw new Error(`unsupported Z_VIDEO_PACKAGE_LINK_MODE: ${packageLinkMode}`);
+const keepFullRuntime = process.env.Z_VIDEO_PACKAGE_KEEP_FULL_RUNTIME === "1";
+const prunedRuntimeFiles = keepFullRuntime
+  ? []
+  : ["dxcompiler.dll", "vk_swiftshader.dll", "vk_swiftshader_icd.json", "vulkan-1.dll", "default_app.asar"];
+const electronLocaleAllowList = keepFullRuntime
+  ? undefined
+  : (process.env.Z_VIDEO_ELECTRON_LOCALES ?? "en-US,zh-CN").split(",").map((value) => value.trim()).filter(Boolean);
 const appRoot = join(output, "resources", "app");
 const appNodeModules = join(appRoot, "node_modules");
 let reusedFileCount = 0;
@@ -62,6 +69,23 @@ async function copyRuntimeSource(source, target, options = {}) {
       await linkOrCopy(sourcePath, targetPath, { reuse: reuseFiles });
     }
   }
+}
+
+async function pruneRuntimeLocales(target, allowList) {
+  const localeDirectory = join(target, "locales");
+  const entries = await readdir(localeDirectory, { withFileTypes: true }).catch(() => undefined);
+  if (!entries) throw new Error(`Electron locales directory is unavailable: ${localeDirectory}`);
+  const files = entries.filter((entry) => entry.isFile()).map((entry) => entry.name);
+  const keep = new Set(allowList.map((locale) => `${locale}.pak`));
+  const missing = [...keep].filter((locale) => !files.includes(locale));
+  if (missing.length > 0) throw new Error(`requested Electron locales are unavailable: ${missing.join(", ")}`);
+  let removed = 0;
+  for (const name of files) {
+    if (keep.has(name)) continue;
+    await rm(join(localeDirectory, name), { force: true });
+    removed += 1;
+  }
+  return { kept: [...keep].sort(), removed };
 }
 
 async function linkOrCopy(source, target, { reuse = true } = {}) {
@@ -153,9 +177,10 @@ const xmlDependencyClosure = [...await collectDependencyClosure("fast-xml-parser
 await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
 await linkOrCopy(join(runtimeSource, "electron.exe"), join(output, "electron.exe"), { reuse: false });
-await copyRuntimeSource(runtimeSource, output, { reuseFiles: true, skipNames: new Set(["electron.exe"]) });
+await copyRuntimeSource(runtimeSource, output, { reuseFiles: true, skipNames: new Set(["electron.exe", ...prunedRuntimeFiles]) });
 await rename(join(output, "electron.exe"), join(output, "z-video.exe"));
 await rename(join(output, "electron_wer.dll"), join(output, "z-video_wer.dll"));
+const localePruning = electronLocaleAllowList ? await pruneRuntimeLocales(output, electronLocaleAllowList) : undefined;
 
 await copyRuntimeSource(join(root, "dist", "src"), join(appRoot, "dist", "src"), { reuseFiles: false });
 await mkdir(appNodeModules, { recursive: true });
@@ -200,6 +225,14 @@ const manifest = {
     executable: "z-video.exe",
     manualDistribution: true,
     licenseFiles: ["licenses/LICENSE", "licenses/LICENSES.chromium.html"],
+    pruning: {
+      runtimeFilesRemoved: prunedRuntimeFiles,
+      locales: localePruning ? { kept: localePruning.kept, removed: localePruning.removed } : "all",
+      restoreFullRuntimeEnv: "Z_VIDEO_PACKAGE_KEEP_FULL_RUNTIME=1",
+      note: localePruning
+        ? "Unused Chromium locale packs and the WebGPU-only shader compiler/software Vulkan helpers are omitted to reduce package size; en-US stays because Chromium requires it as the fallback locale. No product feature depends on the removed files; a GPU/WebGPU fallback check must repackage with the full runtime."
+        : "Full upstream Electron runtime is packaged without pruning.",
+    },
   },
   native: {
     koffi: rootPackage.dependencies.koffi,
@@ -222,7 +255,16 @@ const manifest = {
   contents: {
     bytes: packageSize.bytes,
     files: packageSize.files,
-    excludes: ["Rust target/source", "tests", "reference", "docs", "TypeScript/compiler", "devDependencies", "source maps"],
+    excludes: [
+      "Rust target/source",
+      "tests",
+      "reference",
+      "docs",
+      "TypeScript/compiler",
+      "devDependencies",
+      "source maps",
+      ...(localePruning ? ["unused Chromium locale packs", "dxcompiler.dll (WebGPU/Dawn only)", "vk_swiftshader/vulkan-1 (software Vulkan/WebGPU fallback)", "default_app.asar (Electron fallback app)"] : []),
+    ],
   },
   storage: {
     reusedFiles: reusedFileCount,
@@ -248,6 +290,9 @@ await writeFile(join(output, "README.txt"), [
   "Use a new --user-data-dir path for isolated smoke tests; do not point it at a normal user profile.",
   "",
   "This package keeps the local-library worker, bundled node:sqlite runtime, fast-xml-parser dependency closure, native libmpv player, and Koffi x64 prebuild in the unpacked app layout.",
+  localePruning
+    ? `Unused Chromium locale packs and the WebGPU-only runtime helpers are omitted (locales kept: ${localePruning.kept.join(", ")}; dxcompiler.dll, vk_swiftshader, vulkan-1.dll and default_app.asar removed). Rebuild with Z_VIDEO_PACKAGE_KEEP_FULL_RUNTIME=1 if a full-runtime A/B comparison is needed.`
+    : "The full upstream Electron runtime is packaged without pruning.",
   reusedHardLinkCount > 0
     ? `This workspace candidate uses ${reusedHardLinkCount} same-volume hard links for large shared runtime/native files; do not remove the source volume while it is in use.`
     : "All package files are regular copies; this is a personal-use candidate, not a signed or public-distribution release.",
@@ -258,4 +303,5 @@ await writeFile(join(output, "README.txt"), [
 
 console.log(`PACKAGED: ${output}`);
 console.log(`SIZE: ${packageSize.bytes} bytes (${packageSize.files} files)`);
+if (localePruning) console.log(`PRUNED: locales kept ${localePruning.kept.join(",")} (removed ${localePruning.removed}); runtime files ${prunedRuntimeFiles.join(", ")}`);
 console.log(`MPV: ${mpvBytes} bytes sha256=${mpvHash}`);
