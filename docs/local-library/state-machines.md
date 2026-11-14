@@ -35,7 +35,7 @@ Scope: `src/main`、`src/renderer`、`src/shared`、`src/preload` 全量静态�
 | 16 | 轨道偏好 | `trackPreferencesApplied` + `subtitleTrackId` 三态 | 2 × 3 | latch 修正 + `off` 哨兵 | 09 |
 | 17 | overlay 可见性/穿透 | `overlay` 可空 + 双端 `visible/ignore` | 5 | 二次显示补推送、error 纳入 changed | 06 |
 | 18 | 外部字幕加载 | 无载体（纯 promise 流） | 5 | 维持（失败已有 control-error） | — |
-| 19 | 视图路由 | 6 个 `hidden` + 2 布尔 | 7 + 3 叠加 | 单一来源 + 派生 | 15 |
+| 19 | 视图路由 | 6 个 `hidden` + 2 布尔（实测 70 处写入 / 71 个测试断言点） | base 4 + 图层 3 | baseView + 图层栈，非单一枚举 | 15 |
 | 20 | 片库列表三态 | `libraryLoadedOnce` + `aria-busy` + empty + pageError | 6 | 丢弃路径统一清理 | 15 |
 | 21 | 详情三态 | `detail.dataset.state` | 6 | 补 `re-opening` | 15 |
 | 22 | 搜索 | `searchActive` + `searchPage`（死字段） | 5 | 接分页 | 12 |
@@ -94,7 +94,7 @@ Scope: `src/main`、`src/renderer`、`src/shared`、`src/preload` 全量静态�
 13. **`renderState` 错误分支单向隐藏**：隐藏 onboarding/hero/continue/recent/shows 后无恢复路径。
 14. **`keep` 非终态**：`keepDays` 后静默回到候选队列，与文案相反。
 15. **重复计完成**：`endedObserved` 粘滞，重播后再关闭仍报 `ended`；加载失败按恢复位置参与 `isCompletedWatch`。
-16. **视图路由无单一来源**：`data-view` 是静态属性，真实视图由 6 个 `hidden` + 2 布尔推导。
+16. **视图路由无单一来源**：`data-view` 是静态属性，真实视图由 6 个 `hidden` + 2 布尔推导。2026-11-14 实测：14 个导航函数内有 70 处可见性写入，测试有 71 个断言点依赖；且视图是**层叠**而非互斥（`showCleanup`/`openDetail` 都不卸载 `libraryContent`，复查播放时整理层与播放器可同时可见）。因此收敛目标修正为 `baseView` + 图层栈，而不是单一枚举。
 
 ## 4. 死状态与死契约（记录，不单独开 Ticket）
 

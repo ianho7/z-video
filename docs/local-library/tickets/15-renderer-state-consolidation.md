@@ -1,34 +1,33 @@
-# 渲染层状态收敛
+# 渲染层视图模型（baseView + 图层栈）
 
 ID: 15-renderer-state-consolidation
-Depends: 11, 12
-Priority: P2
+Blocked by: None (can start immediately)
+Status: ready-for-agent
 
 ## What to build
 
-把 renderer 的视图路由、请求代际与错误恢复从"逐处写 hidden"收敛为可推导的单一来源，消除互相作废与状态泄漏。
+把 renderer 的视图可见性从"十几个函数各自写 hidden"收敛成 `baseView` + 图层栈的单一派生。用户可感知的结果：视图切换不再残留区块；从详情或播放器返回后，片库仍在原来的页并保留滚动位置。
 
-- 引入显式视图状态（`home | library | sources | search | cleanup | detail | player`）与单一 `setView()`，由它派生 `appShell`/`sidebar`/`libraryContent`/`detail`/`playerView`/`searchSection`/`cleanupSection` 的 `hidden`；`data-view` 反映真实视图。
-- 拆分请求代际：`libraryEpoch` / `searchEpoch` / `detailEpoch` 独立，互不作废；所有丢弃路径在 `finally` 清理 `aria-busy`。
-- `renderState` 的错误分支改为"派生 chrome"：错误解除时首页区块、引导、离线提示能恢复，不再需要靠某次导航偶然修复。
-- 详情补 `re-opening` 状态（切集时有 loading 载体，且不显示上一集内容）。
-- 卡片复用路径清理 `dataset.artwork*`（与 `renderHomeHero` 对齐），修封面永久 loading。
-- 扫描刷新队列：在 `closeDetail`/`showPlayer(false)` 时消费 `scanRefreshQueued`，避免扫描期间停在详情页导致列表永久陈旧。
+- baseView 互斥四态：home / library / sources / search。
+- 图层：cleanup、detail、player；player 是模态层，隐藏 appShell 但保留底层状态。
+- 一个 `applyView()` 由 `{ baseView, layers }` 派生全部 `hidden`；导航函数只改状态，不再直接写 `hidden`。
+- `renderState` 的错误分支改为派生 chrome：错误解除时首页区块、引导、离线提示能恢复。
 
 ## Acceptance criteria
 
-- [ ] 任意视图切换序列后，只有一个视图容器可见，无残留区块（含搜索/整理/详情/播放器）。
-- [ ] 打开详情不再作废在途片库加载；关闭详情不再作废在途搜索；两者丢弃时 `aria-busy` 均被清理。
+- [ ] 任意 baseView 切换后只有对应容器可见，无残留区块。
+- [ ] cleanup 与 detail 叠加时 base 保持挂载；player 打开后关闭能回到正确目标。
+- [ ] 播放器三条返回路径（详情 / 首页 / 整理）的可见性组合与改动前逐项一致。
+- [ ] 从详情返回片库，列表 `scrollTop` 与打开前误差 ≤4。
 - [ ] 错误态解除后首页三个区块与引导可恢复显示，无需额外导航。
-- [ ] 切集时页面不显示上一集内容，也不存在"内存无详情但屏幕有内容"的窗口。
-- [ ] 扫描在详情页打开期间结束，返回列表后能看到最终结果。
+- [ ] 预判会失效的 9–12 处既有断言逐条报备（旧值 / 新值 / 理由）。
 
 ## Out of scope
 
-- 视觉改版与样式重构。
-- 播放器内部状态机（已在 Ticket 06）。
+- 请求代际拆分、详情 reopening、卡片 dataset 清理（见 Ticket 18）。
+- 视觉改版与播放器内部状态机。
 
 ## Verification
 
-`npm run typecheck` → `npm test` → `npm run test:window` / `npm run test:appearance-window`（GUI 权限）。
-该类改动以窗口冒烟为准；单测只能覆盖纯逻辑部分，结论需区分。
+`npm run typecheck` → `npm test` → `npm run test:window` → `npm run test:local-library-app`。
+连续两轮窗口冒烟失败即停止，只保留 baseView 与 libraryContent/appShell 两处派生。

@@ -37,6 +37,7 @@ The identity used to access a NAS. An account has permissions and may have more 
 ## Session
 
 A temporary authenticated relationship between the application, an account, and a NAS. A session is not the account itself and may expire or be revoked.
+_Avoid_: using "session" alone for a playback attempt or a viewing record; those are Playback attempt and Viewing session.
 
 ## Media library (generic)
 
@@ -50,9 +51,10 @@ A title-level media object that groups one or more episodes and carries shared m
 
 A single playable unit belonging to a collection. A feature film normally has one episode; a series normally has several.
 
-## Playback session
+## Playback attempt
 
 One attempt to play an episode, from opening it until it is stopped or closed. It includes playback position and selected audio or subtitle tracks.
+_Avoid_: playback session; session.
 
 ## Playback backend
 
@@ -69,3 +71,38 @@ An explicitly granted ability available to a plugin, such as network access, fil
 ## Normalized metadata
 
 A common metadata shape used by the application regardless of which scraper or source produced it. Source-specific fields remain optional extensions.
+
+## Viewing session
+
+The local record of one playback attempt's watch time, pause and seek counts, end position, and outcome. It feeds the viewing history and cleanup rules.
+_Avoid_: session; playback session.
+
+## Scan run
+
+One traversal of a source during which the index is reconciled. It records counters and an outcome: completed, partial, cancelled, or unavailable.
+_Avoid_: scan job, scan task.
+
+## Degraded source
+
+A source whose root is readable but whose traversal could not be completed; its already-indexed media files remain playable.
+_Avoid_: offline, unavailable (those mean the root cannot be read at all).
+
+## Cleanup mark
+
+The user's decision on a media file in the cleanup queue: none, keep, snooze, or delete-candidate.
+_Avoid_: status, state.
+
+## Review
+
+The flow of opening one cleanup candidate for a keep, snooze, or delete decision. Continuous review moves to the next candidate after each decision.
+_Avoid_: triage.
+
+## Marker
+
+A time point the user pins while watching, used as a highlight or chapter hint for that media file.
+_Avoid_: bookmark (reserved for a resume position), chapter (authored metadata).
+
+## Heat area
+
+An aggregated intensity curve over the timeline of a media file, derived only from local signals such as watch positions, markers, and optional heart rate.
+_Avoid_: highlight, best part (they claim content quality the product cannot verify).
