@@ -98,6 +98,44 @@ async function run(): Promise<void> {
     })()`);
     await waitFor("subtitle selected control", `document.querySelector('#player-subtitle-value')?.textContent === ${JSON.stringify(selectedSubtitle!.label)}`);
 
+    // Ticket 22a: a file without markers renders no tick layer at all.
+    assert.equal(
+      await read(`(() => { const layer = document.querySelector('#player-marker-ticks'); return Boolean(layer) && layer.hidden === true && layer.childElementCount === 0; })()`),
+      true,
+      "a file without markers renders no tick layer",
+    );
+
+    // `B` during real playback records the current whole second and never pauses.
+    await read(`document.querySelector('#player-toggle-button')?.click()`);
+    await waitFor("playback resumed for the marker test", `document.querySelector('#player-toggle-button')?.textContent === '暂停'`);
+    await waitFor("playback position advanced", `Number(document.querySelector('#player-seek')?.value) >= 2`);
+    const seekBeforeMarker = Number(await read(`document.querySelector('#player-seek')?.value`));
+    await read(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', code: 'KeyB' }))`);
+    await waitFor("marker tick after B", `document.querySelectorAll('#player-marker-ticks .player-marker-tick').length === 1`);
+    assert.equal(await read(`document.querySelector('#player-marker-ticks')?.hidden`), false, "the tick layer appears once the file has a marker");
+    const firstTick = await read<{ positionSec: string; left: string } | null>(`(() => {
+      const tick = document.querySelector('#player-marker-ticks .player-marker-tick');
+      return tick ? { positionSec: tick.dataset.positionSec ?? '', left: tick.style.left } : null;
+    })()`);
+    assert.equal(Number.isInteger(Number(firstTick?.positionSec)), true, "the marker is a whole second");
+    assert.ok(
+      Math.abs(Number(firstTick?.positionSec) - Math.floor(seekBeforeMarker)) <= 1,
+      "the marker sits on the second playback had reached",
+    );
+    assert.equal(firstTick?.left.endsWith("%"), true, "the tick is positioned as a percentage of the duration");
+    assert.equal(await read(`document.querySelector('#player-toggle-button')?.textContent`), "暂停", "recording a marker never interrupts playback");
+
+    // A second marker at a later second joins the layer in ascending order.
+    const firstMarkerSec = Number(firstTick?.positionSec);
+    await waitFor("playback advanced past the first marker", `Number(document.querySelector('#player-seek')?.value) >= ${firstMarkerSec + 1}`);
+    await read(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', code: 'KeyB' }))`);
+    await waitFor("second marker tick", `document.querySelectorAll('#player-marker-ticks .player-marker-tick').length === 2`);
+    const tickPositions = await read<number[]>(`[...document.querySelectorAll('#player-marker-ticks .player-marker-tick')].map((tick) => Number(tick.dataset.positionSec))`);
+    assert.equal(tickPositions.length, 2);
+    assert.equal(Number.isInteger(tickPositions[0]) && Number.isInteger(tickPositions[1]), true);
+    assert.ok(tickPositions[0] < tickPositions[1], "ticks keep ascending whole-second order");
+    assert.equal(await read(`document.querySelector('#player-toggle-button')?.textContent`), "暂停", "the second B press also leaves playback running");
+
     await read(`document.querySelector('#player-fullscreen-button')?.click()`);
     await waitForWindow("window fullscreen on", () => window.isFullScreen());
     assert.equal(await read(`document.querySelector('#player-fullscreen-button')?.textContent`), "退出全屏");
@@ -107,6 +145,21 @@ async function run(): Promise<void> {
 
     const holdMs = Number(process.env.Z_VIDEO_PLAYER_SMOKE_HOLD_MS ?? 0);
     if (Number.isFinite(holdMs) && holdMs > 0) await delay(holdMs);
+
+    // Ticket 22a: a failed marker write is visible and never paints a phantom tick.
+    ipcMain.removeHandler("local-library:markers-add");
+    ipcMain.handle("local-library:markers-add", () => { throw new Error("database is locked"); });
+    await read(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', code: 'KeyB' }))`);
+    await waitFor(
+      "visible marker failure feedback",
+      `document.querySelector('#player-control-notice')?.hidden === false && (document.querySelector('#player-control-notice-text')?.textContent ?? '').includes('标记没有记录成功')`,
+    );
+    assert.equal(
+      await read(`document.querySelectorAll('#player-marker-ticks .player-marker-tick').length`),
+      2,
+      "a failed add never paints a phantom tick",
+    );
+    assert.equal(await read(`document.querySelector('#player-toggle-button')?.textContent`), "暂停", "a failed marker never pauses playback");
 
     // Normal close: the main-owned `closed` event dismantles the view once.
     await read(`document.querySelector('#player-close-button')?.click()`);

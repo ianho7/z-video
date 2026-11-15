@@ -11,10 +11,15 @@ import {
   LOCAL_LIBRARY_SCHEMA_VERSION,
   isCompletedWatch,
   isEffectiveWatch,
+  isMarkerDurationSec,
+  isMarkerPositionSec,
+  isMarkerWithinDuration,
   isOpaqueMediaId,
   type LocalLibraryQuery,
   type LocalCollectionQuery,
   type LocalCollectionSummary,
+  type LocalMarker,
+  type LocalMarkerInput,
   type LocalMediaItem,
   type LocalMediaDetail,
   type LocalContinueWatchingItem,
@@ -57,6 +62,8 @@ type WorkerRequest =
   | { id: number; command: "list-collections"; query: LocalCollectionQuery }
   | { id: number; command: "get"; mediaId: string }
   | { id: number; command: "get-detail"; mediaId: string }
+  | { id: number; command: "list-markers"; mediaId: string }
+  | { id: number; command: "add-marker"; input: LocalMarkerInput }
   | { id: number; command: "list-continue-watching" }
   | { id: number; command: "remove-source"; sourceId: string }
   | { id: number; command: "source-root"; sourceId: string }
@@ -410,6 +417,13 @@ function openDatabase(dbPath: string): void {
         updated_at INTEGER NOT NULL,
         FOREIGN KEY (media_id) REFERENCES media_files(media_id) ON DELETE CASCADE
       );
+      CREATE TABLE IF NOT EXISTS markers (
+        media_id TEXT NOT NULL,
+        position_sec INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (media_id, position_sec),
+        FOREIGN KEY (media_id) REFERENCES media_files(media_id) ON DELETE CASCADE
+      );
     `);
     ensureColumn("collections", "identity_key", "TEXT");
     ensureColumn("collections", "source_id", "TEXT");
@@ -435,7 +449,8 @@ function openDatabase(dbPath: string): void {
     db.exec("CREATE INDEX IF NOT EXISTS media_history_cleanup_state ON media_history(cleanup_state);");
     // Incremental migrations: v2 adds collections.premiered_at; v3 adds the
     // viewing_sessions/media_history ledger tables; v4 adds
-    // sources.degraded (default 0, so old rows keep their previous meaning).
+    // sources.degraded (default 0, so old rows keep their previous meaning);
+    // v5 adds the markers table (FK to media_files with ON DELETE CASCADE).
     // No existing column is rewritten and no history is backfilled from
     // playback_state; every step is idempotent and re-running it is a no-op.
     if (existingVersion < LOCAL_LIBRARY_SCHEMA_VERSION) db.exec(`PRAGMA user_version = ${LOCAL_LIBRARY_SCHEMA_VERSION};`);
@@ -998,6 +1013,13 @@ async function upsertMedia(rootPath: string, discovered: DiscoveredMedia, option
           SELECT media_id FROM media_files WHERE source_id = ? AND relative_path = ? AND available = 1
         )
       `).run(discovered.collection.sourceId, discovered.relativePath));
+      // A replaced file is a new identity; the old user-written markers must not
+      // survive as orphans pointing at the tombstoned row.
+      profileSync("database", () => db.prepare(`
+        DELETE FROM markers WHERE media_id IN (
+          SELECT media_id FROM media_files WHERE source_id = ? AND relative_path = ? AND available = 1
+        )
+      `).run(discovered.collection.sourceId, discovered.relativePath));
       profileSync("database", () => db.prepare("UPDATE media_files SET available = 0, updated_at = ? WHERE source_id = ? AND relative_path = ? AND available = 1").run(timestamp, discovered.collection.sourceId, discovered.relativePath));
       mediaId = makeId("media");
       created = true;
@@ -1442,6 +1464,7 @@ function removeSource(sourceId: string): boolean {
   db.exec("BEGIN IMMEDIATE");
   try {
     // Removing a source is an explicit delete: never keep a viewing tombstone.
+    db.prepare("DELETE FROM markers WHERE media_id IN (SELECT media_id FROM media_files WHERE source_id = ?)").run(sourceId);
     db.prepare("DELETE FROM viewing_sessions WHERE media_id IN (SELECT media_id FROM media_files WHERE source_id = ?)").run(sourceId);
     db.prepare("DELETE FROM media_history WHERE media_id IN (SELECT media_id FROM media_files WHERE source_id = ?)").run(sourceId);
     db.prepare("DELETE FROM playback_state WHERE media_id IN (SELECT media_id FROM media_files WHERE source_id = ?)").run(sourceId);
@@ -1572,6 +1595,64 @@ function savePlayback(stateValue: LocalPlaybackState): LocalPlaybackState {
       watched = excluded.watched, updated_at = excluded.updated_at
   `).run(stateValue.mediaId, stateValue.positionSec, stateValue.durationSec ?? null, stateValue.audioTrackId ?? null, subtitleTrackToColumn(stateValue.subtitleTrackId), stateValue.watched ? 1 : 0, updatedAtMs);
   return { ...stateValue, updatedAtMs };
+}
+
+function markerFromRow(row: Record<string, unknown>): LocalMarker {
+  return {
+    mediaId: String(row.mediaId) as LocalMarker["mediaId"],
+    positionSec: Number(row.positionSec),
+    createdAtMs: Number(row.createdAtMs),
+  };
+}
+
+/** Markers for one current media file, ordered by position. Never reads or returns a path. */
+function listMarkers(mediaId: string): LocalMarker[] {
+  const db = requireDatabase();
+  if (!isOpaqueMediaId(mediaId)) throw new LocalWorkerError("invalid-input", "mediaId 格式无效");
+  const rows = db.prepare(`
+    SELECT media_id AS mediaId, position_sec AS positionSec, created_at AS createdAtMs
+    FROM markers WHERE media_id = ? ORDER BY position_sec ASC
+  `).all(mediaId) as Array<Record<string, unknown>>;
+  return rows.map(markerFromRow);
+}
+
+/**
+ * Record one whole-second marker. Invalid opaque IDs, fractional/negative
+ * positions and positions beyond a known duration are rejected outright; no
+ * value is clamped. Re-adding the same second returns the existing record so a
+ * double press never duplicates a tick and never rewrites its creation time.
+ */
+function addMarker(input: LocalMarkerInput): LocalMarker {
+  const db = requireDatabase();
+  if (!input || typeof input !== "object") throw new LocalWorkerError("invalid-input", "标记参数格式无效");
+  if (!isOpaqueMediaId(input.mediaId)) throw new LocalWorkerError("invalid-input", "mediaId 格式无效");
+  if (!isMarkerPositionSec(input.positionSec)) throw new LocalWorkerError("invalid-input", "标记位置必须是有效的整秒数");
+  if (input.durationSec !== undefined && !isMarkerDurationSec(input.durationSec)) {
+    throw new LocalWorkerError("invalid-input", "媒体时长无效");
+  }
+  const media = db.prepare("SELECT media_id AS mediaId FROM media_files WHERE media_id = ? AND available = 1").get(input.mediaId) as { mediaId?: string } | undefined;
+  if (!media?.mediaId) throw new LocalWorkerError("invalid-input", "标记对应的本地媒体不存在");
+  // The player persists duration with playback state; the renderer also knows
+  // the reported duration. The stricter of the known bounds decides.
+  const stored = db.prepare("SELECT duration_sec AS durationSec FROM playback_state WHERE media_id = ?").get(input.mediaId) as { durationSec?: number | null } | undefined;
+  const knownDurations = [input.durationSec, stored?.durationSec ?? undefined]
+    .filter((value): value is number => isMarkerDurationSec(value) && value > 0);
+  const durationSec = knownDurations.length > 0 ? Math.max(...knownDurations) : undefined;
+  if (!isMarkerWithinDuration(input.positionSec, durationSec)) {
+    throw new LocalWorkerError("invalid-input", "标记位置超出媒体时长，未记录");
+  }
+  const existing = db.prepare(`
+    SELECT media_id AS mediaId, position_sec AS positionSec, created_at AS createdAtMs
+    FROM markers WHERE media_id = ? AND position_sec = ?
+  `).get(input.mediaId, input.positionSec) as Record<string, unknown> | undefined;
+  if (existing) return markerFromRow(existing);
+  db.prepare("INSERT OR IGNORE INTO markers (media_id, position_sec, created_at) VALUES (?, ?, ?)").run(input.mediaId, input.positionSec, now());
+  const row = db.prepare(`
+    SELECT media_id AS mediaId, position_sec AS positionSec, created_at AS createdAtMs
+    FROM markers WHERE media_id = ? AND position_sec = ?
+  `).get(input.mediaId, input.positionSec) as Record<string, unknown> | undefined;
+  if (!row) throw new LocalWorkerError("storage", "标记保存结果不可用");
+  return markerFromRow(row);
 }
 
 function viewingHistoryFromRow(row: Record<string, unknown>): LocalViewingHistory {
@@ -2078,6 +2159,9 @@ function clearMissingViewingRecords(sourceId: string): void {
   const predicate = `source_id = ? AND relative_path NOT IN (SELECT relative_path FROM ${SEEN_PATHS_TABLE})`;
   db.prepare(`DELETE FROM viewing_sessions WHERE media_id IN (SELECT media_id FROM media_files WHERE ${predicate})`).run(sourceId);
   db.prepare(`DELETE FROM media_history WHERE media_id IN (SELECT media_id FROM media_files WHERE ${predicate})`).run(sourceId);
+  // A scan-confirmed missing file also forgets its user-written markers; the
+  // media row itself stays as a tombstone under the ordinary scan contract.
+  db.prepare(`DELETE FROM markers WHERE media_id IN (SELECT media_id FROM media_files WHERE ${predicate})`).run(sourceId);
 }
 
 /**
@@ -2455,6 +2539,8 @@ async function handle(request: WorkerRequest): Promise<unknown> {
   if (request.command === "list-collections") return listCollections(request.query);
   if (request.command === "get") return get(request.mediaId);
   if (request.command === "get-detail") return getDetail(request.mediaId);
+  if (request.command === "list-markers") return listMarkers(request.mediaId);
+  if (request.command === "add-marker") return addMarker(request.input);
   if (request.command === "list-continue-watching") return listContinueWatching();
   if (request.command === "remove-source") return removeSource(request.sourceId);
   if (request.command === "source-root") return sourceRoot(request.sourceId);

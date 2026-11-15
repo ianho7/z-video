@@ -34,6 +34,7 @@ import type {
   LocalLibraryQuery,
   LocalLibrarySort,
   LocalLibraryState,
+  LocalMarker,
   LocalMediaDetail,
   LocalMediaItem,
   LocalPlaybackState,
@@ -373,6 +374,14 @@ let activePlaybackTitle = "";
 let activeDetailPlayback: LocalPlaybackState | undefined;
 let selectedSeason: number | undefined;
 const continuePlaybackByMediaId = new Map<string, LocalPlaybackState>();
+/**
+ * Ticket 22a: markers of the media file in the current player session. The
+ * epoch keeps a late list answer from painting ticks on a newer session.
+ */
+let playerMarkers: LocalMarker[] = [];
+let playerMarkerMediaId: `media_${string}` | undefined;
+let playerMarkerEpoch = 0;
+let playerMarkersRenderedKey = "";
 
 let currentQuery: LocalLibraryQuery = { page: 1, pageSize: PAGE_SIZE, filter: "all", sort: "recent" };
 
@@ -1142,6 +1151,115 @@ function renderPlayerPosition(positionSec: number, force = false): void {
   const elapsed = document.querySelector<HTMLElement>("#player-elapsed");
   if (elapsed) elapsed.textContent = formatTime(positionSec);
   if (playerTime) playerTime.textContent = formatTime(playerDurationSec);
+  // The first position event may be where the duration becomes known.
+  renderPlayerMarkers();
+}
+
+const playerMarkerLayer = document.querySelector<HTMLElement>("#player-marker-ticks");
+
+/**
+ * Ticket 22a: draw one tick per marker on the progress bar. Without markers the
+ * layer stays hidden and empty — an empty bar must never look like data. The
+ * render key keeps a 4 Hz position stream from rebuilding an unchanged layer.
+ */
+function renderPlayerMarkers(): void {
+  const layer = playerMarkerLayer;
+  if (!layer) return;
+  const mediaId = playerMarkerMediaId;
+  const duration = playerDurationSec;
+  const visible = mediaId && duration > 0
+    ? playerMarkers.filter((marker) => marker.mediaId === mediaId && Number.isInteger(marker.positionSec))
+    : [];
+  const key = `${mediaId ?? ""}:${duration}:${visible.map((marker) => marker.positionSec).join(",")}`;
+  if (key === playerMarkersRenderedKey) return;
+  playerMarkersRenderedKey = key;
+  if (visible.length === 0) {
+    layer.replaceChildren();
+    layer.hidden = true;
+  } else {
+    layer.replaceChildren(...visible.map((marker) => {
+      const tick = document.createElement("span");
+      tick.className = "player-marker-tick";
+      tick.dataset.positionSec = String(marker.positionSec);
+      tick.style.left = `${Math.max(0, Math.min(100, marker.positionSec / duration * 100))}%`;
+      return tick;
+    }));
+    layer.hidden = false;
+  }
+  markPlayerUiStructureChanged();
+  sendOverlayState();
+}
+
+/** Load the markers of the media being opened; a late answer never paints a newer session. */
+async function loadPlayerMarkers(mediaId: string): Promise<void> {
+  const markerMediaId = mediaId as `media_${string}`;
+  const epoch = ++playerMarkerEpoch;
+  playerMarkerMediaId = markerMediaId;
+  playerMarkers = [];
+  playerMarkersRenderedKey = "";
+  renderPlayerMarkers();
+  try {
+    const markers = await window.zVideo.localLibrary.listMarkers(mediaId);
+    if (epoch !== playerMarkerEpoch || playerMarkerMediaId !== markerMediaId) return;
+    playerMarkers = Array.isArray(markers)
+      ? markers.filter((marker) => marker && marker.mediaId === markerMediaId && Number.isInteger(marker.positionSec))
+      : [];
+    playerMarkersRenderedKey = "";
+    renderPlayerMarkers();
+  } catch {
+    // A failed marker read is not a playback failure: the bar simply has no ticks.
+  }
+}
+
+function clearPlayerMarkers(): void {
+  playerMarkerEpoch += 1;
+  playerMarkerMediaId = undefined;
+  playerMarkers = [];
+  playerMarkersRenderedKey = "";
+  const layer = playerMarkerLayer;
+  if (!layer) return;
+  if (layer.hidden && layer.childElementCount === 0) return;
+  layer.replaceChildren();
+  layer.hidden = true;
+  markPlayerUiStructureChanged();
+  sendOverlayState();
+}
+
+/**
+ * Ticket 22a: `B` records the current whole second as a marker. It never pauses,
+ * seeks or opens a dialog; a failed write gets the visible non-blocking strip.
+ */
+function recordPlayerMarker(): void {
+  const mediaId = playerMarkerMediaId;
+  if (!mediaId || playerClosing || !playerSessionOpen) return;
+  if (!Number.isFinite(playerPositionSec) || playerPositionSec < 0) {
+    showPlayerControlNotice("当前播放位置不可用，没有记录标记。");
+    setPlayerStatus("当前播放位置不可用，没有记录标记。", true);
+    return;
+  }
+  const positionSec = Math.floor(playerPositionSec);
+  const epoch = playerMarkerEpoch;
+  void window.zVideo.localLibrary.addMarker({
+    mediaId,
+    positionSec,
+    ...(playerDurationSec > 0 ? { durationSec: playerDurationSec } : {}),
+  }).then((marker) => {
+    if (epoch !== playerMarkerEpoch || playerMarkerMediaId !== mediaId) return;
+    if (marker && marker.mediaId === mediaId && Number.isInteger(marker.positionSec)) {
+      playerMarkers = [...playerMarkers.filter((candidate) => candidate.positionSec !== marker.positionSec), marker]
+        .sort((left, right) => left.positionSec - right.positionSec);
+      playerMarkersRenderedKey = "";
+      renderPlayerMarkers();
+    }
+    const message = `已记录标记 ${formatTime(positionSec)}。`;
+    showPlayerControlNotice(message);
+    setPlayerStatus(message);
+  }, () => {
+    if (epoch !== playerMarkerEpoch) return;
+    // Ticket 22a: a failed marker must be visible, not only in the sr-only status.
+    showPlayerControlNotice("标记没有记录成功，请重试。");
+    setPlayerStatus("标记没有记录成功，请重试。", true);
+  });
 }
 
 function setPlayerControlsEnabled(enabled: boolean): void {
@@ -1475,6 +1593,10 @@ function handlePlayerShortcut(event: KeyboardEvent): void {
   } else if (event.key.toLowerCase() === "f") {
     event.preventDefault();
     togglePlayerFullscreen();
+  } else if (event.key.toLowerCase() === "b") {
+    // Ticket 22a: record the current position; playback is untouched.
+    event.preventDefault();
+    recordPlayerMarker();
   }
 }
 
@@ -1628,6 +1750,7 @@ function resetPlayerSessionMirror(): void {
   playerMuted = false;
   playerMuteCommandValue = undefined;
   playerSpeedValue = 1;
+  clearPlayerMarkers();
   renderPlayerSettings();
 }
 
@@ -1716,7 +1839,7 @@ function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
       playerDurationSec = event.durationSec ?? 0;
       playerPositionSec = 0;
       setPlayerControlsEnabled(true);
-      setPlayerStatus("视频区域快捷键：Space 暂停 · ←/→ ±5秒 · ↑/↓ 音量±5 · M 静音 · F 全屏 · Esc 退出");
+      setPlayerStatus("视频区域快捷键：Space 暂停 · ←/→ ±5秒 · ↑/↓ 音量±5 · M 静音 · B 标记 · F 全屏 · Esc 退出");
       if (playerSurfaceMessage) playerSurfaceMessage.textContent = "";
       // Ticket 20 / P-07: the first frame may not know the duration yet. The
       // slider is reset here so no previous session's range leaks in, and the
@@ -1738,7 +1861,7 @@ function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
         playerToggleButton.setAttribute("aria-label", label);
         playerToggleButton.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${playing ? '<path d="M6 5h4v14H6zm8 0h4v14h-4z"/>' : '<path d="M8 5v14l11-7z"/>'}</svg><span class="sr-only">${label}</span>`;
       }
-      if (event.state === "playing") setPlayerStatus("视频区域快捷键：Space 暂停 · ←/→ ±5秒 · ↑/↓ 音量±5 · M 静音 · F 全屏 · Esc 退出");
+      if (event.state === "playing") setPlayerStatus("视频区域快捷键：Space 暂停 · ←/→ ±5秒 · ↑/↓ 音量±5 · M 静音 · B 标记 · F 全屏 · Esc 退出");
       else if (event.state === "paused") setPlayerStatus("已暂停 · Space 继续播放");
       else if (event.state === "buffering") setPlayerStatus("缓冲中…");
       else setPlayerStatus("播放结束。");
@@ -2758,6 +2881,7 @@ async function openReviewMedia(restart = false): Promise<void> {
   recordPlayerOrigin();
   activePlaybackTitle = target.title;
   showPlayer(true);
+  void loadPlayerMarkers(target.mediaId);
   updateReviewBar();
   setPlayerStatus("正在打开检查播放…");
   try {
@@ -2765,6 +2889,7 @@ async function openReviewMedia(restart = false): Promise<void> {
     if (!result?.opened) throw new Error("播放器没有接受这次打开请求，已退出加载状态，请重试。");
   } catch (error) {
     discardPlayerSession();
+    clearPlayerMarkers();
     showPlayer(false);
     updateReviewBar();
     setMessage(error instanceof Error ? error.message : "检查播放失败，请重试。", true);
@@ -3555,6 +3680,7 @@ async function openSelectedLocalMedia(restart = false): Promise<void> {
   if (!isPlayerLayerOpen()) recordPlayerOrigin();
   activePlaybackTitle = activeDetail?.item.title ?? "本地媒体";
   showPlayer(true);
+  void loadPlayerMarkers(selectedMediaId);
   setPlayerStatus(restart ? "正在从头打开本地媒体…" : "正在打开本地媒体…");
   try {
     const result = await window.zVideo.localPlayback.open(selectedMediaId, restart ? { restart: true } : undefined);
@@ -3564,6 +3690,7 @@ async function openSelectedLocalMedia(restart = false): Promise<void> {
     if (!result?.opened) throw new Error("播放器没有接受这次打开请求，已退出加载状态，请重试。");
   } catch (error: unknown) {
     discardPlayerSession();
+    clearPlayerMarkers();
     showPlayer(false);
     setMessage(error instanceof Error ? error.message : "本地播放请求失败。", true);
   }

@@ -11,7 +11,7 @@ import type {
  * may resolve those values.
  */
 
-export const LOCAL_LIBRARY_SCHEMA_VERSION = 4 as const;
+export const LOCAL_LIBRARY_SCHEMA_VERSION = 5 as const;
 
 export const LOCAL_LIBRARY_SCHEMA_TABLES = [
   "sources",
@@ -22,6 +22,7 @@ export const LOCAL_LIBRARY_SCHEMA_TABLES = [
   "scan_runs",
   "viewing_sessions",
   "media_history",
+  "markers",
 ] as const;
 
 export type LocalLibrarySchemaTable = (typeof LOCAL_LIBRARY_SCHEMA_TABLES)[number];
@@ -29,6 +30,50 @@ export type LocalLibrarySchemaTable = (typeof LOCAL_LIBRARY_SCHEMA_TABLES)[numbe
 export function isOpaqueMediaId(value: unknown): value is `media_${string}` {
   return typeof value === "string"
     && /^media_[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+/**
+ * One user-written point on a Media file (schema v5). The renderer-safe record
+ * carries only the opaque media ID, the whole-second position and the creation
+ * time; it never includes a path, title, filename, source root or playback URI.
+ */
+export interface LocalMarker {
+  mediaId: `media_${string}`;
+  /** Whole seconds from the start of the file. */
+  positionSec: number;
+  createdAtMs: number;
+}
+
+/**
+ * Add-marker input. `durationSec` is a validation bound only (the renderer knows
+ * the duration the player reported); it is never stored on the marker record.
+ */
+export interface LocalMarkerInput {
+  mediaId: `media_${string}`;
+  positionSec: number;
+  durationSec?: number;
+}
+
+/** Marker positions are whole, non-negative seconds; fractions are rejected, never rounded. */
+export function isMarkerPositionSec(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+/** A usable duration bound is finite and non-negative; NaN/Infinity never silently disables the check. */
+export function isMarkerDurationSec(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+/**
+ * The single marker range rule shared by the IPC parser and the SQLite owner.
+ * A marker is rejected when it has no whole-second position, when it is
+ * negative, or when a known duration proves it lies past the end of the file.
+ * The value is never clamped: an out-of-range position is an error.
+ */
+export function isMarkerWithinDuration(positionSec: number, durationSec?: number): boolean {
+  if (!isMarkerPositionSec(positionSec)) return false;
+  if (durationSec === undefined || !isMarkerDurationSec(durationSec) || durationSec <= 0) return true;
+  return positionSec <= durationSec;
 }
 
 export type LocalLibraryStatus = "ready" | "error";
@@ -359,6 +404,10 @@ export interface LocalLibraryApi {
   listCollections(query?: Partial<LocalCollectionQuery>): Promise<LocalCollectionListResult>;
   get(mediaId: string): Promise<LocalLibraryDetailResult>;
   getArtwork(mediaId: string, kind?: LocalArtworkReference["kind"]): Promise<LocalLibraryArtworkResult>;
+  /** Markers for one opaque media ID, ordered by position; never carries a path or URI. */
+  listMarkers(mediaId: string): Promise<LocalMarker[]>;
+  /** Record the current whole second as one marker; the record is returned so the UI can render it. */
+  addMarker(input: LocalMarkerInput): Promise<LocalMarker>;
   listContinueWatching(): Promise<{ state: LocalLibraryState; items: LocalContinueWatchingItem[] }>;
   removeSource(sourceId: string): Promise<LocalLibraryState>;
   refreshSource(sourceId: string): Promise<LocalScanResult>;

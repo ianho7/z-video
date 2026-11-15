@@ -209,7 +209,7 @@ async function run(): Promise<void> {
     const state = await database.start();
     assert.equal(state.status, "ready");
     assert.equal(state.sqliteAvailable, true);
-    assert.equal(state.schemaVersion, 4);
+    assert.equal(state.schemaVersion, 5);
 
     const imported = await database.importFirstMovieInFolder(fixtureRoot);
     assert.equal(imported.status, "imported");
@@ -724,7 +724,7 @@ async function run(): Promise<void> {
     const reopened = new LocalLibraryDatabase({ dbPath, workerPath });
     const reopenedState = await reopened.start();
     assert.equal(reopenedState.status, "ready");
-    assert.equal(reopenedState.schemaVersion, 4);
+    assert.equal(reopenedState.schemaVersion, 5);
     const reopenedPage = await reopened.list({ page: 1, pageSize: 50 });
     assert.equal(reopenedPage.items.some((item) => item.mediaId === imported.item.mediaId), false);
     await reopened.close();
@@ -797,6 +797,86 @@ async function run(): Promise<void> {
     await ledgerDb.removeSource(readdedScan.sourceId);
     assert.equal(await ledgerDb.getViewingHistory(readdedItem.mediaId), undefined, "removing the source forgets the history");
     await ledgerDb.close();
+
+    // Ticket 22a: markers are whole-second points keyed by the opaque media ID.
+    // They list by position, survive an owner restart, cascade with the source,
+    // and reject invalid ids and out-of-range positions without clamping.
+    const markerRoot = join(profile, "marker-fixture");
+    await mkdir(markerRoot, { recursive: true });
+    await writeFile(join(markerRoot, "Marker Movie.mkv"), Buffer.from("marker fixture"));
+    const markerDb = new LocalLibraryDatabase({ dbPath, workerPath });
+    await markerDb.start();
+    const markerScan = await markerDb.scanFolder(markerRoot);
+    assert.equal(markerScan.status, "completed");
+    const markerItem = (await markerDb.list({ page: 1, pageSize: 10, sourceId: markerScan.sourceId })).items[0];
+    assert.ok(markerItem, "marker fixture was indexed");
+    const markerMediaId = markerItem.mediaId;
+    assert.deepEqual(await markerDb.listMarkers(markerMediaId), [], "a new media file starts without markers");
+    const firstMarker = await markerDb.addMarker({ mediaId: markerMediaId, positionSec: 90 });
+    assert.deepEqual(
+      Object.keys(firstMarker).sort(),
+      ["createdAtMs", "mediaId", "positionSec"],
+      "the marker DTO carries only the opaque id, whole-second position and creation time",
+    );
+    assert.equal(firstMarker.mediaId, markerMediaId);
+    assert.equal(firstMarker.positionSec, 90);
+    assert.equal(Number.isInteger(firstMarker.createdAtMs), true);
+    assert.equal(JSON.stringify(firstMarker).includes(markerRoot), false, "a marker never exposes the source root");
+    const duplicateMarker = await markerDb.addMarker({ mediaId: markerMediaId, positionSec: 90 });
+    assert.equal(duplicateMarker.createdAtMs, firstMarker.createdAtMs, "re-adding the same second is idempotent and keeps its original time");
+    await markerDb.addMarker({ mediaId: markerMediaId, positionSec: 30 });
+    assert.deepEqual(
+      (await markerDb.listMarkers(markerMediaId)).map((marker) => marker.positionSec),
+      [30, 90],
+      "markers list ordered by position",
+    );
+    await assert.rejects(
+      () => markerDb.addMarker({ mediaId: "C:\\Media\\movie.mkv" as `media_${string}`, positionSec: 10 }),
+      /mediaId/u,
+      "a path is not an opaque media id",
+    );
+    await assert.rejects(() => markerDb.addMarker({ mediaId: markerMediaId, positionSec: -1 }), /标记位置/u, "a negative position is rejected, not clamped");
+    await assert.rejects(() => markerDb.addMarker({ mediaId: markerMediaId, positionSec: 10.5 }), /标记位置/u, "a fractional position is rejected instead of being rounded");
+    await assert.rejects(
+      () => markerDb.addMarker({ mediaId: markerMediaId, positionSec: 3_601, durationSec: 3_600 }),
+      /超出/u,
+      "a position past the reported duration is rejected",
+    );
+    await assert.rejects(
+      () => markerDb.addMarker({ mediaId: "media_123e4567-e89b-42d3-a456-426614174099", positionSec: 10 }),
+      /不存在/u,
+      "an unknown opaque media id cannot be marked",
+    );
+    // The stored playback duration is an independent second upper bound.
+    await markerDb.savePlayback({ mediaId: markerMediaId, positionSec: 0, durationSec: 1_200, watched: false, updatedAtMs: Date.now() });
+    await assert.rejects(
+      () => markerDb.addMarker({ mediaId: markerMediaId, positionSec: 1_300 }),
+      /超出/u,
+      "a position past the stored playback duration is rejected even without a caller-supplied duration",
+    );
+    assert.deepEqual(
+      (await markerDb.listMarkers(markerMediaId)).map((marker) => marker.positionSec),
+      [30, 90],
+      "rejected markers never reach the table",
+    );
+    await markerDb.close();
+    const markerReopened = new LocalLibraryDatabase({ dbPath, workerPath });
+    await markerReopened.start();
+    assert.deepEqual(
+      (await markerReopened.listMarkers(markerMediaId)).map((marker) => marker.positionSec),
+      [30, 90],
+      "markers survive an owner restart",
+    );
+    await markerReopened.removeSource(markerScan.sourceId);
+    assert.deepEqual(await markerReopened.listMarkers(markerMediaId), [], "removing the Source forgets its markers");
+    const markerRows = openSqlite(dbPath);
+    try {
+      const orphanCount = markerRows.prepare("SELECT COUNT(*) AS count FROM markers WHERE media_id = ?").get(markerMediaId) as { count?: number } | undefined;
+      assert.equal(Number(orphanCount?.count), 0, "removing the Source leaves no orphan marker rows");
+    } finally {
+      markerRows.close();
+    }
+    await markerReopened.close();
 
     // A2 cleanup rules and queue. Sizes/ages are seeded directly because the
     // public facade intentionally has no "pretend this is a 6 GB file from last
@@ -1391,23 +1471,24 @@ port.on("message", (event) => {
       v2.close();
     }
     const v2Db = new LocalLibraryDatabase({ dbPath: versionTwoPath, workerPath });
-    assert.equal((await v2Db.start()).schemaVersion, 4);
+    assert.equal((await v2Db.start()).schemaVersion, 5, "a v2 database migrates through v3/v4 to the current v5 schema");
     await v2Db.close();
     const v3 = openSqlite(versionTwoPath);
     try {
       const version = v3.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
-      assert.equal(Number(version?.user_version), 4);
+      assert.equal(Number(version?.user_version), 5);
       const tables = v3.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('viewing_sessions', 'media_history') ORDER BY name").all() as Array<{ name?: string }>;
       assert.deepEqual(tables.map((row) => row.name), ["media_history", "viewing_sessions"], "the v3 step of the migration creates both ledger tables");
     } finally {
       v3.close();
     }
     const v2Again = new LocalLibraryDatabase({ dbPath: versionTwoPath, workerPath });
-    assert.equal((await v2Again.start()).schemaVersion, 4, "re-running the v2 → v4 migration is idempotent");
+    assert.equal((await v2Again.start()).schemaVersion, 5, "re-running the v2 → v5 migration is idempotent");
     await v2Again.close();
 
     // v3 → v4 (Ticket 08): an existing v3 database gains sources.degraded with
     // default 0, keeps every row and viewing record, and re-running is a no-op.
+    // v5 (Ticket 22a) then adds the markers table in the same idempotent pass.
     const versionThreePath = join(profile, "version-three.sqlite");
     const v3Snapshot = openSqlite(dbPath);
     try {
@@ -1430,14 +1511,14 @@ port.on("message", (event) => {
     }
     const v3Db = new LocalLibraryDatabase({ dbPath: versionThreePath, workerPath });
     const v4State = await v3Db.start();
-    assert.equal(v4State.schemaVersion, 4);
+    assert.equal(v4State.schemaVersion, 5);
     assert.equal(v4State.sources.length > 0, true, "the migrated database keeps its sources");
     assert.equal(v4State.sources.every((source) => source.degraded === false), true, "pre-v4 rows read as not degraded");
     await v3Db.close();
     const v4File = openSqlite(versionThreePath);
     try {
       const version = v4File.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
-      assert.equal(Number(version?.user_version), 4);
+      assert.equal(Number(version?.user_version), 5);
       const columns = v4File.prepare("PRAGMA table_info(sources)").all() as Array<{ name?: string; dflt_value?: string | null; notnull?: number }>;
       const degraded = columns.find((column) => column.name === "degraded");
       assert.ok(degraded, "v4 migration adds sources.degraded");
@@ -1449,8 +1530,51 @@ port.on("message", (event) => {
       v4File.close();
     }
     const v3Again = new LocalLibraryDatabase({ dbPath: versionThreePath, workerPath });
-    assert.equal((await v3Again.start()).schemaVersion, 4, "re-running the v3 → v4 migration is idempotent");
+    assert.equal((await v3Again.start()).schemaVersion, 5, "re-running the v3 → v5 migration is idempotent");
     await v3Again.close();
+
+    // v4 → v5 (Ticket 22a): an existing v4 database gains the markers table, keeps
+    // every media row and viewing record, and re-opening it is a no-op.
+    const versionFourPath = join(profile, "version-four.sqlite");
+    const v4Snapshot = openSqlite(dbPath);
+    try {
+      v4Snapshot.exec(`VACUUM INTO '${versionFourPath.replace(/'/g, "''")}'`);
+    } finally {
+      v4Snapshot.close();
+    }
+    let mediaRowsBeforeV5 = 0;
+    let historyRowsBeforeV5 = 0;
+    const v4Shaped = openSqlite(versionFourPath);
+    try {
+      v4Shaped.exec("DROP TABLE IF EXISTS markers;");
+      v4Shaped.exec("PRAGMA user_version = 4;");
+      mediaRowsBeforeV5 = Number((v4Shaped.prepare("SELECT COUNT(*) AS count FROM media_files").get() as { count?: number } | undefined)?.count ?? 0);
+      historyRowsBeforeV5 = Number((v4Shaped.prepare("SELECT COUNT(*) AS count FROM media_history").get() as { count?: number } | undefined)?.count ?? 0);
+      assert.equal(mediaRowsBeforeV5 > 0, true, "the fixture database has media rows before the v5 step");
+      const v4Tables = v4Shaped.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'markers'").all() as Array<{ name?: string }>;
+      assert.deepEqual(v4Tables, [], "a v4 database has no markers table");
+    } finally {
+      v4Shaped.close();
+    }
+    const v4Db = new LocalLibraryDatabase({ dbPath: versionFourPath, workerPath });
+    assert.equal((await v4Db.start()).schemaVersion, 5);
+    await v4Db.close();
+    const v5File = openSqlite(versionFourPath);
+    try {
+      const version = v5File.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
+      assert.equal(Number(version?.user_version), 5);
+      const tables = v5File.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'markers'").all() as Array<{ name?: string }>;
+      assert.deepEqual(tables.map((row) => row.name), ["markers"], "the v5 step creates the markers table");
+      assert.equal(Number((v5File.prepare("SELECT COUNT(*) AS count FROM media_files").get() as { count?: number } | undefined)?.count), mediaRowsBeforeV5, "migration never drops media rows");
+      assert.equal(Number((v5File.prepare("SELECT COUNT(*) AS count FROM media_history").get() as { count?: number } | undefined)?.count), historyRowsBeforeV5, "migration never drops viewing history");
+      const columns = v5File.prepare("PRAGMA table_info(markers)").all() as Array<{ name?: string; notnull?: number }>;
+      assert.deepEqual(columns.map((column) => column.name), ["media_id", "position_sec", "created_at"], "the marker table stores only the opaque id, position and creation time");
+    } finally {
+      v5File.close();
+    }
+    const v4Again = new LocalLibraryDatabase({ dbPath: versionFourPath, workerPath });
+    assert.equal((await v4Again.start()).schemaVersion, 5, "re-running the v4 → v5 migration is idempotent");
+    await v4Again.close();
 
     const legacyPath = join(profile, "legacy-v1.sqlite");
     const snapshot = openSqlite(dbPath);
@@ -1464,6 +1588,7 @@ port.on("message", (event) => {
       legacy.exec("DROP INDEX IF EXISTS collections_premiered_at;");
       legacy.exec("ALTER TABLE collections DROP COLUMN premiered_at;");
       legacy.exec("ALTER TABLE sources DROP COLUMN degraded;");
+      legacy.exec("DROP TABLE IF EXISTS markers;");
       legacy.exec("PRAGMA user_version = 1;");
       const legacyVersion = legacy.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
       assert.equal(Number(legacyVersion?.user_version), 1);
@@ -1473,13 +1598,13 @@ port.on("message", (event) => {
       legacy.close();
     }
     const legacyDb = new LocalLibraryDatabase({ dbPath: legacyPath, workerPath });
-    assert.equal((await legacyDb.start()).schemaVersion, 4);
+    assert.equal((await legacyDb.start()).schemaVersion, 5);
     const migratedPage = await legacyDb.list({ page: 1, pageSize: 50, sort: "released_desc" });
     assert.equal(migratedPage.totalCount > 0, true);
     assert.equal(migratedPage.items.every((item) => item.premieredDate === null), true, "migration never guesses a date for old rows");
     await legacyDb.close();
     const migratedAgain = new LocalLibraryDatabase({ dbPath: legacyPath, workerPath });
-    assert.equal((await migratedAgain.start()).schemaVersion, 4, "re-running the migration is idempotent");
+    assert.equal((await migratedAgain.start()).schemaVersion, 5, "re-running the migration is idempotent");
     const migratedAgainPage = await migratedAgain.list({ page: 1, pageSize: 50, sort: "released_desc" });
     assert.equal(migratedAgainPage.totalCount, migratedPage.totalCount);
     assert.equal(migratedAgainPage.items.every((item) => item.premieredDate === null), true);
@@ -1487,17 +1612,19 @@ port.on("message", (event) => {
     const migratedDb = openSqlite(legacyPath);
     try {
       const version = migratedDb.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
-      assert.equal(Number(version?.user_version), 4);
+      assert.equal(Number(version?.user_version), 5);
       const columns = migratedDb.prepare("PRAGMA table_info(collections)").all() as Array<{ name?: string }>;
       assert.equal(columns.some((column) => column.name === "premiered_at"), true);
       const index = migratedDb.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'collections_premiered_at'").get();
       assert.ok(index, "v2 migration creates the premiere-date index");
       const sourceColumns = migratedDb.prepare("PRAGMA table_info(sources)").all() as Array<{ name?: string }>;
       assert.equal(sourceColumns.some((column) => column.name === "degraded"), true, "v4 migration adds sources.degraded to a v1 database");
+      const markerTable = migratedDb.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'markers'").get();
+      assert.ok(markerTable, "v5 migration adds the markers table to a v1 database");
     } finally {
       migratedDb.close();
     }
-    process.stdout.write("PASS: local DB owner imported one fixture, reused stable opaque mediaId, listed without paths, resolved only in main owner, parsed real premiere dates, sorted released_desc with unknown dates last, split partial scans from offline sources, and migrated v1/v2/v3 data without guessing dates or dropping rows\n");
+    process.stdout.write("PASS: local DB owner imported one fixture, reused stable opaque mediaId, listed without paths, resolved only in main owner, parsed real premiere dates, sorted released_desc with unknown dates last, split partial scans from offline sources, stored whole-second markers with restart/cascade/rejection behavior, and migrated v1/v2/v3/v4 data without guessing dates or dropping rows\n");
   } finally {
     await rm(profile, { recursive: true, force: true }).catch(() => undefined);
   }

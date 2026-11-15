@@ -14,6 +14,7 @@ import {
   LOCAL_LIBRARY_SCHEMA_VERSION,
   type LocalCollectionSummary,
   type LocalLibraryState,
+  type LocalMarker,
   type LocalMediaDetail,
   type LocalMediaItem,
 } from "../src/shared/local-library-contracts";
@@ -111,6 +112,26 @@ export async function startPlayerWindowFixture(dialogQueue: DialogResult[] = [])
     return item ? { state, detail: detail(item) } : { state };
   });
   ipcMain.handle("local-library:continue-watching", async () => ({ state, items: [] }));
+  // Ticket 22a: the renderer lists/adds markers through the same preload bridge
+  // as production; only the SQLite owner is replaced by this in-memory store.
+  const markersByMedia = new Map<string, LocalMarker[]>();
+  ipcMain.handle("local-library:markers-list", async (_event, mediaId: string) => [...(markersByMedia.get(mediaId) ?? [])]);
+  ipcMain.handle("local-library:markers-add", async (_event, input: { mediaId?: unknown; positionSec?: unknown; durationSec?: unknown }) => {
+    const mediaId = typeof input?.mediaId === "string" ? input.mediaId : "";
+    if (mediaId !== SAMPLE_MEDIA_ID) throw new Error("标记对应的本地媒体不存在");
+    const positionSec = input.positionSec;
+    if (typeof positionSec !== "number" || !Number.isInteger(positionSec) || positionSec < 0) throw new Error("标记位置必须是有效的整秒数");
+    const durationSec = typeof input.durationSec === "number" ? input.durationSec : undefined;
+    if (durationSec !== undefined && positionSec > durationSec) throw new Error("标记位置超出媒体时长，未记录");
+    const markers = markersByMedia.get(mediaId) ?? [];
+    const existing = markers.find((marker) => marker.positionSec === positionSec);
+    if (existing) return existing;
+    const marker: LocalMarker = { mediaId: SAMPLE_MEDIA_ID, positionSec, createdAtMs: Date.now() };
+    markers.push(marker);
+    markers.sort((left, right) => left.positionSec - right.positionSec);
+    markersByMedia.set(mediaId, markers);
+    return marker;
+  });
   ipcMain.handle("local-library:artwork", async () => ({ state }));
   ipcMain.handle("app-preferences:get", async () => ({ volume: 100, muted: false, speed: 1, sort: "recent" }));
 
@@ -152,6 +173,8 @@ export async function startPlayerWindowFixture(dialogQueue: DialogResult[] = [])
       "local-library:list",
       "local-library:list-collections",
       "local-library:get",
+      "local-library:markers-list",
+      "local-library:markers-add",
       "local-library:continue-watching",
       "local-library:artwork",
       "app-preferences:get",
