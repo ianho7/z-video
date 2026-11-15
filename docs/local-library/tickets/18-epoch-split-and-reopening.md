@@ -2,7 +2,7 @@
 
 ID: 18-epoch-split-and-reopening
 Blocked by: 15
-Status: ready-for-agent
+Status: done (2026-11-15, merged in 3510c30; smoke precondition fixed in dd44cdb)
 
 ## What to build
 

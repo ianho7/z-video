@@ -2,7 +2,7 @@
 
 ID: 20-audit-blocker-fixes
 Blocked by: 19, 15
-Status: done (2026-11-15, merged in 8248f71; window smokes green, five UI-level checks still manual)
+Status: done (2026-11-15, merged in 8248f71; window smokes green, UI-level checks automated by 20b)
 
 ## What to build
 

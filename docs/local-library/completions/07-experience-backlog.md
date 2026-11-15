@@ -57,4 +57,14 @@ Integration branch: `codex/experience-backlog`
 
 ## 下一批建议
 
-按前沿与风险：**B-05 + G-01**（数据一致性）优先，其次 18（代际/重开）、21（外观）、22（打点）、25（复查会话）。18 与 25 都重度改 `renderer.ts`，建议串行，不要并行。
+按前沿与风险：**B-05 + G-01**（数据一致性）优先，其次 21（外观）、22a/22b（打点）、25（复查会话）。18 与 25 都重度改 `renderer.ts`，建议串行，不要并行。
+
+## S0/S0.5 收口（2026-11-15）
+
+- **Ticket 18**（`3510c30`）：请求代际拆成 library/search/detail 三域；详情 `re-opening` 有独立载体；卡片复用清理 `dataset.artwork*`；`showPlayer(false)`/`closeDetail` 消费扫描刷新队列。0 处旧断言修改，新增 161 行烟测断言。
+- **Ticket 18 修复**（`dd44cdb`）：集成分支上 app smoke 曾稳定 3 连败，定位为**窗口未被合成**（锁屏/显示器休眠时 IntersectionObserver 不回调）；修复为测试侧前置条件（`ensureWindowComposited()` + `scrollIntoView`），未降低断言意图，连续两次 app smoke 通过。
+- **Ticket 20b**（`966681d`）：新增 `test:acceptance-window`，6 场景 12 断言覆盖 F-01/F-04/F-05/P-07/B-06/CL-08，每条都有失败先行证据；隔离 profile 并以文件指纹证明未触碰真实用户数据。
+
+最终状态（`dd44cdb`）：`typecheck` 0、`npm test` 124/124、`test:window` PASS、`test:local-library-app` 连续两次 PASS、`test:acceptance-window` 6/6 PASS。
+
+S0 = 15 / 17 / 18；S0.5 = 19 / 20 / 20b，均为 done。

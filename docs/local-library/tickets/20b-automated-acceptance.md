@@ -2,7 +2,7 @@
 
 ID: 20b-automated-acceptance
 Blocked by: 20
-Status: ready-for-agent
+Status: done (2026-11-15, merged in 966681d; six scenarios, red evidence recorded)
 
 ## What to build
 
