@@ -7,6 +7,7 @@ import {
   isOpaqueMediaId,
   type LocalLibraryQuery,
   type LocalCollectionQuery,
+  type LocalMarkerDeleteInput,
   type LocalMarkerInput,
 } from "../shared/local-library-contracts";
 import {
@@ -81,6 +82,10 @@ export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, 
     const input = parseMarkerInput(value);
     return database.addMarker(input);
   }));
+  ipcMain.handle(IPC_CHANNELS.localLibraryMarkersRemove, (_event, value: unknown) => withUiOperation("local-library.markers-remove", async () => {
+    const input = parseMarkerDeleteInput(value);
+    return database.removeMarker(input);
+  }));
   ipcMain.handle(IPC_CHANNELS.localLibraryArtwork, (_event, value: unknown) => withUiOperation("local-library.artwork", async () => {
     const input = parseArtworkInput(value);
     const artwork = await database.resolveArtwork(input.mediaId, input.kind);
@@ -141,6 +146,7 @@ export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, 
       IPC_CHANNELS.localLibraryGet,
       IPC_CHANNELS.localLibraryMarkersList,
       IPC_CHANNELS.localLibraryMarkersAdd,
+      IPC_CHANNELS.localLibraryMarkersRemove,
       IPC_CHANNELS.localLibraryArtwork,
       IPC_CHANNELS.localLibraryContinueWatching,
       IPC_CHANNELS.localLibraryRemoveSource,
@@ -228,6 +234,21 @@ function parseMarkerInput(value: unknown): LocalMarkerInput {
     positionSec: record.positionSec,
     ...(record.durationSec === undefined ? {} : { durationSec: record.durationSec }),
   };
+}
+
+/**
+ * Ticket 22b delete input: only the opaque id and whole-second position. The
+ * worker re-checks the same opaque-id/position rules, so a malformed renderer
+ * value never reaches SQLite and no duration bound is needed to remove a marker.
+ */
+function parseMarkerDeleteInput(value: unknown): LocalMarkerDeleteInput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("标记参数格式无效");
+  const record = value as Record<string, unknown>;
+  const allowed = new Set(["mediaId", "positionSec"]);
+  if (Object.keys(record).some((key) => !allowed.has(key))) throw new Error("标记字段无效");
+  const mediaId = parseMediaId(record.mediaId);
+  if (!isMarkerPositionSec(record.positionSec)) throw new Error("标记位置必须是有效的整秒数");
+  return { mediaId: mediaId as `media_${string}`, positionSec: record.positionSec };
 }
 
 function parseCleanupQuery(value: unknown): LocalCleanupQueueQuery {

@@ -859,13 +859,44 @@ async function run(): Promise<void> {
       [30, 90],
       "rejected markers never reach the table",
     );
+    // Ticket 22b: deletion is keyed by the same opaque id + whole second, and a
+    // marker that is already gone is an idempotent no-op instead of an error.
+    assert.equal(
+      await markerDb.removeMarker({ mediaId: markerMediaId, positionSec: 10 }),
+      false,
+      "deleting a second that has no marker reports no removal",
+    );
+    assert.equal(
+      await markerDb.removeMarker({ mediaId: "media_123e4567-e89b-42d3-a456-426614174099", positionSec: 30 }),
+      false,
+      "deleting from a well-formed but unknown media id removes nothing",
+    );
+    assert.equal(await markerDb.removeMarker({ mediaId: markerMediaId, positionSec: 90 }), true, "deleting a stored marker reports the removal");
+    assert.deepEqual(
+      (await markerDb.listMarkers(markerMediaId)).map((marker) => marker.positionSec),
+      [30],
+      "deleting one marker leaves the other seconds untouched",
+    );
+    assert.equal(await markerDb.removeMarker({ mediaId: markerMediaId, positionSec: 90 }), false, "deleting the same second twice is idempotent");
+    await assert.rejects(
+      () => markerDb.removeMarker({ mediaId: "C:\\Media\\movie.mkv" as `media_${string}`, positionSec: 30 }),
+      /mediaId/u,
+      "a path is not an opaque media id for deletion",
+    );
+    await assert.rejects(() => markerDb.removeMarker({ mediaId: markerMediaId, positionSec: -1 }), /标记位置/u, "a negative delete position is rejected");
+    await assert.rejects(() => markerDb.removeMarker({ mediaId: markerMediaId, positionSec: 30.5 }), /标记位置/u, "a fractional delete position is rejected instead of being rounded");
+    assert.deepEqual(
+      (await markerDb.listMarkers(markerMediaId)).map((marker) => marker.positionSec),
+      [30],
+      "rejected deletes never remove a marker",
+    );
     await markerDb.close();
     const markerReopened = new LocalLibraryDatabase({ dbPath, workerPath });
     await markerReopened.start();
     assert.deepEqual(
       (await markerReopened.listMarkers(markerMediaId)).map((marker) => marker.positionSec),
-      [30, 90],
-      "markers survive an owner restart",
+      [30],
+      "a deleted marker stays gone after an owner restart",
     );
     await markerReopened.removeSource(markerScan.sourceId);
     assert.deepEqual(await markerReopened.listMarkers(markerMediaId), [], "removing the Source forgets its markers");
@@ -1624,7 +1655,7 @@ port.on("message", (event) => {
     } finally {
       migratedDb.close();
     }
-    process.stdout.write("PASS: local DB owner imported one fixture, reused stable opaque mediaId, listed without paths, resolved only in main owner, parsed real premiere dates, sorted released_desc with unknown dates last, split partial scans from offline sources, stored whole-second markers with restart/cascade/rejection behavior, and migrated v1/v2/v3/v4 data without guessing dates or dropping rows\n");
+    process.stdout.write("PASS: local DB owner imported one fixture, reused stable opaque mediaId, listed without paths, resolved only in main owner, parsed real premiere dates, sorted released_desc with unknown dates last, split partial scans from offline sources, stored and deleted whole-second markers with restart/cascade/idempotent/rejection behavior, and migrated v1/v2/v3/v4 data without guessing dates or dropping rows\n");
   } finally {
     await rm(profile, { recursive: true, force: true }).catch(() => undefined);
   }

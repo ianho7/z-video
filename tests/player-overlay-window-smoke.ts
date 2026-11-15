@@ -35,6 +35,53 @@ async function run(): Promise<void> {
     assert.equal(await read("document.querySelector('#player-toggle-button').getAttribute('aria-label')"), "暂停");
     assert.equal(await read("!!document.querySelector('#player-toggle-button svg') && !!document.querySelector('#player-close-button svg')"), true);
     assert.match(await read("document.querySelector('#player-close-button').textContent"), /返回详情/, "the overlay close control names the detail origin");
+
+    // Ticket 22b: the overlay mirrors the markers of the shared progress bar and
+    // drives the same click-to-seek / one-confirmation delete path.
+    await waitMain("main playback advanced for a marker", `Number(document.querySelector('#player-seek')?.value) >= 2`);
+    await readMain(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', code: 'KeyB' }))`);
+    await waitMain("main marker tick", `document.querySelectorAll('#player-marker-ticks .player-marker-tick').length === 1`);
+    await readMain(`document.querySelector('#player-toggle-button')?.click()`);
+    await waitMain("paused for the marker interaction", `document.querySelector('#player-toggle-button')?.textContent === '播放'`);
+    const mainMarker = await readMain<{ positionSec: number; left: string }>(`(() => {
+      const tick = document.querySelector('#player-marker-ticks .player-marker-tick');
+      return tick ? { positionSec: Number(tick.dataset.positionSec), left: tick.style.left } : null;
+    })()`);
+    assert.ok(Number.isInteger(mainMarker.positionSec), "the main bar has one whole-second marker");
+    await waitFor("overlay marker tick", () => read("document.querySelectorAll('#player-marker-ticks .player-marker-tick').length === 1"));
+    const overlayMarker: { positionSec: number; left: string; hidden: boolean } = await read(`(() => {
+      const layer = document.querySelector('#player-marker-ticks');
+      const tick = layer?.querySelector('.player-marker-tick');
+      return { positionSec: Number(tick?.dataset.positionSec), left: tick?.style.left ?? '', hidden: layer?.hidden !== false };
+    })()`);
+    assert.equal(overlayMarker.positionSec, mainMarker.positionSec, "the overlay mirrors the marker second");
+    assert.equal(overlayMarker.left, mainMarker.left, "the overlay mirrors the tick position on the bar");
+    assert.equal(overlayMarker.hidden, false, "the overlay shows the mirrored marker layer");
+    await read(`document.querySelector('#player-marker-tick-${mainMarker.positionSec}')?.click()`);
+    await waitMain("main seek to the overlay marker click", `(() => {
+      const position = Number(document.querySelector('#player-seek')?.value);
+      return Number.isFinite(position) && Math.abs(position - ${mainMarker.positionSec}) <= 2;
+    })()`);
+    assert.equal(await read("document.querySelector('#player-marker-delete')?.hidden"), false, "the overlay mirrors the single marker delete confirmation");
+    const progress = await waitForValue(
+      "overlay progress fill mirrors the main bar",
+      async () => ({
+        main: await readMain<string>(`document.querySelector('#player-seek')?.parentElement?.style.getPropertyValue('--progress') ?? ''`),
+        overlay: await read(`document.querySelector('#player-seek')?.parentElement?.style.getPropertyValue('--progress') || ''`),
+      }),
+      (value: { main: string; overlay: string }) => value.main.length > 0 && value.main === value.overlay,
+    );
+    assert.equal(progress.overlay, progress.main, "the overlay progress fill matches the main window");
+    await read("document.querySelector('#player-marker-delete')?.click()");
+    await waitMain("main tick removed by the overlay delete", `document.querySelectorAll('#player-marker-ticks .player-marker-tick').length === 0`);
+    await waitFor("overlay tick removed after the delete", () => read("document.querySelectorAll('#player-marker-ticks .player-marker-tick').length === 0 && document.querySelector('#player-marker-ticks')?.hidden === true"));
+    assert.match(
+      await readMain<string>(`document.querySelector('#player-control-notice-text')?.textContent ?? ''`),
+      /已删除标记/u,
+      "a delete from the overlay is visible in the shared player",
+    );
+    await read("document.querySelector('#player-toggle-button').click()");
+    await waitMain("playback resumed after the overlay marker interaction", `document.querySelector('#player-toggle-button')?.textContent === '暂停'`);
     await read("document.querySelector('#player-settings-button').click()");
     await waitFor("overlay settings panel", () => read("document.querySelector('#player-settings')?.hidden === false"));
     const overlaySettings = await read(`(() => {
@@ -276,7 +323,7 @@ async function run(): Promise<void> {
     await delay(3300);
     assert.equal(await read("document.body.classList.contains('overlay-hidden')"), false, "an open error never auto-hides the overlay controls");
 
-    console.log("PASS: player overlay state, commands, idle and visibility lifecycle (synthetic DOM events)");
+    console.log("PASS: player overlay state, marker mirroring, commands, idle and visibility lifecycle (synthetic DOM events)");
   } finally {
     await fixture.cleanup();
     await app.quit();

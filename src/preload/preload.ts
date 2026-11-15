@@ -17,7 +17,7 @@ import type {
   LocalPlaybackControlCommand,
   LocalPlaybackOpenOptions,
 } from "../shared/contracts";
-import type { LocalLibrarySort, LocalMarker, LocalMarkerInput } from "../shared/local-library-contracts";
+import type { LocalLibrarySort, LocalMarker, LocalMarkerDeleteInput, LocalMarkerInput } from "../shared/local-library-contracts";
 import type { CleanupSettings, LocalCleanupQueueQuery, LocalCleanupStateInput } from "../shared/cleanup-contracts";
 
 // Sandboxed preloads may require Electron's built-ins, but not local CommonJS
@@ -33,6 +33,7 @@ const IPC_CHANNELS = {
   localLibraryGet: "local-library:get",
   localLibraryMarkersList: "local-library:markers-list",
   localLibraryMarkersAdd: "local-library:markers-add",
+  localLibraryMarkersRemove: "local-library:markers-remove",
   localLibraryArtwork: "local-library:artwork",
   localLibraryContinueWatching: "local-library:continue-watching",
   localLibraryRemoveSource: "local-library:source-remove",
@@ -98,6 +99,7 @@ const api: ElectronApi = {
     get: (mediaId: string) => ipcRenderer.invoke(IPC_CHANNELS.localLibraryGet, mediaId),
     listMarkers: (mediaId: string) => ipcRenderer.invoke(IPC_CHANNELS.localLibraryMarkersList, mediaId) as Promise<LocalMarker[]>,
     addMarker: (input: LocalMarkerInput) => ipcRenderer.invoke(IPC_CHANNELS.localLibraryMarkersAdd, input) as Promise<LocalMarker>,
+    removeMarker: (input: LocalMarkerDeleteInput) => ipcRenderer.invoke(IPC_CHANNELS.localLibraryMarkersRemove, input) as Promise<boolean>,
     getArtwork: (mediaId: string, kind?: "poster" | "fanart") => ipcRenderer.invoke(IPC_CHANNELS.localLibraryArtwork, { mediaId, kind }),
     listContinueWatching: () => ipcRenderer.invoke(IPC_CHANNELS.localLibraryContinueWatching),
     removeSource: (sourceId: string) => ipcRenderer.invoke(IPC_CHANNELS.localLibraryRemoveSource, sourceId),

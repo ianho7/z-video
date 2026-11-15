@@ -132,6 +132,19 @@ export async function startPlayerWindowFixture(dialogQueue: DialogResult[] = [])
     markersByMedia.set(mediaId, markers);
     return marker;
   });
+  // Ticket 22b: deletion is keyed by the same opaque id + whole second; a marker
+  // that is already gone returns false instead of throwing.
+  ipcMain.handle("local-library:markers-remove", async (_event, input: { mediaId?: unknown; positionSec?: unknown }) => {
+    const mediaId = typeof input?.mediaId === "string" ? input.mediaId : "";
+    if (mediaId !== SAMPLE_MEDIA_ID) return false;
+    const positionSec = input.positionSec;
+    if (typeof positionSec !== "number" || !Number.isInteger(positionSec) || positionSec < 0) throw new Error("标记位置必须是有效的整秒数");
+    const markers = markersByMedia.get(mediaId) ?? [];
+    const index = markers.findIndex((marker) => marker.positionSec === positionSec);
+    if (index < 0) return false;
+    markers.splice(index, 1);
+    return true;
+  });
   ipcMain.handle("local-library:artwork", async () => ({ state }));
   ipcMain.handle("app-preferences:get", async () => ({ volume: 100, muted: false, speed: 1, sort: "recent" }));
 
@@ -175,6 +188,7 @@ export async function startPlayerWindowFixture(dialogQueue: DialogResult[] = [])
       "local-library:get",
       "local-library:markers-list",
       "local-library:markers-add",
+      "local-library:markers-remove",
       "local-library:continue-watching",
       "local-library:artwork",
       "app-preferences:get",

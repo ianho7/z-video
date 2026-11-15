@@ -4,6 +4,7 @@ const controls = document.getElementById("overlay-controls");
 let initialized = false;
 let revision = -1;
 let lastFocusId;
+let pendingFocusId;
 let state = {};
 let timer;
 let dragging = false;
@@ -85,6 +86,7 @@ window.zVideo.overlay.onReset(() => {
   // reopened overlay must repaint from the next full state push.
   initialized = false;
   lastFocusId = undefined;
+  pendingFocusId = undefined;
   heading.innerHTML = "";
   controls.innerHTML = "";
   stage.innerHTML = "";
@@ -112,18 +114,40 @@ window.zVideo.overlay.onState((next) => {
   state = next;
   document.body.classList.toggle("fullscreen", !!next.fullscreen);
   const structureChanged = typeof next.revision === "number" && (next.revision !== revision || !initialized);
+  const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  let repaintDetachedFocus = false;
   if (structureChanged) {
     revision = next.revision;
     if (typeof next.heading === "string") heading.innerHTML = next.heading;
     if (typeof next.controls === "string") controls.innerHTML = next.controls;
     if (typeof next.stage === "string") stage.innerHTML = next.stage;
+    // Ticket 22b: this document's CSP drops inline style declarations parsed from
+    // mirrored markup, so marker ticks reapply their bar offset through CSSOM.
+    for (const tick of controls.querySelectorAll(".player-marker-tick[data-left]")) {
+      tick.style.left = tick.getAttribute("data-left") || "";
+    }
+    // Only a repaint that destroyed the focused control may restore it.
+    repaintDetachedFocus = Boolean(previousFocus?.id) && !previousFocus.isConnected;
     initialized = true;
   }
-  if (typeof next.focusId === "string" && next.focusId && (next.focusId !== lastFocusId || structureChanged)) {
-    lastFocusId = next.focusId;
-    document.getElementById(next.focusId)?.focus({ preventScroll: true });
-  } else if (!next.focusId) {
+  // Ticket 22b: re-applying the mirrored focus on every repaint (a notice
+  // clearing, say) undid a deliberate blur and kept idle controls awake, so an
+  // unchanged focus target is restored only when the repaint detached it or when
+  // the mirrored markup containing it had not arrived yet.
+  const focusTarget = typeof next.focusId === "string" && next.focusId ? next.focusId : undefined;
+  if (focusTarget && (focusTarget !== lastFocusId || pendingFocusId === focusTarget || repaintDetachedFocus)) {
+    const target = document.getElementById(focusTarget);
+    if (target) {
+      target.focus({ preventScroll: true });
+      lastFocusId = focusTarget;
+      pendingFocusId = undefined;
+    } else {
+      lastFocusId = focusTarget;
+      pendingFocusId = focusTarget;
+    }
+  } else if (!focusTarget) {
     lastFocusId = undefined;
+    pendingFocusId = undefined;
   }
   for (const [id, value] of Object.entries(next.elements || {})) {
     const element = document.getElementById(id);
@@ -139,7 +163,13 @@ window.zVideo.overlay.onState((next) => {
     if ("pressed" in value) element.setAttribute("aria-pressed", value.pressed);
     if ("label" in value) element.setAttribute("aria-label", value.label);
   }
-  if (!dragging) document.getElementById("player-seek")?.parentElement?.setAttribute("style", next.progress || "");
+  // Ticket 22b: mirrored style attributes are dropped by this document's CSP, so
+  // the shared progress fill/thumb offset is reapplied through CSSOM instead.
+  if (!dragging) {
+    const seek = document.getElementById("player-seek");
+    const progress = /--progress:\s*([^;]+)/.exec(typeof next.progress === "string" ? next.progress : "");
+    if (seek?.parentElement && progress) seek.parentElement.style.setProperty("--progress", progress[1].trim());
+  }
   if (changed) showControls();
 });
 for (const type of ["click", "input", "change"]) document.addEventListener(type, (event) => {
