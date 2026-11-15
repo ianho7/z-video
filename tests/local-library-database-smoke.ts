@@ -730,6 +730,58 @@ async function run(): Promise<void> {
     assert.equal(reopenedPage.items.some((item) => item.mediaId === imported.item.mediaId), false);
     await reopened.close();
 
+    // Ticket 37 / B-05: cancelling "rescan all" must stop the folders that have
+    // not started yet, not just the one that is running. The three fixture roots
+    // are named so their labels sort A, B, C: the scan order is deterministic.
+    const cancelAllDbPath = join(profile, "user-data", "local-library", "cancel-all.sqlite");
+    const cancelAllFirstRoot = join(profile, "A-cancel-all-first");
+    const cancelAllSecondRoot = join(profile, "B-cancel-all-second");
+    const cancelAllThirdRoot = join(profile, "C-cancel-all-third");
+    await mkdir(cancelAllFirstRoot, { recursive: true });
+    await mkdir(cancelAllSecondRoot, { recursive: true });
+    await mkdir(cancelAllThirdRoot, { recursive: true });
+    for (let index = 0; index < 60; index += 1) await writeFile(join(cancelAllFirstRoot, `A Cancel All ${index}.mkv`), Buffer.from(`cancel all ${index}`));
+    const cancelAllDb = new LocalLibraryDatabase({ dbPath: cancelAllDbPath, workerPath });
+    await cancelAllDb.start();
+    try {
+      const cancelAllFirstScan = await cancelAllDb.scanFolder(cancelAllFirstRoot);
+      assert.equal(cancelAllFirstScan.status, "completed");
+      const cancelAllSecondScan = await cancelAllDb.scanFolder(cancelAllSecondRoot);
+      assert.equal(cancelAllSecondScan.status, "completed", "an empty folder still registers its source");
+      const cancelAllThirdScan = await cancelAllDb.scanFolder(cancelAllThirdRoot);
+      assert.equal(cancelAllThirdScan.status, "completed");
+      // The files added after registration only appear if a later rescan-all
+      // actually started that source.
+      await writeFile(join(cancelAllSecondRoot, "B Later Movie.mkv"), Buffer.from("second source late fixture"));
+      await writeFile(join(cancelAllThirdRoot, "C Later Movie.mkv"), Buffer.from("third source late fixture"));
+
+      let cancelRequests = 0;
+      const unsubscribeCancelAll = cancelAllDb.onScanProgress((progress) => {
+        if (cancelRequests > 0 || progress.status !== "running") return;
+        if (progress.sourceId !== cancelAllFirstScan.sourceId || progress.scannedFiles < 1) return;
+        cancelRequests += 1;
+        void cancelAllDb.cancelScan(progress.scanId);
+      });
+      const cancelAllResults = await withDeadline(cancelAllDb.rescanAll(), 60_000, "cancel-all rescan");
+      unsubscribeCancelAll();
+      assert.equal(cancelRequests, 1, "the running rescan-all was cancelled exactly once");
+      assert.equal(cancelAllResults.length, 1, "cancelling rescan-all never starts the next source");
+      assert.equal(cancelAllResults[0].sourceId, cancelAllFirstScan.sourceId, "only the interrupted source reports a result");
+      assert.equal(cancelAllResults[0].status, "cancelled", "the interrupted source reports cancelled");
+      assert.equal((await cancelAllDb.list({ page: 1, pageSize: 10, query: "B Later Movie" })).totalCount, 0, "a source that never started produces no scan result");
+      assert.equal((await cancelAllDb.list({ page: 1, pageSize: 10, query: "C Later Movie" })).totalCount, 0, "another source that never started also stays unscanned");
+      const cancelAllState = cancelAllDb.getState();
+      for (const sourceId of [cancelAllFirstScan.sourceId, cancelAllSecondScan.sourceId, cancelAllThirdScan.sourceId]) {
+        const source = cancelAllState.sources.find((candidate) => candidate.sourceId === sourceId);
+        assert.ok(source, "every registered source keeps its summary after a cancelled rescan-all");
+        assert.equal(source.available, true, "cancelling rescan-all never marks a readable source offline");
+        assert.equal(source.degraded, false, "cancelling rescan-all never marks a readable source degraded");
+      }
+      assert.equal(await cancelAllDb.cancelScan(cancelAllResults[0].scanId), false, "a terminal rescan-all scan answers false instead of promising a cancel");
+    } finally {
+      await cancelAllDb.close();
+    }
+
     const viewingRoot = join(profile, "viewing-ledger-fixture");
     await mkdir(viewingRoot, { recursive: true });
     const viewingFilePath = join(viewingRoot, "Viewing Ledger Movie.mkv");

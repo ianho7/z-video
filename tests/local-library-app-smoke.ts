@@ -1701,7 +1701,12 @@ async function run(): Promise<void> {
     await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
     await waitFor("back from resumed movie detail", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === true);
     await evaluate(window, "document.querySelector('#choose-folder-button')?.click()");
-    await waitFor("cancel-preservation scan running", readScanUi, (value) => value.pillVisible && value.pillCancelVisible && value.pillCancelDisabled === false, 20_000);
+    // Ticket 37 / B-05: the cancel entry is intentionally usable during the
+    // preparation frame (the pill reads "扫描准备中 · 暂不可取消"), so this
+    // end-to-end cancellation must wait for a real progress frame with a scanId
+    // before pressing it. The preparation-frame behaviour itself is covered by
+    // the window smoke.
+    await waitFor("cancel-preservation scan running", readScanUi, (value) => value.pillVisible && value.pillCancelVisible && value.pillCancelDisabled === false && /扫描中 · \d+/.test(value.pillText), 20_000);
     await evaluate(window, "document.querySelector('#scan-pill-cancel')?.click()");
     const preservationCancelled = await waitFor("cancel-preservation summary", readScanUi, (value) => value.noticeVisible && /扫描已取消/.test(value.noticeTitle), 20_000);
     assert.match(preservationCancelled.noticeText, /播放进度/);
