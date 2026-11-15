@@ -2,7 +2,7 @@
 
 ID: 22a-marker-storage-display
 Blocked by: 15（已完成）
-Status: ready-for-agent
+Status: done (2026-11-15, merged in ab74ecb)
 Spec: docs/local-library/spec-s1-watch-experience.md
 
 ## What to build
