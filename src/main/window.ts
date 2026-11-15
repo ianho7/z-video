@@ -8,6 +8,30 @@ import { createPlayerOverlay } from "./player-overlay";
 
 const WINDOW_BACKGROUND = "#101113";
 
+/** The window surface a second launch is allowed to touch. */
+export interface RaiseableWindow {
+  isDestroyed(): boolean;
+  isMinimized(): boolean;
+  isVisible(): boolean;
+  restore(): void;
+  show(): void;
+  focus(): void;
+}
+
+/**
+ * Ticket 38: a second launch never gets its own window. The owner instance
+ * raises the existing one (restore a minimized window, re-show a hidden one,
+ * focus it) and the second process exits. Returns false when there is no live
+ * window to raise, which is not an error: the second launch still exits.
+ */
+export function raiseMainWindow(window: RaiseableWindow | undefined): boolean {
+  if (!window || window.isDestroyed()) return false;
+  if (window.isMinimized()) window.restore();
+  if (!window.isVisible()) window.show();
+  window.focus();
+  return true;
+}
+
 export function readWindowAppearance(): WindowAppearanceState {
   const forcedByEnvironment = isEnvironmentFlagEnabled(process.env.Z_VIDEO_REDUCED_TRANSPARENCY)
     || isEnvironmentFlagEnabled(process.env.Z_VIDEO_HIGH_CONTRAST);

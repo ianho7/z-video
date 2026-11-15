@@ -10,7 +10,7 @@ import { LocalLibraryWatcher, LocalLibraryNetworkPoller, type LocalWatchSource }
 import { LocalArtworkCache } from "./local-artwork-cache";
 import { MainLocalPlaybackHost } from "./player-host";
 import type { LocalPlaybackStore } from "../shared/local-playback-contracts";
-import { createMainWindow } from "./window";
+import { createMainWindow, raiseMainWindow } from "./window";
 import { AppPreferencesStore } from "./app-preferences";
 import { recordUiOperation } from "./diagnostics";
 
@@ -41,6 +41,19 @@ let localWatch: LocalLibraryWatcher | undefined;
 let localNetworkPoll: LocalLibraryNetworkPoller | undefined;
 let playbackClosing: Promise<void> | undefined;
 let quitting = false;
+
+/**
+ * Ticket 38 (G-01): a second launch is a request to surface the running app, not
+ * a second app. The owner raises its window (restoring a minimized one); the
+ * launching process exits on the lock below without creating a window, a worker,
+ * a SQLite connection or a preferences write.
+ */
+function handleSecondInstance(): void {
+  const raised = raiseMainWindow(mainWindow);
+  // No title, path or profile data: this trace is the evidence that the launch
+  // was handed to the owner instead of bootstrapping a second library.
+  void recordUiOperation("single-instance.second-instance", "success", Date.now(), raised ? {} : { errorKind: "no-window" });
+}
 
 function attachWindowLifecycle(window: ReturnType<typeof createMainWindow>): void {
   window.once("closed", () => {
@@ -199,22 +212,35 @@ async function bootstrap(): Promise<void> {
   });
 }
 
-void bootstrap().catch((error: unknown) => {
-  // Reaching here means even the window could not be created: there is no
-  // surface left to report on.
-  console.error("z-video failed to create its main window", error instanceof Error ? error.message : "unknown error");
-  void recordUiOperation("main.window", "error", Date.now(), { errorKind: error instanceof Error ? error.name : "unknown" });
-  app.exit(1);
-});
+/**
+ * Ticket 38 (G-01): the lock is taken before anything can touch the profile.
+ * SQLite, the utility-process worker and `app-preferences.json` all live under
+ * `userData`, so a second launch must stop here: it exits immediately, and the
+ * owner receives `second-instance` and raises its existing window. A crash of
+ * the owner releases the lock, so the next launch bootstraps normally.
+ */
+if (!app.requestSingleInstanceLock()) {
+  app.exit(0);
+} else {
+  app.on("second-instance", () => handleSecondInstance());
 
-app.on("before-quit", (event) => {
-  if (quitting) return;
-  event.preventDefault();
-  quitting = true;
-  const close = closePlayback().then(() => localLibrary?.close());
-  void close.finally(() => app.quit());
-});
+  void bootstrap().catch((error: unknown) => {
+    // Reaching here means even the window could not be created: there is no
+    // surface left to report on.
+    console.error("z-video failed to create its main window", error instanceof Error ? error.message : "unknown error");
+    void recordUiOperation("main.window", "error", Date.now(), { errorKind: error instanceof Error ? error.name : "unknown" });
+    app.exit(1);
+  });
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
-});
+  app.on("before-quit", (event) => {
+    if (quitting) return;
+    event.preventDefault();
+    quitting = true;
+    const close = closePlayback().then(() => localLibrary?.close());
+    void close.finally(() => app.quit());
+  });
+
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") app.quit();
+  });
+}

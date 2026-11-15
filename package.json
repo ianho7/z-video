@@ -17,6 +17,7 @@
     "test:local-library": "npm run build && node scripts/run-local-library-database-smoke.mjs",
     "test:local-artwork-cache": "npm run build && node --test dist/tests/local-artwork-cache.test.js",
     "test:local-library-app": "npm run build && node scripts/run-local-library-app-smoke.mjs",
+    "test:single-instance": "npm run build && node scripts/run-single-instance-smoke.mjs",
     "test:acceptance-window": "npm run build && node scripts/run-acceptance-window-smoke.mjs",
     "test:local-library-scale": "npm run build && node scripts/run-local-library-scale-smoke.mjs",
     "test:local-playback-resume": "npm run build && node scripts/run-local-playback-resume-smoke.mjs",
