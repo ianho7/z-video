@@ -5,7 +5,8 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { LocalLibraryRefreshScheduler } from "../src/main/local-library-refresh";
-import type { LocalDirectoryScanResult, LocalLibraryRefreshResult, LocalSourceDirectories } from "../src/shared/local-library-contracts";
+import { LocalLibraryNetworkPoller } from "../src/main/local-library-watch";
+import type { LocalDirectoryScanResult, LocalLibraryRefreshResult, LocalRefreshOutcome, LocalSourceDirectories } from "../src/shared/local-library-contracts";
 // Registered from here so `npm test` runs the Ticket 24a watcher seam too; the
 // runner's module list is not part of this ticket's boundary.
 import "./local-library-watch.test";
@@ -353,6 +354,56 @@ test("a watch-triggered root rescan is automatic and addressed as the owner's ro
     assert.deepEqual(calls, [{ sourceId, directories: ["."] }], "the source root is requested as '.', the spelling the owner accepts");
     assert.equal(automaticDuringScan, true, "a watch rescan is silent: it must not forward scan progress");
     assert.equal(scheduler.isAutomaticScanActive(), false, "the silent flag is released after the scan");
+    scheduler.dispose();
+  } finally {
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test("a network poll hands its dirty directory to the shared watch rescan with the watch cause", async () => {
+  const { profile, root } = await createFixture();
+  try {
+    const calls: ScanCall[] = [];
+    const results: LocalLibraryRefreshResult[] = [];
+    const sourceId = "source_123e4567-e89b-42d3-a456-426614174000";
+    const inventory: LocalSourceDirectories[] = [{ sourceId, relativeDirectories: ["", "A-dir", "A-dir/nested", "B-dir"] }];
+    const scheduler = new LocalLibraryRefreshScheduler(
+      createPort(root, inventory, calls),
+      join(profile, "baseline.json"),
+      { now: () => 1_000, onResult: (result) => results.push(result) },
+    );
+    let changedDirectoryMtime = 1_000;
+    let drain: Promise<LocalRefreshOutcome> | undefined;
+    const poller = new LocalLibraryNetworkPoller({
+      directories: {
+        listScanDirectories: async () => inventory,
+        sourceRoot: async (candidate) => candidate === sourceId ? root : undefined,
+      },
+      // The share is simulated: classification and directory mtime are injected,
+      // so this test never touches SMB. The rescan below is the real local path.
+      classifySource: () => "network",
+      isForeground: () => true,
+      statDirectoryMtime: async (directoryPath) => {
+        if (directoryPath === root) return 1_000;
+        if (directoryPath === join(root, "A-dir")) return changedDirectoryMtime;
+        return 1_000;
+      },
+      onChange: (directories) => {
+        drain = scheduler.requestWatch(directories);
+      },
+    });
+    await poller.poll();
+    await writeFile(join(root, "A-dir", "a.nfo"), "<movie><title>A polled</title></movie>");
+    changedDirectoryMtime = 2_000;
+    await poller.poll();
+    assert.ok(drain, "the poller hands the changed directory to the scheduler");
+    const outcome = await drain;
+    assert.deepEqual(outcome, { status: "refreshed" });
+    assert.deepEqual(calls, [{ sourceId, directories: ["A-dir"] }], "only the polled directory is rescanned");
+    assert.equal(results.length, 1);
+    assert.equal(results[0]?.trigger, "watch", "network polling reuses the main-only watch cause; no shared contract change");
+    assert.deepEqual(results[0]?.counts, { imported: 0, updated: 1, unchanged: 0, removed: 0 });
+    poller.dispose();
     scheduler.dispose();
   } finally {
     await rm(profile, { recursive: true, force: true });
