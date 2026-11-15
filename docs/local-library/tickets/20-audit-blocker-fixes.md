@@ -2,7 +2,7 @@
 
 ID: 20-audit-blocker-fixes
 Blocked by: 19, 15
-Status: ready-for-agent
+Status: done (headless verified 2026-11-15, merged in 8248f71; GUI checks deferred)
 
 ## What to build
 
