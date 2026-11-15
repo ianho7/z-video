@@ -74,6 +74,12 @@ async function createFixture(profile: string): Promise<string> {
     await copyFile(join(process.cwd(), "assets", "test_video.mp4"), join(showRoot, stem + ".mp4"));
     await writeFile(join(showRoot, stem + ".nfo"), `<episodedetails><title>Next Episode ${number}</title><season>1</season><episode>${number}</episode></episodedetails>`);
   }
+  // Ticket 18: one real local poster so the reused-card artwork path is
+  // exercised through the worker → main artwork cache → renderer queue.
+  await writeFile(join(showRoot, "poster.png"), Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAABAAAAAYCAYAAADzoH0MAAAAJUlEQVR42mNkYPhfz0AEYBxVSF+FjP9BSqkGjKOsH2X9KOtHWT8KAGj3BP1s0nL0AAAAAElFTkSuQmCC",
+    "base64",
+  ));
 
   const batchSize = 100;
   for (let first = 0; first < INDEX_FILE_COUNT; first += batchSize) {
@@ -1266,6 +1272,152 @@ async function run(): Promise<void> {
     await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
     await waitFor("back to library after episode playback", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === true);
 
+    // Ticket 18 · independent request generations, a real re-opening carrier,
+    // artwork state on reused cards, and the scan refresh queue.
+    await evaluate(window, "document.querySelector('[data-nav=all]')?.click()");
+    const libraryBeforeGenerations = await waitFor(
+      "library page before the ticket 18 checks",
+      () => evaluate(window, "({ scope: document.querySelector('#page-scope')?.textContent || '', busy: document.querySelector('#library-grid')?.getAttribute('aria-busy'), cards: document.querySelectorAll('#library-grid .media-card').length, filter: document.querySelector('#library-filter-buttons [data-filter][aria-pressed=\"true\"]')?.dataset.filter || '' })"),
+      (value) => value.busy === null && value.cards > 0 && value.filter === "all",
+    );
+    const worksBeforeTicket18 = Number(libraryBeforeGenerations.scope.match(/共 (\d+) 部作品/)?.[1] ?? 0);
+    assert.ok(worksBeforeTicket18 > 0, `the work list has a countable total before the ticket 18 checks: ${libraryBeforeGenerations.scope}`);
+    await evaluate(window, "document.querySelector('#library-filter-buttons [data-filter=show]')?.click()");
+    const artworkCard = await waitFor(
+      "show card with loaded artwork",
+      () => evaluate(window, `(() => {
+        const poster = document.querySelector('#library-grid .media-poster');
+        return {
+          titles: [...document.querySelectorAll('#library-grid .media-card-title')].map((title) => title.textContent || ''),
+          images: document.querySelectorAll('#library-grid .media-poster img').length,
+          mediaId: poster?.dataset.artworkMediaId || '',
+          loaded: poster?.dataset.artworkLoaded || '',
+          generation: poster?.dataset.artworkGeneration || '',
+        };
+      })()`),
+      (value) => value.titles.length === 1 && value.titles[0] === "Owned Next Show" && value.images === 1,
+    );
+    assert.ok(artworkCard.mediaId, "the fixture poster reaches the show card through the real artwork path");
+
+    // 1. Switching episodes enters `re-opening`: a loading carrier with no
+    // previous episode content, and never "no detail in memory but old content
+    // on screen".
+    await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
+    const showDetailBeforeSwitch = await waitFor("show detail before the episode switch", readShowDetail, (value) => value.hidden === false && value.title === "Owned Next Show" && value.count === 3);
+    // Every fixture episode has progress by now, so the resume episode owns the
+    // initial selection; switch to a different row instead of assuming index 0.
+    const switchTargetIndex = showDetailBeforeSwitch.currentIndex === 0 ? 1 : 0;
+    const switchTargetNumber = String(switchTargetIndex + 1).padStart(2, "0");
+    await waitFor("show detail cover before the episode switch", () => evaluate(window, "document.querySelectorAll('#detail-poster img').length"), (count) => count === 1);
+    delayNextDetail = true;
+    await evaluate(window, `document.querySelectorAll('#detail-episodes .episode-row')[${switchTargetIndex}]?.click()`);
+    const reopening = await evaluate(window, `(() => ({
+      state: document.querySelector('#media-detail')?.dataset.state || '',
+      busy: document.querySelector('#media-detail')?.getAttribute('aria-busy'),
+      skeletonVisible: document.querySelector('#detail-skeleton')?.hidden === false,
+      contentHidden: document.querySelector('#detail-content')?.hidden === true,
+      title: document.querySelector('#media-detail-title')?.textContent || '',
+      posterImages: document.querySelectorAll('#detail-poster img').length,
+      episodeRows: document.querySelectorAll('#detail-episodes .episode-row').length,
+      playDisabled: document.querySelector('#media-detail-open')?.disabled === true,
+    }))()`);
+    assert.equal(reopening.state, "re-opening", "an episode switch enters its own re-opening state");
+    assert.equal(reopening.busy, "true", "the re-opening state reports busy");
+    assert.equal(reopening.skeletonVisible, true, "re-opening keeps a loading carrier");
+    assert.equal(reopening.contentHidden, true, "re-opening never shows the previous episode");
+    assert.equal(reopening.title, "", "the previous title is cleared while the next episode loads");
+    assert.equal(reopening.posterImages, 0, "the previous cover is cleared while the next episode loads");
+    assert.equal(reopening.episodeRows, 0, "the previous episode list is cleared while the next episode loads");
+    assert.equal(reopening.playDisabled, true, "the play action is disabled while the next episode loads");
+    const reopenedEpisode = await waitFor("episode switch completes", readShowDetail, (value) => value.hidden === false && value.currentIndex === switchTargetIndex && value.count === 3);
+    assert.equal(reopenedEpisode.currentNumber, switchTargetNumber);
+    const reopenedState = await evaluate(window, "document.querySelector('#media-detail')?.dataset.state || ''");
+    assert.equal(reopenedState, "ready");
+    assert.equal(await evaluate(window, "document.querySelector('#media-detail')?.getAttribute('aria-busy')"), null);
+    await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
+    await waitFor("back after the episode switch", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === true);
+
+    // 2. A reused card re-derives `dataset.artwork*` instead of trusting a
+    // loading flag left behind by a discarded request.
+    const stuckArtwork = await evaluate(window, `(() => {
+      const poster = document.querySelector('#library-grid .media-poster');
+      if (!poster) return null;
+      poster.dataset.artworkLoading = "true";
+      delete poster.dataset.artworkLoaded;
+      poster.replaceChildren();
+      return { mediaId: poster.dataset.artworkMediaId || '', generation: poster.dataset.artworkGeneration || '' };
+    })()`);
+    assert.ok(stuckArtwork?.mediaId, "the reused card still carries an artwork reference");
+    await evaluate(window, "document.querySelector('#library-filter-buttons [data-filter=show]')?.click()");
+    const recoveredArtwork = await waitFor(
+      "a reused card recovers its artwork",
+      () => evaluate(window, `(() => { const poster = document.querySelector('#library-grid .media-poster'); return { images: document.querySelectorAll('#library-grid .media-poster img').length, loading: poster?.dataset.artworkLoading || '', loaded: poster?.dataset.artworkLoaded || '', generation: poster?.dataset.artworkGeneration || '' }; })()`),
+      (value) => value.images === 1 && value.loaded === "true" && value.loading !== "true",
+    );
+    assert.notEqual(recoveredArtwork.generation, stuckArtwork?.generation, "reuse re-arms the artwork generation instead of trusting the stale flag");
+
+    // 3. Opening a detail never discards an in-flight list load; the filter that
+    // was requested before the detail finishes behind the detail layer.
+    delayNextLibraryList = true;
+    await evaluate(window, "document.querySelector('#library-filter-buttons [data-filter=episode]')?.click()");
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
+    await waitFor("detail opened while the library is loading", readShowDetail, (value) => value.hidden === false && value.title === "Owned Next Show" && value.count === 3);
+    const libraryBehindDetail = await waitFor(
+      "library load finishes behind the open detail",
+      () => evaluate(window, `(() => ({ busy: document.querySelector('#library-grid')?.getAttribute('aria-busy'), titles: [...document.querySelectorAll('#library-grid .media-card-title')].map((title) => title.textContent || ''), filter: document.querySelector('#library-filter-buttons [data-filter][aria-pressed="true"]')?.dataset.filter || '' }))()`),
+      (value) => value.busy === null && value.filter === "episode",
+    );
+    assert.deepEqual([...libraryBehindDetail.titles].sort(), ["Next Episode 1", "Next Episode 2", "Next Episode 3"], "opening a detail never discards the in-flight list load");
+    await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
+    await waitFor("back to the episode list", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === true);
+
+    // 4. A discarded request never leaves `aria-busy` behind: first a detail
+    // dropped by top navigation, then a search dropped the same way.
+    delayNextDetail = true;
+    await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
+    await waitFor("detail loader before navigation", () => evaluate(window, "({ busy: document.querySelector('#media-detail')?.getAttribute('aria-busy'), state: document.querySelector('#media-detail')?.dataset.state || '' })"), (value) => value.busy === "true" && value.state === "loading");
+    await evaluate(window, "document.querySelector('[data-nav=home]')?.click()");
+    await waitFor("navigation drops the detail layer", () => evaluate(window, "({ detailHidden: document.querySelector('#media-detail')?.hidden, heroHidden: document.querySelector('#home-hero')?.hidden })"), (value) => value.detailHidden === true && value.heroHidden === false);
+    await new Promise((resolve) => setTimeout(resolve, 620));
+    const droppedDetail = await evaluate(window, "({ busy: document.querySelector('#media-detail')?.getAttribute('aria-busy'), state: document.querySelector('#media-detail')?.dataset.state || '', title: document.querySelector('#media-detail-title')?.textContent || '' })");
+    assert.equal(droppedDetail.busy, null, "a discarded detail request never leaves aria-busy behind");
+    assert.equal(droppedDetail.title, "", "a discarded detail request never leaves the previous title");
+    await evaluate(window, "document.querySelector('[data-nav=all]')?.click()");
+    await waitFor("library back after the dropped detail", () => evaluate(window, "({ busy: document.querySelector('#library-grid')?.getAttribute('aria-busy'), cards: document.querySelectorAll('#library-grid .media-card').length })"), (value) => value.busy === null && value.cards > 0);
+    delayNextLibraryList = true;
+    await evaluate(window, "(() => { const input = document.querySelector('#library-search-input'); input.value = 'Owned'; input.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#library-search-form').requestSubmit(); })()");
+    await waitFor("search loader before navigating away", () => evaluate(window, "({ searchHidden: document.querySelector('#search-section')?.hidden, busy: document.querySelector('#search-grid')?.getAttribute('aria-busy') })"), (value) => value.searchHidden === false && value.busy === "true");
+    await evaluate(window, "document.querySelector('[data-nav=home]')?.click()");
+    await waitFor("navigation drops the search view", () => evaluate(window, "document.querySelector('#search-section')?.hidden"), (hidden) => hidden === true);
+    await new Promise((resolve) => setTimeout(resolve, 620));
+    const droppedSearchBusy = await evaluate(window, "document.querySelector('#search-grid')?.getAttribute('aria-busy')");
+    assert.equal(droppedSearchBusy, null, "a discarded search request never leaves aria-busy behind");
+
+    // 5. A scan that ends while a detail is open still reaches the list once the
+    // detail closes (the queued refresh is not dropped with the overlay).
+    await evaluate(window, "document.querySelector('[data-nav=all]')?.click()");
+    await waitFor("library ready for the scan refresh check", () => evaluate(window, "document.querySelector('#library-grid')?.getAttribute('aria-busy')"), (value) => value === null);
+    await writeFile(join(fixtureRoot, "zz-extra.mp4"), await readFile(join(process.cwd(), "assets", "test_video.mp4")));
+    await writeFile(join(fixtureRoot, "zz-extra.nfo"), "<movie><title>Zz Extra Scan Target</title></movie>");
+    await evaluate(window, "document.querySelector('[data-nav=folder]')?.click()");
+    await waitFor("folder page before the scan refresh check", () => evaluate(window, "({ visible: document.querySelector('#sources-page')?.hidden === false, disabled: document.querySelector('#rescan-all-button')?.disabled })"), (value) => value.visible === true && value.disabled === false);
+    await evaluate(window, "document.querySelector('#rescan-all-button')?.click()");
+    await waitFor("rescan running for the queue check", () => evaluate(window, "document.querySelector('#scan-status')?.hidden"), (hidden) => hidden === false, 20_000);
+    await evaluate(window, "document.querySelector('[data-nav=all]')?.click()");
+    await waitFor("library card while the scan runs", () => evaluate(window, "document.querySelectorAll('#library-grid .media-card').length"), (cards) => cards > 0);
+    await evaluate(window, "document.querySelector('#library-grid [data-media-id]')?.click()");
+    await waitFor("detail open while the scan runs", () => evaluate(window, "document.querySelector('#media-detail')?.hidden"), (hidden) => hidden === false);
+    await waitFor("scan finished while the detail was open", () => evaluate(window, "({ pillHidden: document.querySelector('#scan-status')?.hidden, cardHidden: document.querySelector('#home-scan-card')?.hidden })"), (value) => value.pillHidden === true && value.cardHidden === true, 30_000);
+    await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
+    const refreshedAfterScan = await waitFor(
+      "the list shows the final scan result after closing the detail",
+      () => evaluate(window, `(() => ({ scope: document.querySelector('#page-scope')?.textContent || '', busy: document.querySelector('#library-grid')?.getAttribute('aria-busy') }))()`),
+      (value) => value.busy === null && Number(value.scope.match(/共 (\d+) 部作品/)?.[1] ?? 0) === worksBeforeTicket18 + 1,
+      20_000,
+    );
+    assert.match(refreshedAfterScan.scope, new RegExp(`共 ${worksBeforeTicket18 + 1} 部作品`), "the scan result imported one new work and the list shows the final count");
+
     await evaluate(window, "(() => { const search = document.querySelector('#library-search-input'); if (!(search instanceof HTMLInputElement)) throw new Error('search missing'); search.value = 'Owned UX Audit Feature Film 2026'; search.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#library-search-form').requestSubmit(); })()");
     await waitFor("long title card", () => evaluate(window, "document.querySelector('#search-grid .media-card-title')?.textContent || ''"), (value) => value === LONG_TITLE);
     const openedMediaId = await evaluate(window, "document.querySelector('#search-grid [data-media-id]')?.dataset.mediaId || ''");
@@ -2450,6 +2602,15 @@ async function run(): Promise<void> {
         longTitle: { text: detail.title, layout: detail.titleLayout, backLabel: detail.backLabel, nav: detail.navCurrent },
         origin: { secondPageBack: secondPageDetail.backLabel, episodeBack: episodeOrigin.backLabel, homeBack: homeDetail.backLabel, offlineBack: offlineDetail.backLabel, restoredScroll: originScroll.top },
         offline: { banner: offlineDetail.bannerText, note: offlineDetail.noteText, resume: offlineDetail.resumeText, disabled: { play: offlineDetail.openDisabled, restart: offlineDetail.restartDisabled } },
+        reopening: { state: reopening.state, busy: reopening.busy, skeleton: reopening.skeletonVisible, contentHidden: reopening.contentHidden, titleCleared: reopening.title === "", posterImages: reopening.posterImages, episodeRows: reopening.episodeRows, playDisabled: reopening.playDisabled, target: switchTargetNumber, readyState: reopenedState },
+      },
+      requestGenerations: {
+        worksBefore: worksBeforeTicket18,
+        worksAfterScan: refreshedAfterScan.scope,
+        artwork: { card: artworkCard.mediaId, staleGeneration: stuckArtwork?.generation, recoveredGeneration: recoveredArtwork.generation, images: recoveredArtwork.images },
+        libraryBehindDetail: libraryBehindDetail.titles,
+        droppedDetail: { busy: droppedDetail.busy, state: droppedDetail.state, title: droppedDetail.title },
+        droppedSearchBusy: droppedSearchBusy,
       },
       continueWatching: { minimum: continueMin, scope: continueMin.scope, cards: continueMin.cards, default: continueDefault, defaultContent: continueDefault.windowContent, defaultOuter: defaultAfterContinueOuter },
       removeFailure: { prompt: removePrompt.removeCopy, title: removePrompt.removeTitle, destructive: /destructive-button/.test(removePrompt.removeConfirmClass), defaultFocus: removePrompt.activeId, error: removeFailure.removeError, retryLabel: removeFailure.removeConfirmText },
