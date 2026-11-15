@@ -3,7 +3,7 @@
 ID: 24b-network-polling
 Blocked by: 24a
 Spec: docs/local-library/spec-s2-change-detection.md
-Status: ready-for-agent
+Status: done (2026-11-15, merged in c60e9c4)
 
 ## What to build
 
