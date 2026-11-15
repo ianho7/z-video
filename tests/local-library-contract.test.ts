@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   isCompletedWatch,
   isEffectiveWatch,
+  isLocalRefreshTrigger,
   isMarkerDurationSec,
   isMarkerPositionSec,
   isMarkerWithinDuration,
@@ -11,6 +12,7 @@ import {
   LOCAL_LIBRARY_SCHEMA_TABLES,
   LOCAL_LIBRARY_SCHEMA_VERSION,
   normalizeScanRelativeDirectory,
+  type LocalLibraryRefreshResult,
 } from "../src/shared/local-library-contracts";
 import { safeSourceLabel, safeSourceLocationHint } from "../src/main/local-library-label";
 import { localLibraryErrorMessage } from "../src/main/local-library-errors";
@@ -97,6 +99,34 @@ test("a directory rescan scope stays inside the source and never names another r
   ]) {
     assert.equal(normalizeScanRelativeDirectory(rejected), undefined, `${String(rejected)} is not a source-relative directory`);
   }
+});
+
+test("the watcher refresh cause stays main-only and the pushed result is still the counts-only payload", () => {
+  // Ticket 24a: the watcher is a third cause of an automatic refresh. It is not
+  // a new renderer entry point, so the renderer-side validation is unchanged and
+  // a renderer call can never claim it.
+  assert.equal(isLocalRefreshTrigger("focus"), true);
+  assert.equal(isLocalRefreshTrigger("return"), true);
+  assert.equal(isLocalRefreshTrigger("watch"), false, "the filesystem watcher cause is main-only");
+  assert.equal(isLocalRefreshTrigger("auto"), false);
+  // The renderer's refresh handler reads only `counts` (the status line) and
+  // never branches on the cause; the payload still carries no path or source id.
+  const watchResult: LocalLibraryRefreshResult = {
+    trigger: "watch",
+    scannedDirectories: 2,
+    counts: { imported: 1, updated: 2, unchanged: 3, removed: 4 },
+    nfoUpdatedFiles: 2,
+    fingerprintReplacedFiles: 0,
+    warningCount: 0,
+  };
+  const roundTripped = structuredClone(watchResult) as LocalLibraryRefreshResult;
+  assert.deepEqual(roundTripped, watchResult, "the watch result is structured-clone safe across the IPC boundary");
+  assert.deepEqual(
+    Object.keys(roundTripped).sort(),
+    ["counts", "fingerprintReplacedFiles", "nfoUpdatedFiles", "scannedDirectories", "trigger", "warningCount"],
+    "the payload adds no path, source id or scan id",
+  );
+  assert.deepEqual(roundTripped.counts, { imported: 1, updated: 2, unchanged: 3, removed: 4 }, "the status line keeps reading the same four counts");
 });
 
 test("source labels never fall back to an absolute drive root", () => {

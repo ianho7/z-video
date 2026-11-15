@@ -6,6 +6,9 @@ import test from "node:test";
 
 import { LocalLibraryRefreshScheduler } from "../src/main/local-library-refresh";
 import type { LocalDirectoryScanResult, LocalLibraryRefreshResult, LocalSourceDirectories } from "../src/shared/local-library-contracts";
+// Registered from here so `npm test` runs the Ticket 24a watcher seam too; the
+// runner's module list is not part of this ticket's boundary.
+import "./local-library-watch.test";
 
 interface ScanCall {
   sourceId: string;
@@ -183,12 +186,173 @@ test("a dirty ancestor swallows its dirty children in one rescan", async () => {
     await writeFile(join(root, "A-dir", "nested", "nested.nfo"), "<movie><title>Nested</title></movie>");
     now += 60_000;
     assert.deepEqual(await scheduler.request("focus"), { status: "refreshed" });
-    assert.deepEqual(calls, [{ sourceId, directories: [""] }], "the root rescan already visits the nested directory");
+    assert.deepEqual(calls, [{ sourceId, directories: ["."] }], "the root rescan already visits the nested directory (the owner's root scope is spelled '.')");
     // The descendant baseline moved with the ancestor scan, so the next check is
     // quiet instead of rescanning the child the root already covered.
     now += 60_000;
     assert.deepEqual(await scheduler.request("focus"), { status: "unchanged" }, "the covered child does not stay dirty");
-    assert.deepEqual(calls, [{ sourceId, directories: [""] }], "no second rescan is issued for the covered child");
+    assert.deepEqual(calls, [{ sourceId, directories: ["."] }], "no second rescan is issued for the covered child");
+    scheduler.dispose();
+  } finally {
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test("a watched dirty directory is rescanned through the shared gate and leaves the baseline current", async () => {
+  const { profile, root } = await createFixture();
+  try {
+    const calls: ScanCall[] = [];
+    const results: LocalLibraryRefreshResult[] = [];
+    let now = 1_000;
+    const sourceId = "source_123e4567-e89b-42d3-a456-426614174000";
+    const scheduler = new LocalLibraryRefreshScheduler(
+      createPort(root, [{ sourceId, relativeDirectories: ["", "A-dir", "A-dir/nested", "B-dir"] }], calls),
+      join(profile, "baseline.json"),
+      { now: () => now, onResult: (result) => results.push(result) },
+    );
+    await scheduler.request("focus");
+    await writeFile(join(root, "A-dir", "a.nfo"), "<movie><title>A watched</title></movie>");
+    const outcome = await scheduler.requestWatch([{ sourceId, relativeDirectory: "A-dir" }]);
+    assert.deepEqual(outcome, { status: "refreshed" });
+    assert.deepEqual(calls, [{ sourceId, directories: ["A-dir"] }], "only the watched directory is handed to the owner");
+    assert.equal(results.length, 1);
+    assert.equal(results[0]?.trigger, "watch", "the watcher is its own cause; the renderer only reads counts");
+    assert.deepEqual(results[0]?.counts, { imported: 0, updated: 1, unchanged: 0, removed: 0 });
+    // The watch scan records the signatures it saw, so the next focus check is
+    // quiet instead of rescanning the same directory.
+    now += 60_000;
+    assert.deepEqual(await scheduler.request("focus"), { status: "unchanged" });
+    assert.equal(calls.length, 1, "the watch scan leaves no stale baseline behind");
+    scheduler.dispose();
+  } finally {
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test("a watch flush during a manual scan is queued and then flushed, never dropped", async () => {
+  const { profile, root } = await createFixture();
+  try {
+    const calls: ScanCall[] = [];
+    const results: LocalLibraryRefreshResult[] = [];
+    let now = 1_000;
+    const sourceId = "source_123e4567-e89b-42d3-a456-426614174000";
+    const scheduler = new LocalLibraryRefreshScheduler(
+      createPort(root, [{ sourceId, relativeDirectories: ["", "A-dir", "A-dir/nested", "B-dir"] }], calls),
+      join(profile, "baseline.json"),
+      { now: () => now, onResult: (result) => results.push(result) },
+    );
+    await scheduler.request("focus");
+    await writeFile(join(root, "B-dir", "b.nfo"), "<movie><title>B watched</title></movie>");
+    let releaseManual: (() => void) | undefined;
+    const manual = scheduler.runScan(() => new Promise<void>((resolve) => { releaseManual = resolve; }));
+    const queued = await scheduler.requestWatch([{ sourceId, relativeDirectory: "B-dir" }]);
+    assert.deepEqual(queued, { status: "queued" }, "the watch scan never overlaps the manual scan");
+    assert.deepEqual(calls, [], "the dirty directory waits instead of racing the manual scan");
+    assert.ok(releaseManual);
+    releaseManual();
+    await manual;
+    const deadline = Date.now() + 2_000;
+    while (results.length === 0 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.deepEqual(calls, [{ sourceId, directories: ["B-dir"] }], "the queued watch directory is rescanned after the manual scan");
+    assert.equal(results[0]?.trigger, "watch");
+    scheduler.dispose();
+  } finally {
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test("a watched directory that vanished falls back to its nearest existing ancestor", async () => {
+  const { profile, root } = await createFixture();
+  try {
+    const calls: ScanCall[] = [];
+    const sourceId = "source_123e4567-e89b-42d3-a456-426614174000";
+    const scheduler = new LocalLibraryRefreshScheduler(
+      createPort(root, [{ sourceId, relativeDirectories: ["", "A-dir", "A-dir/nested", "B-dir"] }], calls),
+      join(profile, "baseline.json"),
+      { now: () => 1_000 },
+    );
+    await scheduler.request("focus");
+    // The watcher reports the directory that contained the change; a delete or a
+    // rename can leave a path that no longer exists. The scan must still run.
+    assert.deepEqual(await scheduler.requestWatch([{ sourceId, relativeDirectory: "A-dir/gone" }]), { status: "refreshed" });
+    assert.deepEqual(calls, [{ sourceId, directories: ["A-dir"] }], "the nearest existing ancestor is rescanned instead of failing");
+    const before = calls.length;
+    assert.deepEqual(await scheduler.requestWatch([{ sourceId, relativeDirectory: "../escape" }]), { status: "unchanged" }, "an out-of-source scope is rejected, never clamped");
+    assert.deepEqual(await scheduler.requestWatch([{ sourceId, relativeDirectory: "/absolute" }]), { status: "unchanged" });
+    assert.equal(calls.length, before, "a rejected scope starts no scan");
+    scheduler.dispose();
+  } finally {
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test("two watch flushes never overlap: the second one queues while the first is still resolving", async () => {
+  const { profile, root } = await createFixture();
+  try {
+    const calls: ScanCall[] = [];
+    const sourceId = "source_123e4567-e89b-42d3-a456-426614174000";
+    let inventoryCalls = 0;
+    let releaseInventory: (() => void) | undefined;
+    const port = createPort(root, [{ sourceId, relativeDirectories: ["", "A-dir", "A-dir/nested", "B-dir"] }], calls);
+    const scheduler = new LocalLibraryRefreshScheduler(
+      {
+        ...port,
+        listScanDirectories: async () => {
+          inventoryCalls += 1;
+          // The second call is the first watch check; hold it so a second flush
+          // arrives while that check is mid-flight.
+          if (inventoryCalls === 2) await new Promise<void>((resolve) => { releaseInventory = resolve; });
+          return port.listScanDirectories();
+        },
+      },
+      join(profile, "baseline.json"),
+      { now: () => 1_000 },
+    );
+    await scheduler.request("focus");
+    await writeFile(join(root, "B-dir", "b.nfo"), "<movie><title>B watched</title></movie>");
+    const first = scheduler.requestWatch([{ sourceId, relativeDirectory: "B-dir" }]);
+    const deadline = Date.now() + 2_000;
+    while (releaseInventory === undefined && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.ok(releaseInventory, "the first watch check is in flight");
+    assert.deepEqual(await scheduler.requestWatch([{ sourceId, relativeDirectory: "B-dir" }]), { status: "queued" }, "a second flush waits instead of starting a second check");
+    assert.deepEqual(calls, [], "no scan starts while the first check is still resolving");
+    releaseInventory();
+    assert.deepEqual(await first, { status: "refreshed" });
+    assert.deepEqual(calls[0], { sourceId, directories: ["B-dir"] }, "the first check scanned the dirty directory");
+    scheduler.dispose();
+  } finally {
+    // The queued flush drains right after the first check, so its baseline write
+    // can still be settling while this cleanup runs on Windows.
+    await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+});
+
+test("a watch-triggered root rescan is automatic and addressed as the owner's root scope", async () => {
+  const { profile, root } = await createFixture();
+  try {
+    const calls: ScanCall[] = [];
+    const sourceId = "source_123e4567-e89b-42d3-a456-426614174000";
+    let automaticDuringScan: boolean | undefined;
+    let scheduler: LocalLibraryRefreshScheduler | undefined;
+    const port = createPort(root, [{ sourceId, relativeDirectories: ["", "A-dir", "A-dir/nested", "B-dir"] }], calls);
+    scheduler = new LocalLibraryRefreshScheduler(
+      {
+        ...port,
+        scanDirectories: async (candidate: string, directories: readonly string[]) => {
+          automaticDuringScan = scheduler?.isAutomaticScanActive();
+          calls.push({ sourceId: candidate, directories: [...directories] });
+          return scanResult(candidate, directories);
+        },
+      },
+      join(profile, "baseline.json"),
+      { now: () => 1_000 },
+    );
+    await scheduler.request("focus");
+    const outcome = await scheduler.requestWatch([{ sourceId, relativeDirectory: "" }]);
+    assert.deepEqual(outcome, { status: "refreshed" });
+    assert.deepEqual(calls, [{ sourceId, directories: ["."] }], "the source root is requested as '.', the spelling the owner accepts");
+    assert.equal(automaticDuringScan, true, "a watch rescan is silent: it must not forward scan progress");
+    assert.equal(scheduler.isAutomaticScanActive(), false, "the silent flag is released after the scan");
     scheduler.dispose();
   } finally {
     await rm(profile, { recursive: true, force: true });

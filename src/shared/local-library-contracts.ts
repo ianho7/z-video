@@ -338,12 +338,24 @@ export interface LocalSourceDirectories {
   relativeDirectories: string[];
 }
 
-/** What asked for the change check: the window regained focus, or the library surface came back. */
+/**
+ * What asked for the change check from the renderer: the window regained focus,
+ * or the library surface came back. `isLocalRefreshTrigger` accepts only these
+ * two values, so a renderer call can never claim the watcher cause below.
+ */
 export type LocalRefreshTrigger = "focus" | "return";
 
 export function isLocalRefreshTrigger(value: unknown): value is LocalRefreshTrigger {
   return value === "focus" || value === "return";
 }
+
+/**
+ * Every cause of an automatic refresh. `watch` is main-only (Ticket 24a): the
+ * local filesystem watcher found expected-dirty directories. The renderer reads
+ * only the counts of a refresh result and never branches on the cause, so this
+ * cause reaches it as an opaque label rather than a new entry point.
+ */
+export type LocalRefreshCause = LocalRefreshTrigger | "watch";
 
 /**
  * Immediate answer to one change check. `refreshed` means at least one changed
@@ -364,7 +376,8 @@ export interface LocalRefreshOutcome {
  * compatibility counter, and it is pushed without a notification.
  */
 export interface LocalLibraryRefreshResult {
-  trigger: LocalRefreshTrigger;
+  /** Ticket 24a adds the main-only `watch` cause; consumers read `counts`. */
+  trigger: LocalRefreshCause;
   /** Directories handed to the directory rescan, after ancestor collapsing. */
   scannedDirectories: number;
   counts: LocalScanCounts;

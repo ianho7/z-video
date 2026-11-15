@@ -1,9 +1,11 @@
 import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
 
+import { normalizeScanRelativeDirectory } from "../shared/local-library-contracts";
 import type {
   LocalDirectoryScanResult,
   LocalLibraryRefreshResult,
+  LocalRefreshCause,
   LocalRefreshOutcome,
   LocalRefreshTrigger,
   LocalScanCounts,
@@ -42,6 +44,17 @@ export interface LocalDirectorySignature {
   mtimeMs: number;
   /** Entry name → `${sizeBytes}:${mtimeMs}`. Relative names only; no path leaves the machine. */
   files: Record<string, string>;
+}
+
+/**
+ * A directory the local filesystem watcher proved dirty (Ticket 24a). The value
+ * is source-relative and POSIX-shaped; `""` is the source root. It never leaves
+ * the main process: the watcher hands it to `LocalLibraryRefreshScheduler`,
+ * which turns it into a directory-scoped owner rescan.
+ */
+export interface LocalWatchedDirectory {
+  sourceId: string;
+  relativeDirectory: string;
 }
 
 interface LocalRefreshBaselineSource {
@@ -155,6 +168,17 @@ function addCounts(target: LocalScanCounts, source: LocalScanCounts): void {
   target.removed += source.removed;
 }
 
+/**
+ * The owner's accepted spelling of a scan scope. The library names the source
+ * root `""` internally (that is the baseline and inventory key), but
+ * `scanDirectories` validates its input as a non-empty relative directory where
+ * `"."` is the root. Without this translation a change in the source root would
+ * be rejected before any scan starts.
+ */
+function scanScopeArgument(relativeDirectory: string): string {
+  return relativeDirectory === "" ? "." : relativeDirectory;
+}
+
 function emptyBaseline(nowMs: number): LocalRefreshBaselineFile {
   return { version: LOCAL_LIBRARY_REFRESH_BASELINE_VERSION, updatedAtMs: nowMs, sources: {} };
 }
@@ -209,6 +233,12 @@ export class LocalLibraryRefreshScheduler {
   private baselineChain: Promise<void> = Promise.resolve();
   /** A single-file serial queue for owner scans; see `runScan`. */
   private scanChain: Promise<void> = Promise.resolve();
+  /**
+   * Ticket 24a: dirty directories the local watcher proved, grouped by source,
+   * waiting for the single-flight gate. They are never discarded: a watch flush
+   * that arrives during a manual scan is rescanned as soon as the owner is idle.
+   */
+  private readonly watchQueue = new Map<string, string[]>();
   /**
    * True only while this scheduler's own directory rescan runs. The IPC layer
    * uses it to suppress scan-progress forwarding: an automatic refresh is
@@ -293,6 +323,47 @@ export class LocalLibraryRefreshScheduler {
   }
 
   /**
+   * Ticket 24a: the local filesystem watcher hands the directories it proved
+   * dirty here. They enter the same single-flight gate as every other automatic
+   * check (`runScan`), so a watch-triggered rescan never overlaps a manual scan,
+   * the worker keeps its own scan guard, and a flush that arrives while the
+   * owner is busy waits instead of being dropped.
+   *
+   * The passed directories are expected-dirty, so no mtime comparison is made;
+   * a directory that no longer exists (a delete or a rename) is replaced by its
+   * nearest existing ancestor, and a rejected value is ignored rather than
+   * clamped. Nothing is pushed to the renderer if the rescan finds no change.
+   */
+  async requestWatch(directories: readonly LocalWatchedDirectory[]): Promise<LocalRefreshOutcome> {
+    if (this.disposed) return { status: "unchanged" };
+    if (!this.mergeWatchDirectories(directories)) return { status: "unchanged" };
+    if (this.checking || this.activeScans > 0 || this.draining) {
+      this.scheduleDrain();
+      return { status: "queued" };
+    }
+    return this.runWatchCheck(this.takeWatchDirectories());
+  }
+
+  /**
+   * One watch-triggered check. It sets the same `checking` flag as a focus check,
+   * so two flushes (or a flush and a focus) never resolve directories and scan at
+   * the same time, and it never throws: a drain loop must not stall on one bad
+   * directory set.
+   */
+  private async runWatchCheck(pending: Map<string, string[]>): Promise<LocalRefreshOutcome> {
+    this.checking = true;
+    try {
+      return await this.scanWatchedDirectories(pending);
+    } catch (error) {
+      this.errorListener?.(error);
+      return { status: "error" };
+    } finally {
+      this.checking = false;
+      this.scheduleDrain();
+    }
+  }
+
+  /**
    * Record the post-scan directory signatures for the given sources. Called
    * after every manual scan/import so the next automatic check compares against
    * the state the scan just wrote, including changes made while the app was
@@ -342,6 +413,7 @@ export class LocalLibraryRefreshScheduler {
   dispose(): void {
     this.disposed = true;
     this.pendingTrigger = undefined;
+    this.watchQueue.clear();
     this.resultListeners.clear();
   }
 
@@ -401,7 +473,20 @@ export class LocalLibraryRefreshScheduler {
       this.pendingTrigger = trigger;
       return { status: "queued" };
     }
+    return this.scanDirtyDirectories(trigger, dirtyBySource, observedSignatures, baseline);
+  }
 
+  /**
+   * The one place where a dirty directory set becomes an owner rescan. Both
+   * discovery paths share it (Ticket 23b mtime check and Ticket 24a watcher), so
+   * there is exactly one scan path, one set of counts and one silent result push.
+   */
+  private async scanDirtyDirectories(
+    cause: LocalRefreshCause,
+    dirtyBySource: Map<string, string[]>,
+    observedSignatures: Map<string, LocalDirectorySignature>,
+    baseline: LocalRefreshBaselineFile,
+  ): Promise<LocalRefreshOutcome> {
     const totals = {
       counts: emptyCounts(),
       scannedDirectories: 0,
@@ -417,20 +502,21 @@ export class LocalLibraryRefreshScheduler {
         for (const [sourceId, directories] of dirtyBySource) {
           const scope = collapseDirectories(directories);
           try {
-            const result = await this.database.scanDirectories(sourceId, scope);
+            const result = await this.database.scanDirectories(sourceId, scope.map(scanScopeArgument));
             scannedAny = true;
             addCounts(totals.counts, result.counts);
             totals.scannedDirectories += scope.length;
             totals.nfoUpdatedFiles += result.nfoUpdatedFiles;
             totals.fingerprintReplacedFiles += result.fingerprintReplacedFiles;
             totals.warningCount += result.warningCount;
-            const entry = baseline.sources[sourceId];
+            const entry = baseline.sources[sourceId] ?? { directories: {} };
+            baseline.sources[sourceId] = entry;
             // The ancestor rescan also visited every dirty descendant it
             // covers, so all their observed signatures become the new baseline;
             // otherwise the next check would rescan the same children again.
             for (const relativeDirectory of directories) {
               const signature = observedSignatures.get(signatureKey(sourceId, relativeDirectory));
-              if (entry && signature) entry.directories[relativeDirectory] = signature;
+              if (signature) entry.directories[relativeDirectory] = signature;
             }
           } catch (error) {
             // Leave the previous baseline untouched: the same change is retried on
@@ -449,17 +535,122 @@ export class LocalLibraryRefreshScheduler {
     // that was created and removed, a touched NFO with identical metadata).
     // The data is current, but there is nothing to report: stay silent.
     if (totals.counts.imported + totals.counts.updated + totals.counts.removed === 0) return { status: "unchanged" };
-    const result: LocalLibraryRefreshResult = { trigger, ...totals };
+    const result: LocalLibraryRefreshResult = { trigger: cause, ...totals };
     for (const listener of this.resultListeners) listener(result);
     return { status: "refreshed" };
   }
 
+  /**
+   * Validate and queue watcher-reported directories. An empty value (or `"."`)
+   * is the source root; anything that names another root or escapes the source
+   * is dropped rather than clamped into a scan. Returns whether anything new was
+   * queued.
+   */
+  private mergeWatchDirectories(directories: readonly LocalWatchedDirectory[]): boolean {
+    let merged = false;
+    for (const candidate of directories) {
+      if (!candidate || typeof candidate.sourceId !== "string" || !candidate.sourceId) continue;
+      if (typeof candidate.relativeDirectory !== "string") continue;
+      const relativeDirectory = candidate.relativeDirectory === ""
+        ? ""
+        : normalizeScanRelativeDirectory(candidate.relativeDirectory);
+      if (relativeDirectory === undefined) continue;
+      const queued = this.watchQueue.get(candidate.sourceId) ?? [];
+      if (!queued.includes(relativeDirectory)) {
+        queued.push(relativeDirectory);
+        this.watchQueue.set(candidate.sourceId, queued);
+        merged = true;
+      }
+    }
+    return merged;
+  }
+
+  private takeWatchDirectories(): Map<string, string[]> {
+    const pending = new Map<string, string[]>();
+    for (const [sourceId, directories] of this.watchQueue) pending.set(sourceId, [...directories]);
+    this.watchQueue.clear();
+    return pending;
+  }
+
+  /** Put the resolved set back when the owner turned out to be busy mid-flight. */
+  private requeueWatchDirectories(dirtyBySource: Map<string, string[]>): void {
+    for (const [sourceId, directories] of dirtyBySource) {
+      const queued = this.watchQueue.get(sourceId) ?? [];
+      for (const relativeDirectory of directories) {
+        if (!queued.includes(relativeDirectory)) queued.push(relativeDirectory);
+      }
+      this.watchQueue.set(sourceId, queued);
+    }
+  }
+
+  /**
+   * Resolve the watcher's directories against the live sources and rescan them.
+   * A source that was removed (or whose root is unreadable) contributes nothing:
+   * its watch handle is being stopped, and the focus refresh covers reconnection.
+   */
+  private async scanWatchedDirectories(pending: Map<string, string[]>): Promise<LocalRefreshOutcome> {
+    if (pending.size === 0) return { status: "unchanged" };
+    const inventory = await this.database.listScanDirectories();
+    const live = new Set(inventory.map((source) => source.sourceId));
+    const baseline = await this.loadBaseline();
+    const dirtyBySource = new Map<string, string[]>();
+    const observedSignatures = new Map<string, LocalDirectorySignature>();
+    for (const [sourceId, directories] of pending) {
+      if (!live.has(sourceId)) continue;
+      const rootPath = await this.database.sourceRoot(sourceId);
+      if (!rootPath) continue;
+      const resolved: string[] = [];
+      for (const relativeDirectory of directories) {
+        const found = await this.resolveExistingDirectory(rootPath, relativeDirectory);
+        if (!found) continue;
+        if (!resolved.includes(found.relativeDirectory)) resolved.push(found.relativeDirectory);
+        observedSignatures.set(signatureKey(sourceId, found.relativeDirectory), found.signature);
+      }
+      if (resolved.length > 0) dirtyBySource.set(sourceId, resolved);
+    }
+    if (dirtyBySource.size === 0) return { status: "unchanged" };
+    // A manual scan may have started while the directories above were resolved.
+    if (this.activeScans > 0) {
+      this.requeueWatchDirectories(dirtyBySource);
+      this.scheduleDrain();
+      return { status: "queued" };
+    }
+    return this.scanDirtyDirectories("watch", dirtyBySource, observedSignatures, baseline);
+  }
+
+  /**
+   * The directory to rescan for one watcher report: the directory itself when it
+   * is still readable, otherwise its nearest existing ancestor, and `undefined`
+   * when even the source root is unreadable (an offline source).
+   */
+  private async resolveExistingDirectory(
+    rootPath: string,
+    relativeDirectory: string,
+  ): Promise<{ relativeDirectory: string; signature: LocalDirectorySignature } | undefined> {
+    let candidate = relativeDirectory === "" ? "" : normalizeScanRelativeDirectory(relativeDirectory);
+    if (candidate === undefined) return undefined;
+    for (;;) {
+      const signature = await this.statDirectory(directoryPath(rootPath, candidate));
+      if (signature) return { relativeDirectory: candidate, signature };
+      if (candidate === "") return undefined;
+      const cut = candidate.lastIndexOf("/");
+      candidate = cut === -1 ? "" : candidate.slice(0, cut);
+    }
+  }
+
   private scheduleDrain(): void {
-    if (this.disposed || this.draining || this.checking || this.activeScans > 0 || !this.pendingTrigger) return;
+    if (this.disposed || this.draining || this.checking || this.activeScans > 0) return;
     const trigger = this.pendingTrigger;
+    const hasWatchDirectories = this.watchQueue.size > 0;
+    if (!trigger && !hasWatchDirectories) return;
     this.pendingTrigger = undefined;
     this.draining = true;
-    void this.request(trigger, { force: true })
+    // A queued focus/return check already re-reads every known directory, so it
+    // wins this round; the watch queue stays and drains right after it.
+    const run = trigger
+      ? this.request(trigger, { force: true })
+      : this.runWatchCheck(this.takeWatchDirectories());
+    void run
       .catch(() => undefined)
       .finally(() => {
         this.draining = false;
