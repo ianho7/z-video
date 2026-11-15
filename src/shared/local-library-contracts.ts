@@ -54,6 +54,15 @@ export interface LocalMarkerInput {
   durationSec?: number;
 }
 
+/**
+ * Delete-marker input. A marker's identity is its Media file plus whole second,
+ * so the same opaque id + `positionSec` pair that created it removes it.
+ */
+export interface LocalMarkerDeleteInput {
+  mediaId: `media_${string}`;
+  positionSec: number;
+}
+
 /** Marker positions are whole, non-negative seconds; fractions are rejected, never rounded. */
 export function isMarkerPositionSec(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
@@ -408,6 +417,12 @@ export interface LocalLibraryApi {
   listMarkers(mediaId: string): Promise<LocalMarker[]>;
   /** Record the current whole second as one marker; the record is returned so the UI can render it. */
   addMarker(input: LocalMarkerInput): Promise<LocalMarker>;
+  /**
+   * Delete one marker by its opaque id and whole second. Resolves `true` when a
+   * row was removed and `false` when that second had no marker (an idempotent
+   * no-op, not an error, so a double click never reports a false failure).
+   */
+  removeMarker(input: LocalMarkerDeleteInput): Promise<boolean>;
   listContinueWatching(): Promise<{ state: LocalLibraryState; items: LocalContinueWatchingItem[] }>;
   removeSource(sourceId: string): Promise<LocalLibraryState>;
   refreshSource(sourceId: string): Promise<LocalScanResult>;

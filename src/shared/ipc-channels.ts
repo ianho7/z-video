@@ -9,6 +9,7 @@ export const IPC_CHANNELS = {
   localLibraryGet: "local-library:get",
   localLibraryMarkersList: "local-library:markers-list",
   localLibraryMarkersAdd: "local-library:markers-add",
+  localLibraryMarkersRemove: "local-library:markers-remove",
   localLibraryArtwork: "local-library:artwork",
   localLibraryContinueWatching: "local-library:continue-watching",
   localLibraryRemoveSource: "local-library:source-remove",

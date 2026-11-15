@@ -15,6 +15,7 @@ import {
   type LocalContinueWatchingItem,
   type LocalLibraryState,
   type LocalMarker,
+  type LocalMarkerDeleteInput,
   type LocalMarkerInput,
   type LocalMediaItem,
   type LocalPlaybackState,
@@ -47,6 +48,7 @@ type WorkerCommand =
   | { command: "get-detail"; mediaId: string }
   | { command: "list-markers"; mediaId: string }
   | { command: "add-marker"; input: LocalMarkerInput }
+  | { command: "delete-marker"; input: LocalMarkerDeleteInput }
   | { command: "list-continue-watching" }
   | { command: "remove-source"; sourceId: string }
   | { command: "source-root"; sourceId: string }
@@ -301,6 +303,11 @@ export class LocalLibraryDatabase {
   async addMarker(input: LocalMarkerInput): Promise<LocalMarker> {
     assertMediaId(input.mediaId);
     return this.call<LocalMarker>({ command: "add-marker", input });
+  }
+
+  async removeMarker(input: LocalMarkerDeleteInput): Promise<boolean> {
+    assertMediaId(input.mediaId);
+    return this.call<boolean>({ command: "delete-marker", input });
   }
 
   async listContinueWatching(): Promise<LocalContinueWatchingItem[]> {

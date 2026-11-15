@@ -1066,7 +1066,7 @@ function restorePlayerOriginScroll(): void {
   else window.scrollTo(0, playerOriginScroll);
 }
 
-const overlayIds = ["player-current-title", "player-close-button", "player-close-label", "player-elapsed", "player-time", "player-seek", "player-toggle-button", "player-next-button", "player-back-10", "player-forward-10", "player-volume", "player-mute-button", "player-settings-button", "player-fullscreen-button", "player-settings", "player-settings-close", "player-speed-trigger", "player-audio-trigger", "player-subtitle-trigger", "player-speed-value", "player-audio-value", "player-subtitle-value", "player-subtitle-file-button", "player-status", "player-control-notice", "player-control-notice-text", "player-ended", "player-ended-title", "player-next-title", "player-next-meta", "player-countdown", "player-countdown-ring", "player-countdown-announcement", "player-play-next", "player-cancel-next", "player-replay", "player-return-list", "player-error", "player-error-message", "player-error-retry", "player-error-back"];
+const overlayIds = ["player-current-title", "player-close-button", "player-close-label", "player-elapsed", "player-time", "player-seek", "player-toggle-button", "player-next-button", "player-back-10", "player-forward-10", "player-volume", "player-mute-button", "player-settings-button", "player-fullscreen-button", "player-settings", "player-settings-close", "player-speed-trigger", "player-audio-trigger", "player-subtitle-trigger", "player-speed-value", "player-audio-value", "player-subtitle-value", "player-subtitle-file-button", "player-status", "player-control-notice", "player-control-notice-text", "player-ended", "player-ended-title", "player-next-title", "player-next-meta", "player-countdown", "player-countdown-ring", "player-countdown-announcement", "player-play-next", "player-cancel-next", "player-replay", "player-return-list", "player-error", "player-error-message", "player-error-retry", "player-error-back", "player-marker-delete"];
 const overlayActions = new Set(overlayIds);
 let overlayActivity = 0;
 function sendOverlayState(): void {
@@ -1156,21 +1156,60 @@ function renderPlayerPosition(positionSec: number, force = false): void {
 }
 
 const playerMarkerLayer = document.querySelector<HTMLElement>("#player-marker-ticks");
+const playerMarkerDeleteButton = document.querySelector<HTMLButtonElement>("#player-marker-delete");
+/**
+ * Ticket 22b: the marker the user picked by clicking its tick. Selection drives
+ * the one inline delete confirmation; it is cleared whenever the bar is dragged
+ * or the playback session changes, so the control can never target a hidden tick.
+ */
+let playerSelectedMarkerSec: number | undefined;
+
+function visiblePlayerMarkers(): LocalMarker[] {
+  const mediaId = playerMarkerMediaId;
+  return mediaId && playerDurationSec > 0
+    ? playerMarkers.filter((marker) => marker.mediaId === mediaId && Number.isInteger(marker.positionSec))
+    : [];
+}
+
+/** A selection only counts while its tick is still on the bar. */
+function effectiveSelectedPlayerMarkerSec(visible: LocalMarker[]): number | undefined {
+  const selected = playerSelectedMarkerSec;
+  return selected !== undefined && visible.some((marker) => marker.positionSec === selected) ? selected : undefined;
+}
+
+/** One inline delete confirmation; nothing appears while no marker is selected. */
+function renderPlayerMarkerDeleteControl(positionSec: number | undefined): void {
+  const button = playerMarkerDeleteButton;
+  if (!button) return;
+  if (positionSec === undefined) {
+    delete button.dataset.positionSec;
+    if (button.hidden) return;
+    button.hidden = true;
+    button.disabled = false;
+    button.textContent = "删除标记";
+    return;
+  }
+  button.textContent = `删除标记 ${formatTime(positionSec)}`;
+  button.dataset.positionSec = String(positionSec);
+  button.disabled = false;
+  button.hidden = false;
+}
 
 /**
- * Ticket 22a: draw one tick per marker on the progress bar. Without markers the
- * layer stays hidden and empty — an empty bar must never look like data. The
- * render key keeps a 4 Hz position stream from rebuilding an unchanged layer.
+ * Ticket 22a/22b: draw one clickable tick per marker on the progress bar. Without
+ * markers the layer stays hidden and empty — an empty bar must never look like
+ * data, and clicking the bar keeps behaving like a plain seek. The render key
+ * keeps a 4 Hz position stream from rebuilding an unchanged layer.
  */
 function renderPlayerMarkers(): void {
   const layer = playerMarkerLayer;
   if (!layer) return;
   const mediaId = playerMarkerMediaId;
   const duration = playerDurationSec;
-  const visible = mediaId && duration > 0
-    ? playerMarkers.filter((marker) => marker.mediaId === mediaId && Number.isInteger(marker.positionSec))
-    : [];
-  const key = `${mediaId ?? ""}:${duration}:${visible.map((marker) => marker.positionSec).join(",")}`;
+  const visible = visiblePlayerMarkers();
+  const selected = effectiveSelectedPlayerMarkerSec(visible);
+  if (selected === undefined) playerSelectedMarkerSec = undefined;
+  const key = `${mediaId ?? ""}:${duration}:${selected ?? ""}:${visible.map((marker) => marker.positionSec).join(",")}`;
   if (key === playerMarkersRenderedKey) return;
   playerMarkersRenderedKey = key;
   if (visible.length === 0) {
@@ -1178,17 +1217,93 @@ function renderPlayerMarkers(): void {
     layer.hidden = true;
   } else {
     layer.replaceChildren(...visible.map((marker) => {
-      const tick = document.createElement("span");
+      const tick = document.createElement("button");
+      tick.type = "button";
+      tick.id = `player-marker-tick-${marker.positionSec}`;
       tick.className = "player-marker-tick";
       tick.dataset.positionSec = String(marker.positionSec);
-      tick.style.left = `${Math.max(0, Math.min(100, marker.positionSec / duration * 100))}%`;
+      tick.dataset.selected = String(marker.positionSec === selected);
+      tick.setAttribute("aria-pressed", String(marker.positionSec === selected));
+      tick.setAttribute("aria-label", `跳转到标记 ${formatTime(marker.positionSec)}`);
+      const left = `${Math.max(0, Math.min(100, marker.positionSec / duration * 100))}%`;
+      // The overlay window copies this markup into its own CSP-restricted
+      // document, where inline style attributes are dropped; `data-left` lets it
+      // reapply the same offset through CSSOM.
+      tick.dataset.left = left;
+      tick.style.left = left;
       return tick;
     }));
     layer.hidden = false;
   }
+  renderPlayerMarkerDeleteControl(selected);
   markPlayerUiStructureChanged();
   sendOverlayState();
 }
+
+/**
+ * Ticket 22b: clicking a tick seeks to that whole second and selects the marker,
+ * so exactly one inline delete control can remove it. Playback keeps running.
+ */
+function selectPlayerMarker(positionSec: number): void {
+  const mediaId = playerMarkerMediaId;
+  if (!mediaId || playerClosing || !playerSessionOpen) return;
+  if (!playerMarkers.some((marker) => marker.mediaId === mediaId && marker.positionSec === positionSec)) return;
+  playerSelectedMarkerSec = positionSec;
+  playerMarkersRenderedKey = "";
+  renderPlayerMarkers();
+  void sendLocalPlaybackCommand({ type: "seek", positionSec }, { rollback: () => renderPlayerPosition(playerPositionSec, true) });
+  const message = `已跳到标记 ${formatTime(positionSec)}。`;
+  showPlayerControlNotice(message);
+  setPlayerStatus(message);
+}
+
+/** Dragging the bar leaves marker mode, so a stale delete control can never stay up. */
+function clearPlayerMarkerSelection(): void {
+  if (playerSelectedMarkerSec === undefined) return;
+  playerSelectedMarkerSec = undefined;
+  playerMarkersRenderedKey = "";
+  renderPlayerMarkers();
+}
+
+/**
+ * Ticket 22b: delete the selected marker after its one inline confirmation. The
+ * tick is removed only once the owner confirms; a rejected delete keeps the
+ * marker, its selection and the visible failure notice so it can be retried.
+ */
+function removeSelectedPlayerMarker(): void {
+  const mediaId = playerMarkerMediaId;
+  const positionSec = playerSelectedMarkerSec;
+  if (!mediaId || positionSec === undefined || playerClosing || !playerSessionOpen) return;
+  if (playerMarkerDeleteButton) playerMarkerDeleteButton.disabled = true;
+  const epoch = playerMarkerEpoch;
+  void window.zVideo.localLibrary.removeMarker({ mediaId, positionSec }).then((removed) => {
+    if (epoch !== playerMarkerEpoch || playerMarkerMediaId !== mediaId) return;
+    playerMarkers = playerMarkers.filter((marker) => marker.positionSec !== positionSec);
+    playerSelectedMarkerSec = undefined;
+    playerMarkersRenderedKey = "";
+    renderPlayerMarkers();
+    const message = removed ? `已删除标记 ${formatTime(positionSec)}。` : `标记 ${formatTime(positionSec)} 已经不在了。`;
+    showPlayerControlNotice(message);
+    setPlayerStatus(message);
+  }, () => {
+    if (epoch !== playerMarkerEpoch || playerMarkerMediaId !== mediaId) return;
+    // The stored marker is untouched; keep the selection so retry is one click.
+    if (playerMarkerDeleteButton) playerMarkerDeleteButton.disabled = false;
+    showPlayerControlNotice("标记没有删除成功，请重试。");
+    setPlayerStatus("标记没有删除成功，请重试。", true);
+  });
+}
+
+playerMarkerLayer?.addEventListener("click", (event) => {
+  const target = event.target instanceof Element ? event.target.closest<HTMLElement>(".player-marker-tick") : null;
+  const positionSec = Number(target?.dataset.positionSec);
+  if (!target || !Number.isInteger(positionSec) || positionSec < 0) return;
+  // Keep the wrapping <label> from also forwarding the click to the seek input.
+  event.preventDefault();
+  event.stopPropagation();
+  selectPlayerMarker(positionSec);
+});
+playerMarkerDeleteButton?.addEventListener("click", () => removeSelectedPlayerMarker());
 
 /** Load the markers of the media being opened; a late answer never paints a newer session. */
 async function loadPlayerMarkers(mediaId: string): Promise<void> {
@@ -1196,6 +1311,7 @@ async function loadPlayerMarkers(mediaId: string): Promise<void> {
   const epoch = ++playerMarkerEpoch;
   playerMarkerMediaId = markerMediaId;
   playerMarkers = [];
+  playerSelectedMarkerSec = undefined;
   playerMarkersRenderedKey = "";
   renderPlayerMarkers();
   try {
@@ -1215,7 +1331,9 @@ function clearPlayerMarkers(): void {
   playerMarkerEpoch += 1;
   playerMarkerMediaId = undefined;
   playerMarkers = [];
+  playerSelectedMarkerSec = undefined;
   playerMarkersRenderedKey = "";
+  renderPlayerMarkerDeleteControl(undefined);
   const layer = playerMarkerLayer;
   if (!layer) return;
   if (layer.hidden && layer.childElementCount === 0) return;
@@ -4339,7 +4457,13 @@ playerCloseButton?.addEventListener("click", () => requestPlayerClose());
 playerToggleButton?.addEventListener("click", () => {
   void sendLocalPlaybackCommand({ type: playerState === "playing" ? "pause" : "play" });
 });
+playerSeek?.addEventListener("input", () => {
+  // Ticket 22b: a drag/click on the bar leaves marker mode; only a tick click
+  // selects a marker and exposes its delete control.
+  clearPlayerMarkerSelection();
+});
 playerSeek?.addEventListener("change", () => {
+  clearPlayerMarkerSelection();
   const requested = Number(playerSeek.value);
   void sendLocalPlaybackCommand({ type: "seek", positionSec: requested }, {
     // P-07: a rejected seek must snap the slider back to the last reported position.

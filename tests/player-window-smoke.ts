@@ -78,6 +78,11 @@ async function run(): Promise<void> {
       const position = Number(document.querySelector('#player-seek')?.value);
       return Number.isFinite(position) && Math.abs(position - 1) <= 0.2;
     })()`);
+    assert.equal(
+      await read(`document.querySelector('#player-marker-delete')?.hidden`),
+      true,
+      "seeking an unmarked bar only seeks; no marker confirmation appears",
+    );
 
     // External subtitle: the picker adds the track and libmpv selects it.
     await read(`document.querySelector('#player-subtitle-file-button')?.click()`);
@@ -103,6 +108,11 @@ async function run(): Promise<void> {
       await read(`(() => { const layer = document.querySelector('#player-marker-ticks'); return Boolean(layer) && layer.hidden === true && layer.childElementCount === 0; })()`),
       true,
       "a file without markers renders no tick layer",
+    );
+    assert.equal(
+      await read(`document.querySelector('#player-marker-delete')?.hidden`),
+      true,
+      "without markers there is no marker delete control",
     );
 
     // `B` during real playback records the current whole second and never pauses.
@@ -136,6 +146,69 @@ async function run(): Promise<void> {
     assert.ok(tickPositions[0] < tickPositions[1], "ticks keep ascending whole-second order");
     assert.equal(await read(`document.querySelector('#player-toggle-button')?.textContent`), "暂停", "the second B press also leaves playback running");
 
+    // Ticket 22b: clicking a tick jumps to that second, selects the marker and
+    // exposes one explicit inline delete confirmation (no context menu, no dialog).
+    await read(`document.querySelector('#player-toggle-button')?.click()`);
+    await waitFor("paused before the marker interaction", `document.querySelector('#player-toggle-button')?.textContent === '播放'`);
+    assert.equal(
+      await read(`document.querySelector('#player-marker-delete')?.hidden`),
+      true,
+      "a marker is not selected until a tick is clicked",
+    );
+    const jumpMarkerSec = tickPositions[0];
+    await read(`document.querySelector('#player-marker-tick-${jumpMarkerSec}')?.click()`);
+    await waitFor("seek to the clicked marker", `(() => {
+      const position = Number(document.querySelector('#player-seek')?.value);
+      return Number.isFinite(position) && Math.abs(position - ${jumpMarkerSec}) <= 2;
+    })()`);
+    assert.equal(await read(`document.querySelector('#player-marker-delete')?.hidden`), false, "a selected marker exposes the delete control");
+    assert.match(await read<string>(`document.querySelector('#player-marker-delete')?.textContent ?? ''`), /删除标记/u, "the delete control names the marker action");
+    assert.equal(
+      await read(`document.querySelector('#player-marker-tick-${jumpMarkerSec}')?.dataset.selected`),
+      "true",
+      "the clicked tick is marked as selected",
+    );
+    await read(`document.querySelector('#player-marker-delete')?.click()`);
+    await waitFor("deleted tick disappears", `document.querySelectorAll('#player-marker-ticks .player-marker-tick').length === 1`);
+    assert.equal(
+      await read(`document.querySelector('#player-marker-delete')?.hidden`),
+      true,
+      "the delete control disappears once its marker is gone",
+    );
+    assert.equal(await read(`Boolean(document.querySelector('#player-marker-tick-${jumpMarkerSec}'))`), false, "the deleted second is no longer a tick");
+    assert.match(
+      await read<string>(`document.querySelector('#player-control-notice-text')?.textContent ?? ''`),
+      /已删除标记/u,
+      "a successful delete is visible",
+    );
+
+    // A failed delete keeps the stored marker, keeps it selected for retry and
+    // reports the failure in the visible non-blocking strip.
+    const keepMarkerSec = tickPositions[1];
+    await read(`document.querySelector('#player-marker-tick-${keepMarkerSec}')?.click()`);
+    await waitFor("second marker selected", `document.querySelector('#player-marker-delete')?.hidden === false`);
+    ipcMain.removeHandler("local-library:markers-remove");
+    ipcMain.handle("local-library:markers-remove", () => { throw new Error("database is locked"); });
+    await read(`document.querySelector('#player-marker-delete')?.click()`);
+    await waitFor(
+      "visible marker delete failure feedback",
+      `document.querySelector('#player-control-notice')?.hidden === false && (document.querySelector('#player-control-notice-text')?.textContent ?? '').includes('标记没有删除成功')`,
+    );
+    assert.equal(
+      await read(`document.querySelectorAll('#player-marker-ticks .player-marker-tick').length`),
+      1,
+      "a failed delete keeps the stored marker on the bar",
+    );
+    assert.equal(await read(`document.querySelector('#player-marker-delete')?.hidden`), false, "a failed delete keeps the marker selected for retry");
+    assert.equal(await read(`document.querySelector('#player-marker-delete')?.disabled`), false, "a failed delete leaves the retry control enabled");
+    assert.equal(
+      await read(`document.querySelector('#player-marker-tick-${keepMarkerSec}')?.dataset.selected`),
+      "true",
+      "a failed delete keeps the marker visually selected",
+    );
+    await read(`document.querySelector('#player-toggle-button')?.click()`);
+    await waitFor("playback resumed after the marker interaction", `document.querySelector('#player-toggle-button')?.textContent === '暂停'`);
+
     await read(`document.querySelector('#player-fullscreen-button')?.click()`);
     await waitForWindow("window fullscreen on", () => window.isFullScreen());
     assert.equal(await read(`document.querySelector('#player-fullscreen-button')?.textContent`), "退出全屏");
@@ -154,9 +227,10 @@ async function run(): Promise<void> {
       "visible marker failure feedback",
       `document.querySelector('#player-control-notice')?.hidden === false && (document.querySelector('#player-control-notice-text')?.textContent ?? '').includes('标记没有记录成功')`,
     );
+    // Ticket 22b deleted the first of the two markers above, so one tick remains.
     assert.equal(
       await read(`document.querySelectorAll('#player-marker-ticks .player-marker-tick').length`),
-      2,
+      1,
       "a failed add never paints a phantom tick",
     );
     assert.equal(await read(`document.querySelector('#player-toggle-button')?.textContent`), "暂停", "a failed marker never pauses playback");
@@ -193,7 +267,7 @@ async function run(): Promise<void> {
     );
     assert.equal(await read(`document.querySelector('#player-status')?.textContent`), "", "the fallback resets the player status");
 
-    console.log("PASS: real native playback controls, failed open, close fallback and idempotent teardown");
+    console.log("PASS: real native playback controls, marker click-to-seek/delete, failed open, close fallback and idempotent teardown");
   } finally {
     await fixture.cleanup();
     await app.quit();

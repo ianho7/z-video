@@ -19,6 +19,7 @@ import {
   type LocalCollectionQuery,
   type LocalCollectionSummary,
   type LocalMarker,
+  type LocalMarkerDeleteInput,
   type LocalMarkerInput,
   type LocalMediaItem,
   type LocalMediaDetail,
@@ -64,6 +65,7 @@ type WorkerRequest =
   | { id: number; command: "get-detail"; mediaId: string }
   | { id: number; command: "list-markers"; mediaId: string }
   | { id: number; command: "add-marker"; input: LocalMarkerInput }
+  | { id: number; command: "delete-marker"; input: LocalMarkerDeleteInput }
   | { id: number; command: "list-continue-watching" }
   | { id: number; command: "remove-source"; sourceId: string }
   | { id: number; command: "source-root"; sourceId: string }
@@ -1655,6 +1657,21 @@ function addMarker(input: LocalMarkerInput): LocalMarker {
   return markerFromRow(row);
 }
 
+/**
+ * Ticket 22b: delete one whole-second marker keyed by the opaque media id. The
+ * same id/position rules as `addMarker` apply (no path, no fractional or
+ * negative second); a second that has no marker is an idempotent `false` instead
+ * of an error, so a double click never surfaces a false failure to the user.
+ */
+function deleteMarker(input: LocalMarkerDeleteInput): boolean {
+  const db = requireDatabase();
+  if (!input || typeof input !== "object") throw new LocalWorkerError("invalid-input", "标记参数格式无效");
+  if (!isOpaqueMediaId(input.mediaId)) throw new LocalWorkerError("invalid-input", "mediaId 格式无效");
+  if (!isMarkerPositionSec(input.positionSec)) throw new LocalWorkerError("invalid-input", "标记位置必须是有效的整秒数");
+  const result = db.prepare("DELETE FROM markers WHERE media_id = ? AND position_sec = ?").run(input.mediaId, input.positionSec);
+  return Number(result.changes) > 0;
+}
+
 function viewingHistoryFromRow(row: Record<string, unknown>): LocalViewingHistory {
   return {
     mediaId: String(row.mediaId) as LocalViewingHistory["mediaId"],
@@ -2541,6 +2558,7 @@ async function handle(request: WorkerRequest): Promise<unknown> {
   if (request.command === "get-detail") return getDetail(request.mediaId);
   if (request.command === "list-markers") return listMarkers(request.mediaId);
   if (request.command === "add-marker") return addMarker(request.input);
+  if (request.command === "delete-marker") return deleteMarker(request.input);
   if (request.command === "list-continue-watching") return listContinueWatching();
   if (request.command === "remove-source") return removeSource(request.sourceId);
   if (request.command === "source-root") return sourceRoot(request.sourceId);
