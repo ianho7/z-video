@@ -38,9 +38,12 @@ import type {
   LocalMediaDetail,
   LocalMediaItem,
   LocalPlaybackState,
+  LocalScanCounts,
   LocalScanProgress,
   LocalScanResult,
   LocalViewingHistory,
+  LocalLibraryRefreshResult,
+  LocalRefreshTrigger,
 } from "../shared/local-library-contracts";
 import { isLocalLibrarySort } from "../shared/app-preferences-contracts.js";
 import {
@@ -310,7 +313,7 @@ let scanProgress: LocalScanProgress | undefined;
  * Ticket 08: a finished scan stops owning `scanProgress`; the last result stays
  * on the home card instead of keeping the scan panel mounted.
  */
-let lastScanSummary: { progress: LocalScanProgress & { error?: string }; elapsedMs: number | undefined } | undefined;
+let lastScanSummary: { progress: LocalScanProgress & { error?: string; counts?: LocalScanCounts }; elapsedMs: number | undefined } | undefined;
 /**
  * The terminal scan notice owns the status and counts while it is on screen, so
  * the home result card only takes over after that notice is dismissed. This
@@ -326,6 +329,15 @@ let scanRefreshQueued = false;
 let scanCommit = 0;
 let scanRenderedCommit = -1;
 let sourceBusy = false;
+/**
+ * Ticket 23b: the renderer owns the "wait until the library is visible" half of
+ * an automatic change check. A focus or a queued result that arrives while a
+ * detail or player covers the list is remembered and consumed on return; it
+ * never switches the view, steals focus or resets the scroll position.
+ */
+let refreshCheckInFlight = false;
+let refreshCheckQueued = false;
+let pendingRefreshResult: LocalLibraryRefreshResult | undefined;
 const playerNextButton = document.querySelector<HTMLButtonElement>("#player-next-button");
 const playerEnded = document.querySelector<HTMLElement>("#player-ended");
 const playerEndedTitle = document.querySelector<HTMLElement>("#player-ended-title");
@@ -889,6 +901,9 @@ function exitSearchState(): void {
   detailSearchFormOpen = false;
   applyView();
   updateHeaderSearch();
+  // Ticket 23b: leaving search for the list consumes a check/result held while
+  // search covered the library.
+  if (isHomeBase() || baseView === "library") flushLibraryRefreshCheck();
 }
 
 async function clearSearch(): Promise<void> {
@@ -1909,6 +1924,7 @@ function handlePlayerClosed(): void {
     applyView();
     updateReviewBar();
     openReviewDecision();
+    refreshCheckQueued = true;
     return;
   }
   const returnKind: PlayerOrigin = playerReturnToDetail ? "detail" : playerOrigin;
@@ -1917,6 +1933,7 @@ function handlePlayerClosed(): void {
   if (returnKind === "detail" && mediaId) {
     // Refresh the detail in place: it stays open behind the player, so the
     // selected episode, season and scroll position survive playback.
+    refreshCheckQueued = true;
     void openDetail(mediaId);
     return;
   }
@@ -1928,6 +1945,10 @@ function handlePlayerClosed(): void {
   applyView();
   restorePlayerOriginScroll();
   void Promise.all([loadContinueWatching(), loadHomeShelves()]).then(() => restorePlayerOriginScroll());
+  // Ticket 23b: playback never interrupts to scan. The return to the library is
+  // where the queued check runs and any result found during playback lands.
+  if (isHomeBase() || baseView === "library") flushLibraryRefreshCheck();
+  else refreshCheckQueued = true;
 }
 
 function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
@@ -2503,6 +2524,74 @@ async function pumpArtwork(): Promise<void> {
   }
 }
 
+/**
+ * Ticket 23b: the four precise scan/refresh counts. `updatedFiles` deliberately
+ * keeps its "files seen again" meaning, so a status line that printed it would
+ * claim the whole library changed; every visible count reads `counts` instead.
+ */
+function scanCountsText(counts: LocalScanCounts | undefined): string {
+  if (!counts) return "";
+  return `新增 ${counts.imported} · 更新 ${counts.updated} · 未变 ${counts.unchanged} · 移除 ${counts.removed}`;
+}
+
+/** One automatic refresh's silent result; the status line carries the counts. */
+async function applyLibraryRefresh(result: LocalLibraryRefreshResult): Promise<void> {
+  const applied = await loadLibrary();
+  if (!applied) {
+    // Still covered by search/cleanup/detail; keep it for the surface that returns.
+    pendingRefreshResult = result;
+    return;
+  }
+  setMessage(`已自动刷新：${scanCountsText(result.counts)}。`);
+  if (isHomeBase()) await loadHomeShelves();
+  await loadContinueWatching();
+}
+
+function applyPendingLibraryRefresh(): void {
+  if (!pendingRefreshResult) return;
+  if (isDetailOrPlayerVisible() || isSearchBase() || isCleanupLayerOpen()) return;
+  const result = pendingRefreshResult;
+  pendingRefreshResult = undefined;
+  void applyLibraryRefresh(result);
+}
+
+/**
+ * Ask main for one change check. While a detail or player covers the list the
+ * request is only queued; the return path consumes it. A focus that arrives
+ * while a check is already in flight is dropped rather than stacked.
+ */
+function requestLibraryRefreshCheck(trigger: LocalRefreshTrigger): void {
+  if (refreshCheckInFlight) return;
+  if (isDetailOrPlayerVisible()) {
+    refreshCheckQueued = true;
+    return;
+  }
+  refreshCheckInFlight = true;
+  void window.zVideo.localLibrary.checkRefresh(trigger)
+    .then((outcome) => {
+      if (outcome?.status === "queued") refreshCheckQueued = true;
+    })
+    .catch(() => undefined)
+    .finally(() => {
+      refreshCheckInFlight = false;
+    });
+}
+
+/**
+ * The library surface came back: apply a result that arrived behind the detail
+ * or player, then ask for one fresh check (main's throttle still applies to the
+ * focus path). Nothing on the list is scrolled or re-focused here.
+ */
+function flushLibraryRefreshCheck(): void {
+  if (isDetailOrPlayerVisible()) {
+    refreshCheckQueued = true;
+    return;
+  }
+  refreshCheckQueued = false;
+  applyPendingLibraryRefresh();
+  requestLibraryRefreshCheck("return");
+}
+
 function scheduleScanRefresh(): void {
   if (scanProgress?.status !== "running" || scanCommit <= scanRenderedCommit) return;
   if (isDetailOrPlayerVisible()) {
@@ -2859,6 +2948,8 @@ function hideCleanup(returnFocus = true): void {
   void loadLibrary();
   void loadContinueWatching();
   if (isHomeBase()) void loadHomeShelves();
+  // Ticket 23b: the cleanup layer covered the list; apply a held refresh now.
+  if (isHomeBase() || baseView === "library") flushLibraryRefreshCheck();
   if (returnFocus) cleanupEntry?.focus({ preventScroll: true });
 }
 
@@ -3754,6 +3845,9 @@ function closeDetail(): void {
         target?.focus({ preventScroll: true });
         restoreDetailScroll(origin);
       });
+      // Ticket 23b: search is not the library surface; the check waits for the
+      // next return to the list instead of running behind search results.
+      refreshCheckQueued = true;
       return;
     }
     // Ticket 12: a detail opened from search must never leave a visible but
@@ -3785,6 +3879,11 @@ function closeDetail(): void {
     }
   });
   void loadContinueWatching();
+  // Ticket 23b: returning to the list consumes a check queued while the detail
+  // covered it. The restore above runs first, so the silent refresh can never
+  // move the scroll position the user came back to.
+  if (isHomeBase() || baseView === "library") flushLibraryRefreshCheck();
+  else refreshCheckQueued = true;
 }
 
 async function openSelectedLocalMedia(restart = false): Promise<void> {
@@ -3921,6 +4020,20 @@ function aggregateScanResults(results: LocalScanResult[]): LocalScanResult {
     updatedFiles: results.reduce((sum, result) => sum + result.updatedFiles, 0),
     warningCount: results.reduce((sum, result) => sum + result.warningCount, 0),
     warnings: results.flatMap((result) => result.warnings),
+    // Ticket 23b: the aggregate reports precise counts, so "rescan all" never
+    // turns "every file was seen again" into "all entries were updated".
+    ...(results.some((result) => result.counts)
+      ? {
+          counts: results.reduce<LocalScanCounts>((sum, result) => ({
+            imported: sum.imported + (result.counts?.imported ?? 0),
+            updated: sum.updated + (result.counts?.updated ?? 0),
+            unchanged: sum.unchanged + (result.counts?.unchanged ?? 0),
+            removed: sum.removed + (result.counts?.removed ?? 0),
+          }), { imported: 0, updated: 0, unchanged: 0, removed: 0 }),
+          nfoUpdatedFiles: results.reduce((sum, result) => sum + (result.nfoUpdatedFiles ?? 0), 0),
+          fingerprintReplacedFiles: results.reduce((sum, result) => sum + (result.fingerprintReplacedFiles ?? 0), 0),
+        }
+      : {}),
     ...(results.find((result) => result.status === "unavailable")?.error ? { error: results.find((result) => result.status === "unavailable")?.error } : {}),
   };
 }
@@ -4142,10 +4255,12 @@ function updateScanUi(): void {
     if (homeScanElapsed) homeScanElapsed.textContent = scanStartedAtMs === undefined ? "计算中" : formatScanElapsed(Date.now() - scanStartedAtMs);
   } else if (showCard && lastSummary) {
     // Ticket 08: the finished scan keeps a result card with its status and counts.
+    // Ticket 23b: the counts are the four precise ones, so the card never claims
+    // a whole-library update from the "files seen again" counter.
     const label = scanSourceLabel(lastSummary.progress);
     const warnings = lastSummary.progress.warningCount ? ` · ${lastSummary.progress.warningCount} 条警告` : "";
     if (homeScanStatus) homeScanStatus.textContent = `上次扫描：${scanResultLabel(lastSummary.progress.status)}`;
-    if (homeScanFolder) homeScanFolder.textContent = `「${label}」· 新增 ${lastSummary.progress.importedFiles} · 更新 ${lastSummary.progress.updatedFiles}${warnings}`;
+    if (homeScanFolder) homeScanFolder.textContent = `「${label}」· ${scanCountsText(lastSummary.progress.counts) || `新增 ${lastSummary.progress.importedFiles}`}${warnings}`;
     if (homeScanNote) homeScanNote.textContent = "结果保留到下一次扫描；重新扫描不会删除已有作品和观看进度。";
     if (homeScanScanned) homeScanScanned.textContent = String(lastSummary.progress.scannedFiles);
     if (homeScanAdded) homeScanAdded.textContent = String(lastSummary.progress.importedFiles);
@@ -4166,14 +4281,20 @@ function requestScanCancel(): void {
   });
 }
 
-function renderScanProgress(progress: LocalScanProgress): void {
+function renderScanProgress(progress: LocalScanProgress & { counts?: LocalScanCounts }): void {
   scanProgress = progress;
   if (state) renderSources(state, progress, sourceList, { singleVideoSourceIds });
   if (scanPanel) scanPanel.hidden = false;
   const panelTitle = document.querySelector<HTMLElement>("#scan-panel-title");
   const counts = document.querySelector<HTMLElement>("#scan-counts");
   if (panelTitle) panelTitle.textContent = scanStatusLabel(progress.status);
-  if (counts) counts.textContent = "已扫描 " + progress.scannedFiles + " · 新增 " + progress.importedFiles + " · 更新 " + progress.updatedFiles + " · 警告 " + progress.warningCount;
+  if (counts) {
+    // Ticket 23b: a finished scan shows the four precise counts; the running
+    // line keeps the streaming counters but never labels "seen again" as updated.
+    counts.textContent = progress.counts
+      ? `${scanCountsText(progress.counts)} · 警告 ${progress.warningCount}`
+      : "已扫描 " + progress.scannedFiles + " · 新增 " + progress.importedFiles + " · 警告 " + progress.warningCount;
+  }
   const commit = progress.importedFiles + progress.updatedFiles;
   if (progress.status === "running") {
     if (progress.scanId !== "pending") scanId = progress.scanId;
@@ -4207,11 +4328,12 @@ function renderScanProgress(progress: LocalScanProgress): void {
   updateScanUi();
 }
 
-function scanNotice(result: LocalScanProgress & { error?: string }): { title: string; body: string; tone: "info" | "warning" | "error" } | undefined {
+function scanNotice(result: LocalScanProgress & { error?: string; counts?: LocalScanCounts }): { title: string; body: string; tone: "info" | "warning" | "error" } | undefined {
   if (!result.sourceId) return undefined;
+  const countsText = result.counts ? scanCountsText(result.counts) : `新增 ${result.importedFiles} 项`;
   if (result.status === "completed") {
     const warnings = result.warningCount ? `${result.warningCount} 条警告` : "无警告";
-    return { title: "扫描完成", body: `新增 ${result.importedFiles} 项 · 更新 ${result.updatedFiles} 项 · ${warnings}。摘要会保留到你主动关闭，列表刷新不会覆盖它。`, tone: result.warningCount ? "warning" : "info" };
+    return { title: "扫描完成", body: `${countsText} · ${warnings}。摘要会保留到你主动关闭，列表刷新不会覆盖它。`, tone: result.warningCount ? "warning" : "info" };
   }
   if (result.status === "cancelled") {
     return { title: "扫描已取消", body: `已扫描 ${result.scannedFiles} 个视频，已保留此前索引和播放进度。`, tone: "warning" };
@@ -4219,7 +4341,7 @@ function scanNotice(result: LocalScanProgress & { error?: string }): { title: st
   if (result.status === "unavailable") {
     return { title: "来源离线", body: "已保留此前索引和播放进度；重新连接后在文件夹页重新扫描。", tone: "error" };
   }
-  return { title: "扫描部分完成", body: `已扫描 ${result.scannedFiles} 个视频 · 新增 ${result.importedFiles} · 更新 ${result.updatedFiles} · ${result.warningCount} 条警告。${result.error ?? "部分目录无法读取，已保留此前索引。"}`, tone: "warning" };
+  return { title: "扫描部分完成", body: `已扫描 ${result.scannedFiles} 个视频 · ${countsText} · ${result.warningCount} 条警告。${result.error ?? "部分目录无法读取，已保留此前索引。"}`, tone: "warning" };
 }
 
 function renderScanResult(result: LocalScanResult): void {
@@ -4228,7 +4350,7 @@ function renderScanResult(result: LocalScanResult): void {
   if (warnings) warnings.replaceChildren(...result.warnings.map((warning) => { const item = document.createElement("li"); item.textContent = warning; return item; }));
   const notice = scanNotice(result);
   if (notice) showAppNotice(notice.title, notice.body, notice.tone, result.status === "completed");
-  if (result.status === "completed") setMessage(`扫描完成：新增 ${result.importedFiles}，更新 ${result.updatedFiles}。`);
+  if (result.status === "completed") setMessage(`扫描完成：${scanCountsText(result.counts) || `新增 ${result.importedFiles} 项`}。`);
   else if (result.status === "cancelled") setMessage("扫描已取消，已保留此前索引和播放历史。", false);
   else if (result.status === "unavailable") setMessage("来源离线，已保留此前索引和播放历史。", true);
   else setMessage(result.error ?? "扫描部分完成，部分条目保留此前索引。", true);
@@ -4718,6 +4840,13 @@ reviewDecisionDialog?.addEventListener("keydown", (event) => {
 });
 window.zVideo.localLibrary.onState(renderState);
 window.zVideo.localLibrary.onScanProgress(renderScanProgress);
+// Ticket 23b: one silent result push, and one focus trigger. The background
+// check never shows a notification, switches the view or moves focus/scroll.
+window.zVideo.localLibrary.onRefreshResult((result) => {
+  pendingRefreshResult = result;
+  applyPendingLibraryRefresh();
+});
+window.addEventListener("focus", () => requestLibraryRefreshCheck("focus"));
 window.zVideo.localPlayback.onEvent(renderLocalPlaybackEvent);
 
 void (async () => {

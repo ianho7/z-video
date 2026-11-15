@@ -42,6 +42,8 @@ const IPC_CHANNELS = {
   localLibraryScan: "local-library:scan",
   localLibraryCancelScan: "local-library:scan-cancel",
   localLibraryScanProgress: "local-library:scan-progress",
+  localLibraryRefreshCheck: "local-library:refresh-check",
+  localLibraryRefreshResult: "local-library:refresh-result",
   localLibraryCleanupQueue: "local-library:cleanup-queue",
   localLibraryCleanupSetState: "local-library:cleanup-set-state",
   localLibraryCleanupReveal: "local-library:cleanup-reveal",
@@ -119,6 +121,12 @@ const api: ElectronApi = {
       const handler = (_event: Electron.IpcRendererEvent, value: Parameters<typeof listener>[0]) => listener(value);
       ipcRenderer.on(IPC_CHANNELS.localLibraryState, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.localLibraryState, handler);
+    },
+    checkRefresh: (trigger) => ipcRenderer.invoke(IPC_CHANNELS.localLibraryRefreshCheck, trigger),
+    onRefreshResult: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, value: Parameters<typeof listener>[0]) => listener(value);
+      ipcRenderer.on(IPC_CHANNELS.localLibraryRefreshResult, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.localLibraryRefreshResult, handler);
     },
   },
   localPlayback: {

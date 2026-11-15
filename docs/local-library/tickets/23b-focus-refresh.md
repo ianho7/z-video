@@ -3,7 +3,7 @@
 ID: 23b-focus-refresh
 Blocked by: 23a
 Spec: docs/local-library/spec-s2-change-detection.md
-Status: ready-for-agent
+Status: done (2026-11-15; implemented on feat/exp-23b, verification below)
 
 ## What to build
 

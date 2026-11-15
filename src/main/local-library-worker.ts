@@ -31,6 +31,7 @@ import {
   type LocalScanCounts,
   type LocalScanProgress,
   type LocalScanResult,
+  type LocalSourceDirectories,
   type LocalSourceSummary,
   type LocalViewingHistory,
   type LocalViewingSessionFinishInput,
@@ -62,6 +63,7 @@ type WorkerRequest =
   | { id: number; command: "import-video"; filePath: string; rootPath: string }
   | { id: number; command: "scan"; rootPath: string }
   | { id: number; command: "scan-directories"; sourceId: string; relativeDirectories: string[] }
+  | { id: number; command: "list-scan-directories" }
   | { id: number; command: "cancel-scan"; scanId: string }
   | { id: number; command: "list"; query: LocalLibraryQuery }
   | { id: number; command: "list-collections"; query: LocalCollectionQuery }
@@ -2660,6 +2662,34 @@ function knownSource(sourceId: string): KnownSource | undefined {
   return { sourceId: String(row.sourceId), rootPath: row.rootPath, label: safeSourceLabel(row.rootPath) };
 }
 
+/**
+ * The known-directory inventory for the mtime coarse filter (Ticket 23b).
+ * Derived from the existing rows, so no schema or side table is added: every
+ * source's root plus the parent directory of each indexed Media file. Stored
+ * relative paths use POSIX separators, so the parent is a string prefix.
+ */
+function listScanDirectories(): LocalSourceDirectories[] {
+  const db = requireDatabase();
+  const sources = profileSync("database", () => db.prepare("SELECT source_id AS sourceId FROM sources ORDER BY source_id").all() as Array<{ sourceId?: string }>);
+  const directories = new Map<string, Set<string>>();
+  for (const row of sources) {
+    if (row.sourceId) directories.set(String(row.sourceId), new Set([""]));
+  }
+  const mediaRows = profileSync("database", () => db.prepare("SELECT source_id AS sourceId, relative_path AS relativePath FROM media_files").all() as Array<{ sourceId?: string; relativePath?: string }>);
+  for (const row of mediaRows) {
+    if (!row.sourceId) continue;
+    const known = directories.get(String(row.sourceId));
+    if (!known) continue;
+    const relativePath = String(row.relativePath ?? "");
+    const separator = relativePath.lastIndexOf("/");
+    known.add(separator <= 0 ? "" : relativePath.slice(0, separator));
+  }
+  return [...directories.entries()].map(([sourceId, known]) => ({
+    sourceId,
+    relativeDirectories: [...known].sort((left, right) => left.localeCompare(right)),
+  }));
+}
+
 async function scanRoot(rootPath: string): Promise<LocalDirectoryScanResult> {
   return scanSource({ rootPath });
 }
@@ -2903,6 +2933,7 @@ async function handle(request: WorkerRequest): Promise<unknown> {
       activeScan = undefined;
     }
   }
+  if (request.command === "list-scan-directories") return listScanDirectories();
   if (request.command === "cancel-scan") {
     const token = scanCancellation.get(request.scanId);
     // Answering `true` for a scan that already returned would promise a

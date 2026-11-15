@@ -54,6 +54,7 @@ Scope: `src/main`、`src/renderer`、`src/shared`、`src/preload` 全量静态�
 | 35 | 发现请求代际（遗留） | `nextRequestId` + `active` + `AbortSignal` | 2 × 4 | 标 deprecated | 16 |
 | 36 | NAS 播放协调器（遗留） | `generation/activeEpisodeId/active` + 3 布尔 | 8 | 标 deprecated | 16 |
 | 37 | 窗口外观回退 | `nativeBackdrop/reducedTransparency/highContrast` | 4 | 维持（catch 改写语义，记录） | — |
+| 38 | 自动变化校验调度 | main: `checking/activeScans/pendingTrigger/autoScanning` + 持久 baseline；renderer: `refreshCheckInFlight/refreshCheckQueued/pendingRefreshResult` | 5（idle/checking/scanning/queued/silent-result） | 维持：main 单一队列 + 单一结果推送，renderer 只有一个"等库可见再应用"入口 | 23b |
 
 ## 2. 活路径与遗留路径
 

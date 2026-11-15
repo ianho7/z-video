@@ -24,6 +24,7 @@ import {
   type LocalPlaybackUpdate,
   type LocalScanProgress,
   type LocalScanResult,
+  type LocalSourceDirectories,
   type LocalViewingHistory,
   type LocalViewingSessionFinishInput,
   type LocalViewingSessionHeartbeatInput,
@@ -44,6 +45,7 @@ type WorkerCommand =
   | { command: "import-video"; filePath: string; rootPath: string }
   | { command: "scan"; rootPath: string }
   | { command: "scan-directories"; sourceId: string; relativeDirectories: string[] }
+  | { command: "list-scan-directories" }
   | { command: "cancel-scan"; scanId: string }
   | { command: "list"; query: LocalLibraryQuery }
   | { command: "list-collections"; query: LocalCollectionQuery }
@@ -277,8 +279,19 @@ export class LocalLibraryDatabase {
     return result;
   }
 
+  /**
+   * The known-directory inventory used by the mtime coarse filter (Ticket 23b).
+   * Derived from the stored rows: one entry per source with its root (`""`) and
+   * every indexed Media file's parent directory. It carries source-relative
+   * POSIX directories only, so no path reaches a renderer DTO.
+   */
+  async listScanDirectories(): Promise<LocalSourceDirectories[]> {
+    return this.call<LocalSourceDirectories[]>({ command: "list-scan-directories" });
+  }
+
   /** Rescan every registered folder in source order; one unreadable source never aborts the rest. */
   async rescanAll(): Promise<LocalScanResult[]> {
+
     const state = await this.refreshState();
     const results: LocalScanResult[] = [];
     for (const source of state.sources) {

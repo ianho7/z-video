@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rename, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rename, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -7,9 +7,10 @@ import { app } from "electron";
 
 import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
 
-import { LOCAL_LIBRARY_SCHEMA_VERSION, isOpaqueMediaId } from "../src/shared/local-library-contracts";
+import { LOCAL_LIBRARY_SCHEMA_VERSION, isOpaqueMediaId, type LocalLibraryRefreshResult } from "../src/shared/local-library-contracts";
 import { CLEANUP_PRESETS, DAY_MS, GIB, defaultCleanupSettings } from "../src/shared/cleanup-contracts";
 import { LocalLibraryDatabase } from "../src/main/local-library-database";
+import { LocalLibraryRefreshScheduler, type LocalRefreshDatabasePort } from "../src/main/local-library-refresh";
 
 function openSqlite(filePath: string): DatabaseSyncType {
   const sqlite = require("node:sqlite") as { DatabaseSync?: new (path: string) => DatabaseSyncType };
@@ -1378,6 +1379,13 @@ async function run(): Promise<void> {
     assert.deepEqual(scopeBaseline.counts, { imported: 4, updated: 0, unchanged: 0, removed: 0 }, "a first scan imports every file and reports no phantom updates");
     assert.equal(scopeBaseline.nfoUpdatedFiles, 0);
     assert.equal(scopeBaseline.fingerprintReplacedFiles, 0);
+    // Ticket 23b: the coarse filter reads the known directory inventory from
+    // the owner. It is the source root (so a new top-level folder changes the
+    // root's mtime) plus every stored media file's parent directory.
+    const scopeDirectoryInventory = (await scopeDb.listScanDirectories()).find((source) => source.sourceId === scopeBaseline.sourceId);
+    assert.ok(scopeDirectoryInventory, "every registered source has a directory inventory");
+    assert.deepEqual(scopeDirectoryInventory.relativeDirectories, ["", "A-dir", "B-dir"], "known directories are the root plus each media parent, sorted and unique");
+    assert.equal(JSON.stringify(scopeDirectoryInventory).includes(scopeRoot), false, "the inventory carries source-relative directories only");
     const scopeBaselineItems = (await scopeDb.list({ page: 1, pageSize: 20, sourceId: scopeBaseline.sourceId })).items;
     const scopeItem = (title: string) => {
       const item = scopeBaselineItems.find((candidate) => candidate.title === title);
@@ -1566,6 +1574,79 @@ async function run(): Promise<void> {
       "an incomplete directory rescan never claims the source is proven complete",
     );
     await partialScopeDb.close();
+
+    // Ticket 23b: the mtime coarse filter only scans changed directories, never
+    // produces an observable scan for an unchanged library, and its persisted
+    // baseline still detects a change made while the app was closed (a fresh
+    // scheduler with the same sidecar is the process restart).
+    const refreshRoot = join(profile, "refresh-fixture");
+    const refreshA = join(refreshRoot, "A-dir");
+    const refreshB = join(refreshRoot, "B-dir");
+    await mkdir(refreshA, { recursive: true });
+    await mkdir(refreshB, { recursive: true });
+    await writeFile(join(refreshA, "Refresh A.mkv"), Buffer.from("refresh a fixture"));
+    await writeFile(join(refreshB, "Refresh B.mkv"), Buffer.from("refresh b fixture"));
+    await writeFile(join(refreshA, "Refresh A.nfo"), "<movie><title>Refresh A Before</title></movie>");
+    await writeFile(join(refreshB, "Refresh B.nfo"), "<movie><title>Refresh B Before</title></movie>");
+    const refreshDb = new LocalLibraryDatabase({ dbPath: join(profile, "refresh.sqlite"), workerPath });
+    await refreshDb.start();
+    const refreshScan = await refreshDb.scanFolder(refreshRoot);
+    assert.equal(refreshScan.status, "completed");
+    const refreshInventory = (await refreshDb.listScanDirectories()).find((source) => source.sourceId === refreshScan.sourceId);
+    assert.deepEqual(refreshInventory?.relativeDirectories, ["", "A-dir", "B-dir"], "the fixture exposes the root and both media parents");
+    const refreshCalls: Array<{ sourceId: string; directories: string[] }> = [];
+    const refreshPort: LocalRefreshDatabasePort = {
+      listScanDirectories: () => refreshDb.listScanDirectories(),
+      sourceRoot: (sourceId) => refreshDb.sourceRoot(sourceId),
+      scanDirectories: (sourceId, directories) => {
+        refreshCalls.push({ sourceId, directories: [...directories] });
+        return refreshDb.scanDirectories(sourceId, directories);
+      },
+    };
+    const refreshBaselinePath = join(profile, "user-data", "local-library", "directory-mtime.json");
+    const makeRefreshScheduler = () => new LocalLibraryRefreshScheduler(refreshPort, refreshBaselinePath, { throttleMs: 0, now: () => Date.now() });
+    const refreshResults: LocalLibraryRefreshResult[] = [];
+    const refreshScheduler = makeRefreshScheduler();
+    refreshScheduler.onResult((result) => refreshResults.push(result));
+    await refreshScheduler.recordBaselineForSource(refreshScan.sourceId);
+    const refreshProgressStatuses: string[] = [];
+    const unsubscribeRefreshProgress = refreshDb.onScanProgress((progress) => refreshProgressStatuses.push(progress.status));
+    assert.deepEqual(await refreshScheduler.request("focus", { force: true }), { status: "unchanged" }, "an unchanged library reports unchanged");
+    unsubscribeRefreshProgress();
+    assert.deepEqual(refreshCalls, [], "no directory is handed to the rescan when nothing changed");
+    assert.deepEqual(refreshProgressStatuses, [], "an unchanged check emits no scan progress, so the status line cannot flicker");
+    assert.equal(refreshResults.length, 0, "an unchanged check pushes no result");
+    const refreshBaselineText = await readFile(refreshBaselinePath, "utf8");
+    assert.equal(refreshBaselineText.includes(profile), false, "the baseline sidecar stores source-relative directories, never an absolute path");
+    const refreshNfoA = join(refreshA, "Refresh A.nfo");
+    await writeFile(refreshNfoA, "<movie><title>Refresh A After</title></movie>");
+    await utimes(refreshNfoA, new Date(Date.now() + 5_000), new Date(Date.now() + 5_000));
+    assert.deepEqual(await refreshScheduler.request("focus", { force: true }), { status: "refreshed" }, "an NFO edit is detected on the next check");
+    assert.deepEqual(refreshCalls, [{ sourceId: refreshScan.sourceId, directories: ["A-dir"] }], "only the edited directory is rescanned");
+    assert.equal(refreshResults.length, 1);
+    assert.equal(refreshResults[0]?.trigger, "focus");
+    assert.deepEqual(refreshResults[0]?.counts, { imported: 0, updated: 1, unchanged: 0, removed: 0 }, "the result carries the precise updated count, not the re-seen counter");
+    assert.equal(refreshResults[0]?.nfoUpdatedFiles, 1, "an NFO-only change stays separable from a video replacement");
+    assert.equal((await refreshDb.list({ page: 1, pageSize: 20, sourceId: refreshScan.sourceId, query: "Refresh A After" })).totalCount, 1, "the rescan applied the edited title");
+    assert.equal((await refreshDb.list({ page: 1, pageSize: 20, sourceId: refreshScan.sourceId, query: "Refresh B Before" })).totalCount, 1, "the untouched directory keeps its title");
+    refreshScheduler.dispose();
+    // Restart: a different scheduler instance reads the sidecar above, so a
+    // change written while the app was closed is still detected.
+    const refreshNfoB = join(refreshB, "Refresh B.nfo");
+    await writeFile(refreshNfoB, "<movie><title>Refresh B After</title></movie>");
+    await utimes(refreshNfoB, new Date(Date.now() + 6_000), new Date(Date.now() + 6_000));
+    const restartScheduler = makeRefreshScheduler();
+    const restartResults: LocalLibraryRefreshResult[] = [];
+    restartScheduler.onResult((result) => restartResults.push(result));
+    assert.deepEqual(await restartScheduler.request("focus", { force: true }), { status: "refreshed" }, "a fresh scheduler still detects a change from the persisted baseline");
+    assert.deepEqual(refreshCalls, [
+      { sourceId: refreshScan.sourceId, directories: ["A-dir"] },
+      { sourceId: refreshScan.sourceId, directories: ["B-dir"] },
+    ], "the restart rescans only the directory changed while the app was closed");
+    assert.deepEqual(restartResults[0]?.counts, { imported: 0, updated: 1, unchanged: 0, removed: 0 });
+    assert.equal((await refreshDb.list({ page: 1, pageSize: 20, sourceId: refreshScan.sourceId, query: "Refresh B After" })).totalCount, 1, "the restart applied the offline edit");
+    restartScheduler.dispose();
+    await refreshDb.close();
 
     // Ticket 07: an import never runs concurrently with a scan.
     const guardRoot = join(profile, "import-guard-fixture");

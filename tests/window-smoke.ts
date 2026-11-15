@@ -67,6 +67,9 @@ async function run(): Promise<void> {
     scannedFiles: 1_204,
     importedFiles: 986,
     updatedFiles: 18,
+    // Ticket 23b: a terminal result carries the four precise counts; the status
+    // line reads these, never the compatibility "files seen again" counter.
+    counts: { imported: 986, updated: 18, unchanged: 12, removed: 0 },
     warningCount: 2,
     sourceLabel: "窗口测试文件夹",
     ...overrides,
@@ -174,6 +177,15 @@ async function run(): Promise<void> {
   ipcMain.handle("app-preferences:get", async () => ({ ...preferences }));
   ipcMain.handle("app-preferences:set-sort", async (_event, sort) => ({ ...preferences, sort }));
   const playbackOpens: string[] = [];
+  // Ticket 23b: the automatic change check is a renderer trigger; main answers
+  // the invoke and pushes a silent result. The fixture holds the answer so a
+  // queued trigger during detail/player can be observed as "not asked yet".
+  const refreshChecks: string[] = [];
+  let refreshOutcome: "unchanged" | "throttled" = "unchanged";
+  ipcMain.handle("local-library:refresh-check", async (_event, trigger: string) => {
+    refreshChecks.push(String(trigger));
+    return { status: refreshOutcome };
+  });
   ipcMain.handle("local-playback:open", async (_event, request: { mediaId: string }) => {
     playbackOpens.push(request.mediaId);
     return { opened: true };
@@ -1085,8 +1097,108 @@ async function run(): Promise<void> {
   await setMotionMedia("no-preference");
   assert.equal((await readMotionEnv()).reduced, false, "the emulated system setting is restored for later checks");
 
+  // ---- Ticket 23b: focus/return change check -------------------------------
+  const readRefreshUi = () => window.webContents.executeJavaScript(`(() => ({
+    message: document.querySelector('#library-message')?.textContent || '',
+    noticeHidden: document.querySelector('#app-notice')?.hidden !== false,
+    detailHidden: document.querySelector('#media-detail')?.hidden !== false,
+    playerHidden: document.querySelector('[data-view=player]')?.hidden !== false,
+    titles: [...document.querySelectorAll('#library-grid .media-card-title')].map((element) => element.textContent || ''),
+    activeElement: document.activeElement instanceof HTMLElement ? (document.activeElement.id || document.activeElement.className) : '',
+    scrollTop: document.scrollingElement ? document.scrollingElement.scrollTop : window.scrollY,
+  }))()`, true) as Promise<{
+    message: string;
+    noticeHidden: boolean;
+    detailHidden: boolean;
+    playerHidden: boolean;
+    titles: string[];
+    activeElement: string;
+    scrollTop: number;
+  }>;
+  const refreshResult = (counts = { imported: 0, updated: 1, unchanged: 0, removed: 0 }) => ({
+    trigger: "focus" as const,
+    scannedDirectories: 1,
+    counts,
+    nfoUpdatedFiles: counts.updated,
+    fingerprintReplacedFiles: 0,
+    warningCount: 0,
+  });
+  const pushRefreshResult = (result: ReturnType<typeof refreshResult>): void => {
+    window.webContents.send("local-library:refresh-result", result);
+  };
+
+  await window.webContents.executeJavaScript("document.querySelector('[data-nav=all]').click()", true);
+  await waitFor("library base for ticket 23b", readRefreshUi, (value) => value.titles.length > 0 && value.detailHidden);
+
+  // ① Focus asks main for one check. An unchanged answer changes nothing.
+  const beforeFocusMessage = (await readRefreshUi()).message;
+  let checkCountBefore = refreshChecks.length;
+  await window.webContents.executeJavaScript("window.dispatchEvent(new Event('focus'))", true);
+  await waitFor("focus check requested", async () => refreshChecks.length, (count) => count > checkCountBefore, 3_000);
+  assert.equal(refreshChecks.at(-1), "focus", "regaining window focus asks for a focus-triggered check");
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  const afterFocus = await readRefreshUi();
+  assert.equal(afterFocus.message, beforeFocusMessage, "an unchanged check writes no status line");
+  assert.equal(afterFocus.noticeHidden, true, "an automatic check never raises a notice");
+
+  // ② A pushed result updates the list silently and keeps scroll and focus.
+  items[0].title = "窗口测试影片 · 已刷新";
+  await window.webContents.executeJavaScript("(() => { document.querySelector('#library-sort-trigger')?.focus({ preventScroll: true }); const scroller = document.scrollingElement; if (scroller) scroller.scrollTop = 120; else window.scrollTo(0, 120); return true; })()", true);
+  const beforeResult = await readRefreshUi();
+  checkCountBefore = refreshChecks.length;
+  pushRefreshResult(refreshResult());
+  const refreshed = await waitFor("silent refresh applied", readRefreshUi, (value) => value.titles.includes("窗口测试影片 · 已刷新") && /已自动刷新/u.test(value.message), 3_000);
+  assert.match(refreshed.message, /已自动刷新/u, "the result lands on the status line, not a notification");
+  assert.match(refreshed.message, /新增 0 · 更新 1 · 未变 0 · 移除 0/u, "the status line uses the four precise counts");
+  assert.doesNotMatch(refreshed.message, /全部条目|全部更新/u, "the status line never claims the whole library was updated");
+  assert.equal(refreshed.noticeHidden, true, "a silent refresh never shows the app notice");
+  assert.equal(refreshed.scrollTop, beforeResult.scrollTop, "the silent refresh never resets the scroll position");
+  assert.equal(refreshed.activeElement, beforeResult.activeElement, "the silent refresh never steals focus");
+  assert.equal(refreshChecks.length, checkCountBefore, "applying a pushed result does not start another check");
+
+  // ③ A detail open queues both the check and the result until the list is back.
+  const detailScroll = await window.webContents.executeJavaScript("(() => { const scroller = document.scrollingElement; if (scroller) scroller.scrollTop = 60; else window.scrollTo(0, 60); return scroller ? scroller.scrollTop : window.scrollY; })()", true) as number;
+  await window.webContents.executeJavaScript("document.querySelector('#library-grid .media-card [data-media-id]').click()", true);
+  await waitFor("detail open for refresh deferral", readRefreshUi, (value) => value.detailHidden === false);
+  checkCountBefore = refreshChecks.length;
+  await window.webContents.executeJavaScript("window.dispatchEvent(new Event('focus'))", true);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.equal(refreshChecks.length, checkCountBefore, "a focus while the detail is open is queued instead of checking behind it");
+  items[0].title = "窗口测试影片 · 详情后刷新";
+  pushRefreshResult(refreshResult({ imported: 0, updated: 2, unchanged: 0, removed: 0 }));
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  const behindDetail = await readRefreshUi();
+  assert.equal(behindDetail.detailHidden, false, "a refresh result never interrupts the open detail");
+  assert.equal(behindDetail.titles.includes("窗口测试影片 · 详情后刷新"), false, "a change found while the detail is open is not applied behind it");
+  await window.webContents.executeJavaScript("document.querySelector('#media-detail-back').click()", true);
+  await waitFor("return check requested after detail", async () => refreshChecks.slice(), (checks) => checks.at(-1) === "return", 3_000);
+  const afterDetail = await waitFor("deferred refresh applied after detail", readRefreshUi, (value) => value.detailHidden && value.titles.includes("窗口测试影片 · 详情后刷新") && /已自动刷新/u.test(value.message), 3_000);
+  assert.match(afterDetail.message, /已自动刷新/u);
+  assert.match(afterDetail.message, /更新 2/u);
+  assert.equal(afterDetail.scrollTop, detailScroll, "returning from the detail restores the list scroll position");
+
+  // ④ Playback defers the same way, and closing the player returns to the library.
+  await window.webContents.executeJavaScript("document.querySelector('#hero-play')?.click()", true);
+  await waitFor("player open for refresh deferral", readRefreshUi, (value) => value.playerHidden === false, 4_000);
+  checkCountBefore = refreshChecks.length;
+  await window.webContents.executeJavaScript("window.dispatchEvent(new Event('focus'))", true);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.equal(refreshChecks.length, checkCountBefore, "a focus during playback is queued instead of scanning");
+  items[0].title = "窗口测试影片 · 播放后刷新";
+  pushRefreshResult(refreshResult({ imported: 0, updated: 1, unchanged: 0, removed: 0 }));
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  const duringPlayer = await readRefreshUi();
+  assert.equal(duringPlayer.playerHidden, false, "automatic refresh never interrupts playback");
+  assert.equal(duringPlayer.titles.includes("窗口测试影片 · 播放后刷新"), false, "playback keeps the old list until the user returns");
+  await window.webContents.executeJavaScript("document.querySelector('#player-close-button').click()", true);
+  window.webContents.send("local-playback:event", { type: "closed" });
+  await waitFor("return check requested after player", async () => refreshChecks.slice(), (checks) => checks.at(-1) === "return", 4_000);
+  const afterPlayer = await waitFor("deferred refresh applied after player", readRefreshUi, (value) => value.playerHidden && value.titles.includes("窗口测试影片 · 播放后刷新") && /已自动刷新/u.test(value.message), 4_000);
+  assert.match(afterPlayer.message, /已自动刷新/u);
+  assert.equal(afterPlayer.noticeHidden, true, "the playback return refresh stays silent");
+
   window.close();
-  for (const channel of ["local-library:state", "local-library:source-remove", "local-library:source-refresh", "local-library:rescan-all", "local-library:choose-folder", "local-library:open-video", "local-library:list", "local-library:list-collections", "local-library:scan-cancel", "local-library:get", "local-library:artwork", "local-library:continue-watching", "app-preferences:get", "app-preferences:set-sort", "local-playback:open", "local-playback:command"]) ipcMain.removeHandler(channel);
+  for (const channel of ["local-library:state", "local-library:source-remove", "local-library:source-refresh", "local-library:rescan-all", "local-library:choose-folder", "local-library:open-video", "local-library:list", "local-library:list-collections", "local-library:scan-cancel", "local-library:refresh-check", "local-library:get", "local-library:artwork", "local-library:continue-watching", "app-preferences:get", "app-preferences:set-sort", "local-playback:open", "local-playback:command"]) ipcMain.removeHandler(channel);
 }
 
 run().then(() => app.quit()).catch((error: unknown) => {

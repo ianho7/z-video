@@ -327,6 +327,55 @@ export interface LocalDirectoryScanResult extends LocalScanResult {
 }
 
 /**
+ * The directory inventory one Source exposes to the mtime coarse filter
+ * (Ticket 23b). It is derived from the stored rows, not from a new table: the
+ * source root (so a new top-level folder changes it) plus the parent directory
+ * of every indexed Media file. Values are source-relative POSIX directories and
+ * never an absolute path; `""` is the source root.
+ */
+export interface LocalSourceDirectories {
+  sourceId: string;
+  relativeDirectories: string[];
+}
+
+/** What asked for the change check: the window regained focus, or the library surface came back. */
+export type LocalRefreshTrigger = "focus" | "return";
+
+export function isLocalRefreshTrigger(value: unknown): value is LocalRefreshTrigger {
+  return value === "focus" || value === "return";
+}
+
+/**
+ * Immediate answer to one change check. `refreshed` means at least one changed
+ * directory was rescanned and a `LocalLibraryRefreshResult` was pushed;
+ * `unchanged` means the baseline matched; `throttled` means a focus arrived
+ * inside the throttle window; `queued` means a scan was already running and the
+ * dirty directories wait for it.
+ */
+export type LocalRefreshStatus = "refreshed" | "unchanged" | "throttled" | "queued" | "error";
+
+export interface LocalRefreshOutcome {
+  status: LocalRefreshStatus;
+}
+
+/**
+ * One silent automatic refresh (Ticket 23b). It carries the same four counts as
+ * a manual scan so the status line never falls back to the "files seen again"
+ * compatibility counter, and it is pushed without a notification.
+ */
+export interface LocalLibraryRefreshResult {
+  trigger: LocalRefreshTrigger;
+  /** Directories handed to the directory rescan, after ancestor collapsing. */
+  scannedDirectories: number;
+  counts: LocalScanCounts;
+  /** Subset of `counts.updated`: the change was NFO/artwork metadata only. */
+  nfoUpdatedFiles: number;
+  /** Subset of `counts.imported`: a changed video fingerprint replaced an identity. */
+  fingerprintReplacedFiles: number;
+  warningCount: number;
+}
+
+/**
  * Normalize one source-relative directory for the directory-scoped rescan
  * (Ticket 23a). A scan scope must stay inside its Source by construction, so an
  * absolute path, a UNC path, a Windows drive, a URL or an escaping parent
@@ -498,4 +547,12 @@ export interface LocalLibraryApi {
   revealCleanupMedia(mediaId: string): Promise<LocalCleanupRevealResult>;
   onScanProgress(listener: (progress: LocalScanProgress) => void): () => void;
   onState(listener: (state: LocalLibraryState) => void): () => void;
+  /**
+   * Ask main for one change check (Ticket 23b). The renderer calls this when the
+   * window regains focus and when it returns to the library from a detail or
+   * player layer; main applies the throttle and the single-flight queue.
+   */
+  checkRefresh(trigger: LocalRefreshTrigger): Promise<LocalRefreshOutcome>;
+  /** Silent result of a completed automatic refresh; never a notification. */
+  onRefreshResult(listener: (result: LocalLibraryRefreshResult) => void): () => void;
 }
