@@ -2,9 +2,12 @@ import { dialog, ipcMain, shell, type BrowserWindow } from "electron";
 import { dirname } from "node:path";
 
 import {
+  isMarkerDurationSec,
+  isMarkerPositionSec,
   isOpaqueMediaId,
   type LocalLibraryQuery,
   type LocalCollectionQuery,
+  type LocalMarkerInput,
 } from "../shared/local-library-contracts";
 import {
   isCleanupRuleId,
@@ -70,6 +73,14 @@ export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, 
     state: database.getState(),
     items: await database.listContinueWatching(),
   })));
+  ipcMain.handle(IPC_CHANNELS.localLibraryMarkersList, (_event, value: unknown) => withUiOperation("local-library.markers-list", async () => {
+    const mediaId = parseMediaId(value);
+    return database.listMarkers(mediaId);
+  }));
+  ipcMain.handle(IPC_CHANNELS.localLibraryMarkersAdd, (_event, value: unknown) => withUiOperation("local-library.markers-add", async () => {
+    const input = parseMarkerInput(value);
+    return database.addMarker(input);
+  }));
   ipcMain.handle(IPC_CHANNELS.localLibraryArtwork, (_event, value: unknown) => withUiOperation("local-library.artwork", async () => {
     const input = parseArtworkInput(value);
     const artwork = await database.resolveArtwork(input.mediaId, input.kind);
@@ -128,6 +139,8 @@ export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, 
       IPC_CHANNELS.localLibraryList,
       IPC_CHANNELS.localLibraryListCollections,
       IPC_CHANNELS.localLibraryGet,
+      IPC_CHANNELS.localLibraryMarkersList,
+      IPC_CHANNELS.localLibraryMarkersAdd,
       IPC_CHANNELS.localLibraryArtwork,
       IPC_CHANNELS.localLibraryContinueWatching,
       IPC_CHANNELS.localLibraryRemoveSource,
@@ -195,6 +208,26 @@ function parseLocalCollectionQuery(value: unknown): LocalCollectionQuery {
 function parseMediaId(value: unknown): string {
   if (!isOpaqueMediaId(value)) throw new Error("mediaId 格式无效");
   return value;
+}
+
+/**
+ * Marker input validation at the main boundary. The worker re-checks the same
+ * rules against the database (media existence, known duration), so a malformed
+ * renderer value never reaches SQLite and is never clamped into range.
+ */
+function parseMarkerInput(value: unknown): LocalMarkerInput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("标记参数格式无效");
+  const record = value as Record<string, unknown>;
+  const allowed = new Set(["mediaId", "positionSec", "durationSec"]);
+  if (Object.keys(record).some((key) => !allowed.has(key))) throw new Error("标记字段无效");
+  const mediaId = parseMediaId(record.mediaId);
+  if (!isMarkerPositionSec(record.positionSec)) throw new Error("标记位置必须是有效的整秒数");
+  if (record.durationSec !== undefined && !isMarkerDurationSec(record.durationSec)) throw new Error("媒体时长无效");
+  return {
+    mediaId: mediaId as `media_${string}`,
+    positionSec: record.positionSec,
+    ...(record.durationSec === undefined ? {} : { durationSec: record.durationSec }),
+  };
 }
 
 function parseCleanupQuery(value: unknown): LocalCleanupQueueQuery {

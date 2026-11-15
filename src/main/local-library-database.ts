@@ -14,6 +14,8 @@ import {
   type LocalMediaDetail,
   type LocalContinueWatchingItem,
   type LocalLibraryState,
+  type LocalMarker,
+  type LocalMarkerInput,
   type LocalMediaItem,
   type LocalPlaybackState,
   type LocalPlaybackUpdate,
@@ -43,6 +45,8 @@ type WorkerCommand =
   | { command: "list-collections"; query: LocalCollectionQuery }
   | { command: "get"; mediaId: string }
   | { command: "get-detail"; mediaId: string }
+  | { command: "list-markers"; mediaId: string }
+  | { command: "add-marker"; input: LocalMarkerInput }
   | { command: "list-continue-watching" }
   | { command: "remove-source"; sourceId: string }
   | { command: "source-root"; sourceId: string }
@@ -287,6 +291,16 @@ export class LocalLibraryDatabase {
   async getDetail(mediaId: string): Promise<LocalMediaDetail | undefined> {
     assertMediaId(mediaId);
     return this.call<LocalMediaDetail | undefined>({ command: "get-detail", mediaId });
+  }
+
+  async listMarkers(mediaId: string): Promise<LocalMarker[]> {
+    assertMediaId(mediaId);
+    return this.call<LocalMarker[]>({ command: "list-markers", mediaId });
+  }
+
+  async addMarker(input: LocalMarkerInput): Promise<LocalMarker> {
+    assertMediaId(input.mediaId);
+    return this.call<LocalMarker>({ command: "add-marker", input });
   }
 
   async listContinueWatching(): Promise<LocalContinueWatchingItem[]> {

@@ -429,6 +429,10 @@ html[data-motion="off"] *, html[data-motion="off"] *::before, html[data-motion="
 .player-wave { height: 24px; }
 .player-wave path { stroke-width: 2.5; stroke-linecap: round; }
 .player-seek-thumb { position: absolute; top: 0; left: var(--progress, 0%); width: 8px; height: 24px; margin-left: -4px; border-radius: 999px; background: var(--tone-container, var(--lavender)); pointer-events: none; }
+/* Ticket 22a: user-written markers as ticks on the progress bar. The layer stays
+   hidden and empty when the file has no markers, so an empty bar means "no data". */
+.player-marker-ticks { position: absolute; inset: 0; pointer-events: none; }
+.player-marker-tick { position: absolute; top: 50%; width: 3px; height: 14px; margin-left: -1.5px; border-radius: 2px; background: var(--lavender); box-shadow: 0 0 0 1px #0006; transform: translateY(-50%); }
 #player-seek { position: absolute; inset: 0; height: 24px; margin: 0; opacity: 0; cursor: pointer; }
 .seek-control:has(input:focus-visible), .player-volume-control:has(input:focus-visible) { outline: 3px solid var(--lavender); outline-offset: 3px; border-radius: 12px; }
 input[type="range"]:focus, input[type="range"]:focus-visible { outline: 0; }
