@@ -2,7 +2,7 @@
 
 ID: 15-renderer-state-consolidation
 Blocked by: None (can start immediately)
-Status: ready-for-agent
+Status: done (2026-11-14, merged in 62a0475)
 
 ## What to build
 

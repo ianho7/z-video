@@ -2,7 +2,7 @@
 
 ID: 17-player-window-verification
 Blocked by: 15
-Status: ready-for-agent
+Status: fixtures done, GUI verification deferred (merged in 7d75fd8)
 
 ## What to build
 

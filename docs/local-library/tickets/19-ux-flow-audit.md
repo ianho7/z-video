@@ -2,7 +2,7 @@
 
 ID: 19-ux-flow-audit
 Blocked by: None (can start immediately)
-Status: ready-for-agent
+Status: done (2026-11-14, findings in docs/local-library/ux-audit-findings.md)
 
 ## What to build
 
