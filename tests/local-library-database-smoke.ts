@@ -1386,6 +1386,15 @@ async function run(): Promise<void> {
     assert.ok(scopeDirectoryInventory, "every registered source has a directory inventory");
     assert.deepEqual(scopeDirectoryInventory.relativeDirectories, ["", "A-dir", "B-dir"], "known directories are the root plus each media parent, sorted and unique");
     assert.equal(JSON.stringify(scopeDirectoryInventory).includes(scopeRoot), false, "the inventory carries source-relative directories only");
+    // Ticket 24a: the local watcher reports the source root itself when a
+    // top-level entry changes (and when a watched child was deleted). The owner
+    // must accept that scope: "." is the accepted root spelling, so a root-level
+    // change is reconciled instead of being rejected before any scan starts.
+    const scopeRootRescan = await scopeDb.scanDirectories(scopeBaseline.sourceId, ["."]);
+    assert.equal(scopeRootRescan.status, "completed");
+    assert.equal(scopeRootRescan.scannedFiles, 4, "the root scope traverses the whole source");
+    assert.deepEqual(scopeRootRescan.counts, { imported: 0, updated: 0, unchanged: 4, removed: 0 }, "an unchanged root-scope rescan imports and removes nothing");
+    assert.deepEqual(scopeRootRescan.nfoUpdatedFiles, 0);
     const scopeBaselineItems = (await scopeDb.list({ page: 1, pageSize: 20, sourceId: scopeBaseline.sourceId })).items;
     const scopeItem = (title: string) => {
       const item = scopeBaselineItems.find((candidate) => candidate.title === title);

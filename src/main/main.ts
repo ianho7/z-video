@@ -6,6 +6,7 @@ import { registerLocalPlaybackIpcHandlers } from "./local-playback-ipc";
 import { registerAppPreferencesIpcHandlers } from "./app-preferences-ipc";
 import { LocalLibraryDatabase } from "./local-library-database";
 import { LOCAL_LIBRARY_REFRESH_BASELINE_FILE, LocalLibraryRefreshScheduler } from "./local-library-refresh";
+import { LocalLibraryWatcher, type LocalWatchSource } from "./local-library-watch";
 import { LocalArtworkCache } from "./local-artwork-cache";
 import { MainLocalPlaybackHost } from "./player-host";
 import type { LocalPlaybackStore } from "../shared/local-playback-contracts";
@@ -27,6 +28,11 @@ let unregisterAppPreferencesIpc: (() => void) | undefined;
  * closed is still detected on the first focus of the next run.
  */
 let localRefresh: LocalLibraryRefreshScheduler | undefined;
+/**
+ * Ticket 24a: one recursive filesystem watch per registered Source. It hands
+ * dirty directories to `localRefresh`; both are released with the window.
+ */
+let localWatch: LocalLibraryWatcher | undefined;
 let playbackClosing: Promise<void> | undefined;
 let quitting = false;
 
@@ -47,7 +53,40 @@ function createLocalWindow(): void {
   if (!localRefresh) {
     localRefresh = new LocalLibraryRefreshScheduler(localLibrary, join(app.getPath("userData"), "local-library", LOCAL_LIBRARY_REFRESH_BASELINE_FILE));
   }
-  unregisterLocalLibraryIpc = registerLocalLibraryIpcHandlers(localLibrary, window, localArtworkCache, appPreferences, localRefresh);
+  if (!localWatch) {
+    const database = localLibrary;
+    localWatch = new LocalLibraryWatcher({
+      // Main-only: the renderer never learns a root path. An offline or removed
+      // Source still yields its stored root; the watch start then fails silently.
+      sources: {
+        listSources: async (): Promise<LocalWatchSource[]> => {
+          const state = await database.refreshState();
+          const sources: LocalWatchSource[] = [];
+          for (const source of state.sources) {
+            const rootPath = await database.sourceRoot(source.sourceId);
+            if (rootPath) sources.push({ sourceId: source.sourceId, rootPath });
+          }
+          return sources;
+        },
+      },
+      onChange: (directories) => {
+        // Ticket 24a hands the dirty directories to the 23b scheduler: it owns
+        // the single flight, the queue and the silent result push. The watcher
+        // never scans and never reports a failure to the UI.
+        void localRefresh?.requestWatch(directories).catch(() => undefined);
+      },
+      onError: (error) => {
+        // Silent fallback to the focus refresh; this trace is the only evidence,
+        // and it carries no path.
+        void recordUiOperation("local-library.watch", "error", Date.now(), {
+          errorKind: error instanceof Error ? error.name : "unknown",
+          ...(error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string" ? { errorCode: (error as { code: string }).code } : {}),
+        });
+      },
+    });
+  }
+  void localWatch.sync();
+  unregisterLocalLibraryIpc = registerLocalLibraryIpcHandlers(localLibrary, window, localArtworkCache, appPreferences, localRefresh, localWatch);
   unregisterLocalPlaybackIpc = registerLocalPlaybackIpcHandlers(localPlayback);
   unregisterAppPreferencesIpc = registerAppPreferencesIpcHandlers(appPreferences);
   attachWindowLifecycle(window);
@@ -61,6 +100,10 @@ function closePlayback(): Promise<void> {
   unregisterLocalLibraryIpc = undefined;
   unregisterAppPreferencesIpc?.();
   unregisterAppPreferencesIpc = undefined;
+  // Ticket 24a: release every watcher and its pending debounce timer before the
+  // scheduler goes away, so no callback can arrive after the window closed.
+  localWatch?.dispose();
+  localWatch = undefined;
   // Ticket 23b: drop queued checks with the window; a scan already in flight
   // still finishes and its result has no listener left to disturb.
   localRefresh?.dispose();

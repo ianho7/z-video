@@ -23,6 +23,7 @@ import { localLibraryErrorCode, localLibraryErrorMessage } from "./local-library
 import { LocalLibraryDatabase } from "./local-library-database";
 import { LocalArtworkCache } from "./local-artwork-cache";
 import type { LocalLibraryRefreshScheduler } from "./local-library-refresh";
+import type { LocalWatchSyncPort } from "./local-library-watch";
 import type { AppPreferencesStore } from "./app-preferences";
 
 /**
@@ -31,8 +32,12 @@ import type { AppPreferencesStore } from "./app-preferences";
  * gate so an automatic check waits instead of starting a second scan; after the
  * operation finishes, the directory baseline is recorded while the gate is
  * still held, so the next automatic check compares against what this run wrote.
+ *
+ * Ticket 24a: `watch` keeps one local filesystem watch per registered Source.
+ * A folder add/remove re-syncs it, and a focus is the retry point for a Source
+ * whose watch was unavailable (removed share, unplugged drive).
  */
-export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, window: BrowserWindow, artworkCache: LocalArtworkCache, preferences: AppPreferencesStore, refresh?: LocalLibraryRefreshScheduler): () => void {
+export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, window: BrowserWindow, artworkCache: LocalArtworkCache, preferences: AppPreferencesStore, refresh?: LocalLibraryRefreshScheduler, watch?: LocalWatchSyncPort): () => void {
   const sendToWindow = (channel: string, payload: unknown): void => {
     if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(channel, payload);
   };
@@ -52,6 +57,9 @@ export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, 
     const result = await task();
     const ids = sourceIds(result);
     if (refresh && ids.length > 0) await refresh.recordBaselineForSources(ids);
+    // Ticket 24a: a scan can register a new Source (or prove an offline one back),
+    // so the watch set is reconciled while the owner is still gated.
+    if (watch) await watch.sync();
     return result;
   };
   /** A scanning operation: it enters the shared scan queue and records its baseline. */
@@ -130,7 +138,15 @@ export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, 
   }));
   ipcMain.handle(IPC_CHANNELS.localLibraryRemoveSource, (_event, value: unknown) => withUiOperation("local-library.source-remove", async () => {
     const sourceId = parseSourceId(value);
-    return exclusive(() => database.removeSource(sourceId));
+    return exclusive(async () => {
+      const state = await database.removeSource(sourceId);
+      // Ticket 24a: a removed Source must not keep a live recursive watch.
+      if (watch) {
+        watch.forgetSources([sourceId]);
+        await watch.sync();
+      }
+      return state;
+    });
   }));
   ipcMain.handle(IPC_CHANNELS.localLibraryRefreshSource, (_event, value: unknown) => withUiOperation("local-library.source-refresh", async () => {
     const sourceId = parseSourceId(value);
@@ -153,7 +169,12 @@ export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, 
     // A window focus is throttled so flicking between windows does not restat
     // the library; a return from detail/player is a deliberate surface change
     // and runs one check immediately.
-    return refresh.request(value, { force: value === "return" });
+    const outcome = await refresh.request(value, { force: value === "return" });
+    // Ticket 24a: focus is also the retry point for a Source whose watch was
+    // unavailable (removed share, unplugged drive) or that was just registered.
+    // It stays fire-and-forget: the renderer's answer never waits for a watch.
+    void watch?.sync();
+    return outcome;
   }));
   ipcMain.handle(IPC_CHANNELS.localLibraryCancelScan, (_event, value: unknown) => withUiOperation("local-library.scan-cancel", async () => {
     if (!isScanId(value)) throw new Error("scanId 格式无效");
