@@ -25,7 +25,8 @@
     "package": "npm run build && node scripts/package-windows.mjs",
     "verify:package": "node scripts/verify-windows-package.mjs",
     "measure:windows": "node scripts/measure-windows-resources.mjs",
-    "start": "npm run build && electron ."
+    "start": "npm run build && electron .",
+    "package:try": "npm run package && node scripts/try-packaged.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

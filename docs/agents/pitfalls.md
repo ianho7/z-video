@@ -56,3 +56,9 @@
 
 - 不要每步一次 `codex exec`。确定性操作（导航、按键、读库、截图）用 UIA / SendKeys / PowerShell 完成。
 - 只有 overlay 这类必须的交互才用 Codex，并尽量合批，加 `-c model_verbosity="low"`。
+
+## 打包产物在低完整性工作区无法启动
+
+- 现象：仓库内 `release/z-video-win32-x64/z-video.exe` 双击无窗口，退出码 `0x80000003`（Node 里是 `2147483651` / `-2147483645`）；而 `node_modules/electron/dist/electron.exe .` 正常。
+- 原因：DSH 工作区根目录带 **Low 完整性标签**，新生成的 `release/` 继承该标签；Chromium 浏览器进程要求至少 Medium，沙箱初始化触发断点。这是沙箱预期行为，不是打包或应用缺陷。
+- 处理：用 `npm run package:try`——先原地启动，检测到该退出码就自动复制到 `%TEMP%` 再启动；分发用 zip 或仓库外目录。不要给发布版加 `--no-sandbox`，也不要手工改工作区 ACL/完整性标签。
