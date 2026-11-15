@@ -1,0 +1,29 @@
+{
+  "date": "2026-11-15",
+  "environment": {
+    "app": "z-video electron, isolated --user-data-dir, --force-renderer-accessibility",
+    "playback": "real libmpv + real test video",
+    "driver": "UIA InvokePattern + SendKeys(AppActivate) + Codex cua for overlay clicks",
+    "capture": "PowerShell GetWindowRect + CopyFromScreen"
+  },
+  "steps": [
+    { "id": "u01-home", "screenshot": "u01-home.png", "assertion": "3 works indexed", "status": "pass" },
+    { "id": "u02-detail", "screenshot": "u02-detail.png", "assertion": "detail shows 电影 · 2021 · 评分 8.1", "status": "pass" },
+    { "id": "u03-back", "screenshot": "u03-back.png", "assertion": "returns to home hero", "status": "pass" },
+    { "id": "u04-play", "screenshot": "u04-play.png", "assertion": "player shows real video and title", "status": "pass" },
+    { "id": "u05-pause", "screenshot": "u05-pause.png", "assertion": "status shows paused", "status": "pass" },
+    { "id": "u06-marker-add", "screenshot": "u06b-marker-visible.png", "assertion": "marker tick visible after pressing B", "db": "markers=[{position_sec:3}]", "status": "pass" },
+    { "id": "u07-marker-click", "screenshot": "u07b-marker-clicked.png", "assertion": "clicking the tick seeks to 00:03", "status": "pass" },
+    { "id": "u08-marker-delete", "screenshot": "u08b-marker-deleted.png", "assertion": "tick disappears and toast says deleted", "db": "markers=[]", "status": "pass" },
+    { "id": "u09-close-player", "screenshot": "u09-close-player.png", "assertion": "returns to detail", "status": "pass" },
+    { "id": "u10-nfo-refresh", "screenshot": "u10-nfo-refresh.png", "assertion": "title becomes Cu Movie Two RENAMED and progress 00:03 kept", "db": "collections contains Cu Movie Two RENAMED", "status": "pass" },
+    { "id": "u11-file-add", "screenshot": "u11-file-add.png", "assertion": "new file indexed", "db": "Cu Movie Four available=1", "status": "pass" },
+    { "id": "u12-file-remove", "screenshot": "u12-file-remove.png", "assertion": "removed file becomes unavailable", "db": "Cu Movie Four available=0", "status": "pass" },
+    { "id": "u13-single-instance", "screenshot": "u13-single-instance.png", "assertion": "second instance exits without touching the library", "db": "secondExited=True exit=0", "status": "pass" }
+  ],
+  "limitations": [
+    "Screenshots are window-level captures, not pixel-perfect visual acceptance.",
+    "Player overlay clicks required Codex computer use; other steps used UIA/SendKeys only.",
+    "macOS and SMB network shares were not verified."
+  ]
+}

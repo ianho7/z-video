@@ -2,7 +2,7 @@
 
 ID: 39-e2e-screenshot-evidence
 Blocked by: None (S0–S2 已合入)
-Status: ready-for-agent
+Status: done (2026-11-15, one-off harness; reusable npm script deferred)
 
 ## What to build
 
@@ -50,3 +50,4 @@ Status: ready-for-agent
 ## Verification
 
 `npm run typecheck` → `npm test` → `npm run test:e2e-evidence`。
+
