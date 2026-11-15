@@ -10,6 +10,7 @@ import {
   isOpaqueMediaId,
   LOCAL_LIBRARY_SCHEMA_TABLES,
   LOCAL_LIBRARY_SCHEMA_VERSION,
+  normalizeScanRelativeDirectory,
 } from "../src/shared/local-library-contracts";
 import { safeSourceLabel, safeSourceLocationHint } from "../src/main/local-library-label";
 import { localLibraryErrorMessage } from "../src/main/local-library-errors";
@@ -71,6 +72,31 @@ test("public media identity is opaque and cannot carry a private path", () => {
   assert.equal(isOpaqueMediaId("C:\\Media\\movie.mkv"), false);
   assert.equal(isOpaqueMediaId("\\\\nas\\share\\movie.mkv"), false);
   assert.equal(isOpaqueMediaId("/private/movie.mkv"), false);
+});
+
+test("a directory rescan scope stays inside the source and never names another root", () => {
+  assert.equal(normalizeScanRelativeDirectory("Season 1"), "Season 1");
+  assert.equal(normalizeScanRelativeDirectory("Shows\\Season 1"), "Shows/Season 1", "both separators normalize to the library's POSIX form");
+  assert.equal(normalizeScanRelativeDirectory("./Movies/"), "Movies");
+  assert.equal(normalizeScanRelativeDirectory("."), "", "the source root itself is addressable");
+  assert.equal(normalizeScanRelativeDirectory(""), undefined, "an empty value names no directory");
+  for (const rejected of [
+    "../Movies",
+    "Movies/../../escape",
+    "\\\\server\\share\\Movies",
+    "//server/share/Movies",
+    "C:\\Movies",
+    "C:Movies",
+    "\\\\?\\C:\\Movies",
+    "/Movies",
+    "file:///Movies",
+    "Movies\u0000Season",
+    42,
+    null,
+    undefined,
+  ]) {
+    assert.equal(normalizeScanRelativeDirectory(rejected), undefined, `${String(rejected)} is not a source-relative directory`);
+  }
 });
 
 test("source labels never fall back to an absolute drive root", () => {

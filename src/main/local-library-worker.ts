@@ -15,9 +15,11 @@ import {
   isMarkerPositionSec,
   isMarkerWithinDuration,
   isOpaqueMediaId,
+  normalizeScanRelativeDirectory,
   type LocalLibraryQuery,
   type LocalCollectionQuery,
   type LocalCollectionSummary,
+  type LocalDirectoryScanResult,
   type LocalMarker,
   type LocalMarkerDeleteInput,
   type LocalMarkerInput,
@@ -26,6 +28,7 @@ import {
   type LocalContinueWatchingItem,
   type LocalArtworkReference,
   type LocalPlaybackState,
+  type LocalScanCounts,
   type LocalScanProgress,
   type LocalScanResult,
   type LocalSourceSummary,
@@ -58,6 +61,7 @@ type WorkerRequest =
   | { id: number; command: "import-first-movie"; rootPath: string }
   | { id: number; command: "import-video"; filePath: string; rootPath: string }
   | { id: number; command: "scan"; rootPath: string }
+  | { id: number; command: "scan-directories"; sourceId: string; relativeDirectories: string[] }
   | { id: number; command: "cancel-scan"; scanId: string }
   | { id: number; command: "list"; query: LocalLibraryQuery }
   | { id: number; command: "list-collections"; query: LocalCollectionQuery }
@@ -112,6 +116,12 @@ const supportedArtworkExtensions = new Set([".avif", ".jpeg", ".jpg", ".png", ".
 const maxNfoBytes = 2 * 1024 * 1024;
 /** TEMP table holding one traversal's seen source-relative paths (reconcile). */
 const SEEN_PATHS_TABLE = "seen_relative_paths";
+/**
+ * TEMP table holding the source-relative directory prefixes this run proved
+ * complete. Missing-file detection only reaches rows inside those prefixes, so
+ * an unreadable directory never tombstones the files it could not list.
+ */
+const SCANNED_PREFIX_TABLE = "scanned_directory_prefixes";
 let database: DatabaseSyncType | undefined;
 let activeScan: Promise<LocalScanResult> | undefined;
 /**
@@ -936,15 +946,20 @@ async function prepareArtwork(
   return prepared;
 }
 
+/**
+ * Write this file's artwork rows. Returns true when at least one row was
+ * written, so a scan can tell a pure artwork refresh from an NFO metadata edit.
+ */
 function upsertArtwork(
   collectionId: string,
   mediaId: string,
   sourceId: string,
   artwork: PreparedArtwork[],
-): void {
-  if (!artwork.length) return;
+): boolean {
+  if (!artwork.length) return false;
   const db = requireDatabase();
   const timestamp = now();
+  let written = false;
   for (const candidate of artwork) {
     const existing = profileSync("database", () => db.prepare("SELECT relative_path AS relativePath, source_fingerprint AS sourceFingerprint FROM artwork WHERE collection_id = ? AND media_id = ? AND kind = ? ORDER BY updated_at DESC LIMIT 1").get(collectionId, mediaId, candidate.kind) as { relativePath?: string; sourceFingerprint?: string } | undefined);
     if (existing?.relativePath === candidate.relativePath && existing.sourceFingerprint === candidate.sourceFingerprint) {
@@ -956,7 +971,9 @@ function upsertArtwork(
       INSERT INTO artwork (artwork_id, collection_id, media_id, source_id, relative_path, kind, source_fingerprint, cache_key, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(makeId("artwork"), collectionId, mediaId, sourceId, candidate.relativePath, candidate.kind, candidate.sourceFingerprint, candidate.cacheKey, timestamp));
+    written = true;
   }
+  return written;
 }
 
 interface UpsertMediaOptions {
@@ -970,7 +987,52 @@ interface UpsertMediaOptions {
   preserveExistingMetadata?: boolean;
 }
 
-async function upsertMedia(rootPath: string, discovered: DiscoveredMedia, options: UpsertMediaOptions = {}): Promise<{ item?: LocalMediaItem; created: boolean }> {
+/** What one upsert actually did, so a scan can count it instead of guessing. */
+interface UpsertMediaOutcome {
+  item?: LocalMediaItem;
+  /** A new media row was created: a new file, or a new identity after a fingerprint change. */
+  created: boolean;
+  /** An existing row was updated in place by an NFO or artwork change. */
+  updated: boolean;
+  /** Of `updated`, the NFO-derived metadata is what changed. */
+  nfoChanged: boolean;
+  /** Rows tombstoned because this path now has a different video fingerprint. */
+  removedRows: number;
+  /** A stored identity already existed at this path with a different video fingerprint. */
+  replaced: boolean;
+}
+
+interface StoredMediaMetadata {
+  /** NFO-derived media and work values; timestamps, size and artwork are excluded. */
+  nfo: string;
+  /** 1 when the row is part of the current library, 0 when it is a tombstone. */
+  available: number;
+}
+
+/**
+ * The stored side of the comparison behind the four scan counts. Reading the
+ * joined work row is what makes an NFO edit visible: a file whose video
+ * fingerprint is unchanged takes the in-place update path, so a different
+ * title/plot/year/season here means the NFO — not the file — changed.
+ */
+function storedMediaMetadata(mediaId: string): StoredMediaMetadata {
+  const db = requireDatabase();
+  const row = profileSync("database", () => db.prepare(`
+    SELECT media_files.display_title AS displayTitle, media_files.media_kind AS mediaKind,
+      media_files.season_number AS seasonNumber, media_files.episode_number AS episodeNumber,
+      media_files.collection_id AS collectionId, media_files.available AS available,
+      collections.title AS collectionTitle, collections.kind AS collectionKind,
+      collections.year, collections.premiered_at AS premieredAt, collections.plot,
+      collections.genre_json AS genreJson, collections.rating
+    FROM media_files JOIN collections USING (collection_id)
+    WHERE media_files.media_id = ?
+  `).get(mediaId) as Record<string, unknown> | undefined);
+  if (!row) return { nfo: JSON.stringify(null), available: 0 };
+  const { available, ...nfoFields } = row;
+  return { nfo: JSON.stringify(nfoFields), available: Number(available ?? 0) };
+}
+
+async function upsertMedia(rootPath: string, discovered: DiscoveredMedia, options: UpsertMediaOptions = {}): Promise<UpsertMediaOutcome> {
   const db = requireDatabase();
   const timestamp = now();
   const includeItem = options.includeItem ?? true;
@@ -983,9 +1045,19 @@ async function upsertMedia(rootPath: string, discovered: DiscoveredMedia, option
       FROM media_files
       WHERE source_id = ? AND relative_path = ? AND size_bytes = ? AND modified_at_ms = ?
     `).get(discovered.collection.sourceId, discovered.relativePath, discovered.sizeBytes, discovered.modifiedAtMs) as { mediaId?: string; collectionId?: string } | undefined);
+    // Snapshot the stored NFO-derived state before the write. Reading it first
+    // is what lets a scan count "updated" from a real comparison instead of
+    // counting every file it happened to see again.
+    const before = existing?.mediaId && !preserveExistingMetadata ? storedMediaMetadata(String(existing.mediaId)) : undefined;
+    // Any stored identity at this path whose fingerprint did not match is the
+    // superseded identity of a replacement.
+    const priorIdentity = existing?.mediaId
+      ? undefined
+      : profileSync("database", () => db.prepare("SELECT media_id AS mediaId FROM media_files WHERE source_id = ? AND relative_path = ? LIMIT 1").get(discovered.collection.sourceId, discovered.relativePath) as { mediaId?: string } | undefined);
     const collectionId = upsertCollection(discovered.collection, timestamp, existing?.collectionId, preserveExistingMetadata);
     let mediaId: string;
     let created = false;
+    let removedRows = 0;
     if (existing?.mediaId) {
       mediaId = String(existing.mediaId);
       if (preserveExistingMetadata) {
@@ -1022,7 +1094,10 @@ async function upsertMedia(rootPath: string, discovered: DiscoveredMedia, option
           SELECT media_id FROM media_files WHERE source_id = ? AND relative_path = ? AND available = 1
         )
       `).run(discovered.collection.sourceId, discovered.relativePath));
-      profileSync("database", () => db.prepare("UPDATE media_files SET available = 0, updated_at = ? WHERE source_id = ? AND relative_path = ? AND available = 1").run(timestamp, discovered.collection.sourceId, discovered.relativePath));
+      // Count the rows actually tombstoned: a fingerprint change supersedes the
+      // stored identity, which is a removal from the visible library.
+      const tombstoned = profileSync("database", () => db.prepare("UPDATE media_files SET available = 0, updated_at = ? WHERE source_id = ? AND relative_path = ? AND available = 1").run(timestamp, discovered.collection.sourceId, discovered.relativePath));
+      removedRows = Number(tombstoned.changes ?? 0);
       mediaId = makeId("media");
       created = true;
       profileSync("database", () => db.prepare(`
@@ -1030,7 +1105,16 @@ async function upsertMedia(rootPath: string, discovered: DiscoveredMedia, option
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
       `).run(mediaId, collectionId, discovered.collection.sourceId, discovered.relativePath, discovered.displayTitle, discovered.mediaKind, discovered.sizeBytes, discovered.modifiedAtMs, discovered.seasonNumber ?? null, discovered.episodeNumber ?? null, timestamp, timestamp));
     }
-    upsertArtwork(collectionId, mediaId, discovered.collection.sourceId, preparedArtwork);
+    const artworkWritten = upsertArtwork(collectionId, mediaId, discovered.collection.sourceId, preparedArtwork);
+    let updated = false;
+    let nfoChanged = false;
+    if (before) {
+      const after = storedMediaMetadata(mediaId);
+      nfoChanged = after.nfo !== before.nfo;
+      // A row that came back from a tombstone with nothing else changed is an
+      // in-place update too: it re-enters the library without a new identity.
+      updated = nfoChanged || artworkWritten || (before.available === 0 && after.available === 1);
+    }
     const row = includeItem
       ? profileSync("database", () => db.prepare(`
         SELECT media_files.media_id AS mediaId, media_files.collection_id AS collectionId, media_files.source_id AS sourceId,
@@ -1045,7 +1129,14 @@ async function upsertMedia(rootPath: string, discovered: DiscoveredMedia, option
       `).get(mediaId) as Record<string, unknown>)
       : undefined;
     profileSync("database", () => db.exec("COMMIT"));
-    return { ...(row ? { item: toPublicItem(row) } : {}), created };
+    return {
+      ...(row ? { item: toPublicItem(row) } : {}),
+      created,
+      updated,
+      nfoChanged,
+      removedRows,
+      replaced: created && Boolean(priorIdentity?.mediaId),
+    };
   } catch (error) {
     profileError(error);
     try {
@@ -2166,19 +2257,51 @@ function isSessionId(value: unknown): value is string {
 }
 
 /**
+ * Correlated predicate that keeps missing-file detection inside the directory
+ * prefixes this run proved complete. An empty prefix (the source root) matches
+ * every row; `SCANNED_PREFIX_TABLE` carries one prefix per complete directory.
+ */
+const SCANNED_PREFIX_MATCH = `EXISTS (
+  SELECT 1 FROM ${SCANNED_PREFIX_TABLE} prefixes
+  WHERE prefixes.prefix = '' OR substr(media_files.relative_path, 1, length(prefixes.prefix)) = prefixes.prefix
+)`;
+
+/**
  * Delete ledger rows for media the scan confirmed missing while the source was
  * readable. Media rows stay unavailable so the ordinary scan contract does not
- * change; only the viewing history is removed. The current traversal result is
- * read from the TEMP table so the statement has a fixed number of parameters.
+ * change; only the viewing history is removed. The traversal result and the
+ * complete directory scopes are read from TEMP tables so the statement keeps a
+ * fixed number of parameters.
  */
 function clearMissingViewingRecords(sourceId: string): void {
   const db = requireDatabase();
-  const predicate = `source_id = ? AND relative_path NOT IN (SELECT relative_path FROM ${SEEN_PATHS_TABLE})`;
+  const predicate = `source_id = ? AND relative_path NOT IN (SELECT relative_path FROM ${SEEN_PATHS_TABLE}) AND ${SCANNED_PREFIX_MATCH}`;
   db.prepare(`DELETE FROM viewing_sessions WHERE media_id IN (SELECT media_id FROM media_files WHERE ${predicate})`).run(sourceId);
   db.prepare(`DELETE FROM media_history WHERE media_id IN (SELECT media_id FROM media_files WHERE ${predicate})`).run(sourceId);
   // A scan-confirmed missing file also forgets its user-written markers; the
   // media row itself stays as a tombstone under the ordinary scan contract.
   db.prepare(`DELETE FROM markers WHERE media_id IN (SELECT media_id FROM media_files WHERE ${predicate})`).run(sourceId);
+}
+
+/**
+ * The directory scope of one reconcile. A full scan passes the empty prefix
+ * (the root itself); a directory rescan passes the prefixes it proved complete,
+ * so rows outside them are never touched.
+ */
+function replaceScannedDirectoryPrefixes(prefixes: string[]): void {
+  const db = requireDatabase();
+  db.exec(`DROP TABLE IF EXISTS temp.${SCANNED_PREFIX_TABLE}; CREATE TEMP TABLE ${SCANNED_PREFIX_TABLE} (prefix TEXT PRIMARY KEY);`);
+  const insert = db.prepare(`INSERT OR IGNORE INTO ${SCANNED_PREFIX_TABLE} (prefix) VALUES (?)`);
+  for (const prefix of prefixes) insert.run(prefix);
+}
+
+function dropScannedDirectoryPrefixes(): void {
+  if (!database) return;
+  try {
+    database.exec(`DROP TABLE IF EXISTS temp.${SCANNED_PREFIX_TABLE};`);
+  } catch {
+    // A failed cleanup of a TEMP table is harmless; the next scan recreates it.
+  }
 }
 
 /**
@@ -2255,14 +2378,53 @@ function recoverInterruptedScanRuns(): void {
 }
 
 interface ScanCounters {
+  /** Candidate files this run attempted to index (existing streaming counter). */
   scannedFiles: number;
+  /** Rows created (existing streaming counter; equals `imported`). */
   importedFiles: number;
+  /**
+   * Existing rows refreshed by this run (existing streaming counter). It counts
+   * files seen again, whether or not anything changed, and is kept for the
+   * unchanged full-scan behaviour; use `counts.updated` for real updates.
+   */
   updatedFiles: number;
   warnings: string[];
   seenRelativePaths: Set<string>;
   sourceLabel?: string;
+  /** Precise four-way comparison against the stored rows (Ticket 23a). */
+  imported: number;
+  updated: number;
+  unchanged: number;
+  removed: number;
+  nfoUpdated: number;
+  fingerprintReplaced: number;
 }
 
+function countsFor(counters: ScanCounters): LocalScanCounts {
+  return {
+    imported: counters.imported,
+    updated: counters.updated,
+    unchanged: counters.unchanged,
+    removed: counters.removed,
+  };
+}
+
+function resultFor(
+  scanId: string,
+  sourceId: string,
+  status: LocalScanProgress["status"],
+  counters: ScanCounters,
+  error?: string,
+): LocalDirectoryScanResult {
+  return {
+    ...progressFor(scanId, sourceId, status, counters),
+    warnings: [...counters.warnings],
+    ...(error ? { error } : {}),
+    counts: countsFor(counters),
+    nfoUpdatedFiles: counters.nfoUpdated,
+    fingerprintReplacedFiles: counters.fingerprintReplaced,
+  };
+}
 
 function progressFor(scanId: string, sourceId: string, status: LocalScanProgress["status"], counters: ScanCounters, sourceLabel = counters.sourceLabel): LocalScanProgress {
   return {
@@ -2280,6 +2442,98 @@ function progressFor(scanId: string, sourceId: string, status: LocalScanProgress
 function emitProgress(progress: LocalScanProgress): void {
   const event: WorkerEvent = { event: "scan-progress", progress };
   workerPort.postMessage(event);
+}
+
+type ShowContext = {
+  directory: string;
+  metadata?: ParsedNfo;
+  artwork: Array<{ kind: "poster" | "fanart"; filePath: string }>;
+};
+
+/**
+ * Read one directory's `tvshow.nfo` context (metadata plus artwork). The
+ * recursive traversal calls it when it enters a directory, and a directory
+ * rescan calls it for the ancestor that owns the requested subdirectory.
+ */
+async function readShowContext(
+  rootPath: string,
+  directory: string,
+  entries: Dirent[],
+  warnings: string[],
+): Promise<ShowContext> {
+  const tvshow = entries.find((entry) => entry.isFile() && !entry.isSymbolicLink() && entry.name.toLowerCase() === "tvshow.nfo");
+  const metadata = tvshow ? await readNfoFile(join(directory, tvshow.name), warnings) : undefined;
+  const artworkFiles: Array<{ kind: "poster" | "fanart"; filePath: string }> = [];
+  for (const candidate of metadata?.artwork ?? []) {
+    const artworkFile = await profileAsync("artwork", () => artworkPath(rootPath, directory, candidate.path));
+    if (artworkFile) artworkFiles.push({ kind: candidate.kind, filePath: artworkFile });
+  }
+  if (!artworkFiles.length) artworkFiles.push(...await conventionalArtwork(rootPath, directory, basename(directory), entries));
+  return { directory, metadata, artwork: artworkFiles };
+}
+
+/**
+ * Inherit the nearest show context above a requested directory, so rescanning
+ * `Show/Season 1` keeps the same work a full scan produced instead of minting a
+ * new collection from the season directory. An ancestor without `tvshow.nfo`,
+ * or an unreadable one, contributes nothing.
+ */
+async function showContextFromAncestors(rootPath: string, directory: string, warnings: string[]): Promise<ShowContext | undefined> {
+  const root = resolve(rootPath);
+  const ancestors: string[] = [];
+  let current = resolve(directory);
+  while (current !== root) {
+    const parent = dirname(current);
+    if (parent === current) break;
+    ancestors.push(parent);
+    current = parent;
+  }
+  for (const ancestor of ancestors) {
+    if (!pathContained(root, ancestor)) continue;
+    const entries = await profileAsync("enumeration", () => readdir(ancestor, { withFileTypes: true }), "readdir").catch(() => []);
+    if (!entries.some((entry) => entry.isFile() && !entry.isSymbolicLink() && entry.name.toLowerCase() === "tvshow.nfo")) continue;
+    return readShowContext(root, ancestor, entries, warnings);
+  }
+  return undefined;
+}
+
+function relativeFromRoot(rootPath: string, targetPath: string): string {
+  const value = relative(rootPath, targetPath);
+  if (!value) return "";
+  if (isAbsolute(value) || value === ".." || value.startsWith(`..${sep}`)) {
+    throw new LocalWorkerError("invalid-input", "扫描目录必须位于片库来源内");
+  }
+  return value.split(sep).join("/");
+}
+
+/**
+ * Turn the requested source-relative directories into canonical directories
+ * inside the source root. Every value is validated before any bookkeeping row
+ * is written, so a rejected scope leaves the library and the scan history
+ * untouched. A directory already covered by a requested ancestor is dropped:
+ * the ancestor's traversal visits it anyway, and visiting it twice would count
+ * the same files twice.
+ */
+async function resolveDirectoryScope(rootPath: string, requested: string[]): Promise<Array<{ relative: string; directory: string }>> {
+  if (requested.length === 0) throw new LocalWorkerError("invalid-input", "至少需要一个相对目录");
+  const scopes: Array<{ relative: string; directory: string }> = [];
+  for (const value of requested) {
+    const relativePath = normalizeScanRelativeDirectory(value);
+    if (relativePath === undefined) throw new LocalWorkerError("invalid-input", "扫描目录必须是片库来源内的相对目录");
+    const candidate = relativePath === "" ? rootPath : resolve(rootPath, ...relativePath.split("/"));
+    const canonical = await canonicalPathWithin(rootPath, candidate, rootPath);
+    const metadata = canonical ? await profileAsync("lstat", () => lstat(canonical), "lstat").catch(() => undefined) : undefined;
+    if (!canonical || !metadata?.isDirectory() || metadata.isSymbolicLink()) {
+      throw new LocalWorkerError("invalid-input", "扫描目录不存在或不可用");
+    }
+    scopes.push({ relative: relativeFromRoot(rootPath, canonical), directory: canonical });
+  }
+  const kept: Array<{ relative: string; directory: string }> = [];
+  for (const scope of [...scopes].sort((left, right) => left.relative.length - right.relative.length)) {
+    const covered = kept.some((outer) => outer.relative === "" || scope.relative === outer.relative || scope.relative.startsWith(`${outer.relative}/`));
+    if (!covered) kept.push(scope);
+  }
+  return kept;
 }
 
 async function scanDirectory(
@@ -2311,16 +2565,8 @@ async function scanDirectory(
     return false;
   }
   let localShowContext = showContext;
-  const tvshow = entries.find((entry) => entry.isFile() && !entry.isSymbolicLink() && entry.name.toLowerCase() === "tvshow.nfo");
-  if (tvshow) {
-    const metadata = await readNfoFile(join(safeCurrentDirectory, tvshow.name), counters.warnings);
-    const artworkFiles: Array<{ kind: "poster" | "fanart"; filePath: string }> = [];
-    for (const candidate of metadata?.artwork ?? []) {
-      const artworkFile = await profileAsync("artwork", () => artworkPath(rootPath, safeCurrentDirectory, candidate.path));
-      if (artworkFile) artworkFiles.push({ kind: candidate.kind, filePath: artworkFile });
-    }
-    if (!artworkFiles.length) artworkFiles.push(...await conventionalArtwork(rootPath, safeCurrentDirectory, basename(safeCurrentDirectory), entries));
-    localShowContext = { directory: safeCurrentDirectory, metadata, artwork: artworkFiles };
+  if (entries.some((entry) => entry.isFile() && !entry.isSymbolicLink() && entry.name.toLowerCase() === "tvshow.nfo")) {
+    localShowContext = await readShowContext(rootPath, safeCurrentDirectory, entries, counters.warnings);
   }
   for (const entry of entries) {
     if (cancellation.requested) throw new LocalWorkerError("storage", "scan-cancelled");
@@ -2358,8 +2604,22 @@ async function scanDirectory(
     try {
       const discovered = await discoverMedia(rootPath, sourceId, safeChild, fileMetadata, entries, localShowContext, counters.warnings);
       const result = await upsertMedia(rootPath, discovered, { includeItem: false });
-      if (result.created) counters.importedFiles += 1;
-      else counters.updatedFiles += 1;
+      if (result.created) {
+        counters.importedFiles += 1;
+        counters.imported += 1;
+        // A changed video fingerprint supersedes the stored identity, so that
+        // row leaves the visible library in the same write.
+        counters.removed += result.removedRows;
+        if (result.replaced) counters.fingerprintReplaced += 1;
+      } else {
+        counters.updatedFiles += 1;
+        if (result.updated) {
+          counters.updated += 1;
+          if (result.nfoChanged) counters.nfoUpdated += 1;
+        } else {
+          counters.unchanged += 1;
+        }
+      }
       counters.seenRelativePaths.add(discovered.relativePath);
     } catch (error) {
       profileError(error);
@@ -2379,35 +2639,97 @@ async function scanDirectory(
   return true;
 }
 
-async function scanRoot(rootPath: string): Promise<LocalScanResult> {
+interface ScanSourceInput {
+  /** Full-root scan: the root the caller asked for. */
+  rootPath?: string;
+  /** Directory rescan: the registered source whose directories are refreshed. */
+  sourceId?: string;
+  relativeDirectories?: string[];
+}
+
+interface KnownSource {
+  sourceId: string;
+  rootPath: string;
+  label: string;
+}
+
+function knownSource(sourceId: string): KnownSource | undefined {
+  const db = requireDatabase();
+  const row = profileSync("database", () => db.prepare("SELECT source_id AS sourceId, root_path AS rootPath FROM sources WHERE source_id = ?").get(sourceId) as { sourceId?: string; rootPath?: string } | undefined);
+  if (!row?.sourceId || !row.rootPath) return undefined;
+  return { sourceId: String(row.sourceId), rootPath: row.rootPath, label: safeSourceLabel(row.rootPath) };
+}
+
+async function scanRoot(rootPath: string): Promise<LocalDirectoryScanResult> {
+  return scanSource({ rootPath });
+}
+
+async function scanDirectories(sourceId: string, relativeDirectories: string[]): Promise<LocalDirectoryScanResult> {
+  return scanSource({ sourceId, relativeDirectories });
+}
+
+/**
+ * One Scan run over either the whole source root or an explicit directory
+ * scope (Ticket 23a). Both share the traversal, upsert and reconcile code; only
+ * the starting directories and the reconcile scope differ.
+ */
+async function scanSource(input: ScanSourceInput): Promise<LocalDirectoryScanResult> {
   if (activeScan) throw new LocalWorkerError("invalid-input", "已有本地片库扫描正在进行");
-  const counters: ScanCounters = { scannedFiles: 0, importedFiles: 0, updatedFiles: 0, warnings: [], seenRelativePaths: new Set() };
+  const counters: ScanCounters = {
+    scannedFiles: 0,
+    importedFiles: 0,
+    updatedFiles: 0,
+    warnings: [],
+    seenRelativePaths: new Set(),
+    imported: 0,
+    updated: 0,
+    unchanged: 0,
+    removed: 0,
+    nfoUpdated: 0,
+    fingerprintReplaced: 0,
+  };
   let profiler: ScanProfiler | undefined;
   let profileStatus: ScanProfileReport["status"] = "error";
-  let source: ReturnType<typeof ensureSource> | undefined;
+  let source: { sourceId: string; label: string } | undefined;
   let scanId: string | undefined;
   let cancellation: ScanCancellation | undefined;
   try {
     profiler = beginScanProfiler();
     scanProfiler = profiler;
     scanCaches = { nfo: new Map(), artwork: new Map() };
-    const requestedRoot = resolve(rootPath);
-    const canonicalRoot = await profileAsync("realpath", () => realpath(requestedRoot), "realpath").catch(() => undefined);
-    const sourceRoot = canonicalRoot ?? requestedRoot;
-    await assertNoOverlappingSource(sourceRoot);
-    const scanSource = ensureSource(sourceRoot);
-    source = scanSource;
-    counters.sourceLabel = scanSource.label;
+    let requestedRoot: string;
+    let canonicalRoot: string | undefined;
+    let scanOwner: KnownSource;
+    if (input.sourceId !== undefined) {
+      const known = knownSource(input.sourceId);
+      if (!known) throw new LocalWorkerError("invalid-input", "本地片库来源不存在");
+      scanOwner = known;
+      requestedRoot = resolve(known.rootPath);
+      canonicalRoot = await profileAsync("realpath", () => realpath(requestedRoot), "realpath").catch(() => undefined);
+    } else {
+      requestedRoot = resolve(input.rootPath ?? "");
+      canonicalRoot = await profileAsync("realpath", () => realpath(requestedRoot), "realpath").catch(() => undefined);
+      const sourceRoot = canonicalRoot ?? requestedRoot;
+      await assertNoOverlappingSource(sourceRoot);
+      scanOwner = ensureSource(sourceRoot);
+    }
+    source = scanOwner;
+    counters.sourceLabel = scanOwner.label;
+    // Validate the directory scope before any bookkeeping row is written, so a
+    // rejected scope leaves the library and the scan history untouched.
+    const directories = canonicalRoot && input.sourceId !== undefined
+      ? await resolveDirectoryScope(canonicalRoot, input.relativeDirectories ?? [])
+      : undefined;
     scanId = makeId("scan");
     cancellation = { requested: false, terminal: false };
     scanCancellation.set(scanId, cancellation);
-    addScanRun(scanSource.sourceId, scanId);
+    addScanRun(scanOwner.sourceId, scanId);
     // Root not canonical/readable: the whole folder is offline. Files keep their
     // rows but nothing in it is playable, so `available = 0` and `degraded = 0`.
     if (!canonicalRoot) {
       const db = requireDatabase();
-      profileSync("database", () => db.prepare("UPDATE sources SET available = 0, degraded = 0, updated_at = ? WHERE source_id = ?").run(now(), scanSource.sourceId));
-      const result: LocalScanResult = { ...progressFor(scanId, scanSource.sourceId, "unavailable", counters), warnings: [], error: "来源不可用，已保留此前索引和播放历史" };
+      profileSync("database", () => db.prepare("UPDATE sources SET available = 0, degraded = 0, updated_at = ? WHERE source_id = ?").run(now(), scanOwner.sourceId));
+      const result = resultFor(scanId, scanOwner.sourceId, "unavailable", counters, "来源不可用，已保留此前索引和播放历史");
       finishScan(scanId, false, result.error);
       emitProgress(result);
       profileStatus = "unavailable";
@@ -2418,9 +2740,28 @@ async function scanRoot(rootPath: string): Promise<LocalScanResult> {
     const db = requireDatabase();
     // The root is readable, so the source is online. Whether every subdirectory
     // could be read is decided after traversal (`degraded`).
-    profileSync("database", () => db.prepare("UPDATE sources SET available = 1, updated_at = ? WHERE source_id = ?").run(now(), scanSource.sourceId));
-    emitProgress(progressFor(scanId, scanSource.sourceId, "running", counters));
-    const traversalComplete = await scanDirectory(canonicalRoot, canonicalRoot, scanSource.sourceId, scanId, cancellation, counters, undefined);
+    profileSync("database", () => db.prepare("UPDATE sources SET available = 1, updated_at = ? WHERE source_id = ?").run(now(), scanOwner.sourceId));
+    emitProgress(progressFor(scanId, scanOwner.sourceId, "running", counters));
+    let traversalComplete: boolean;
+    const completePrefixes: string[] = [];
+    if (directories) {
+      const completeness = new Map<string, boolean>();
+      for (const scope of directories) {
+        if (cancellation.requested) throw new LocalWorkerError("storage", "scan-cancelled");
+        // Inherit the owning show's context from the directories above the
+        // requested one, so a subdirectory rescan keeps the full scan's work.
+        const showContext = await showContextFromAncestors(canonicalRoot, scope.directory, counters.warnings);
+        completeness.set(scope.relative, await scanDirectory(canonicalRoot, scope.directory, scanOwner.sourceId, scanId, cancellation, counters, showContext));
+      }
+      traversalComplete = [...completeness.values()].every(Boolean);
+      // Only directories this run proved complete may confirm a deletion.
+      for (const [scopeRelative, complete] of completeness) {
+        if (complete) completePrefixes.push(scopeRelative ? `${scopeRelative}/` : "");
+      }
+    } else {
+      traversalComplete = await scanDirectory(canonicalRoot, canonicalRoot, scanOwner.sourceId, scanId, cancellation, counters, undefined);
+      if (traversalComplete) completePrefixes.push("");
+    }
     // Terminal window: after the traversal returns there is no further await
     // before the reconcile transaction and `finishScan`, so a later cancel
     // request cannot interrupt anything. Marking the token terminal makes
@@ -2428,27 +2769,37 @@ async function scanRoot(rootPath: string): Promise<LocalScanResult> {
     // will still finish as completed/partial.
     cancellation.terminal = true;
     if (cancellation.requested) throw new LocalWorkerError("storage", "scan-cancelled");
-    if (traversalComplete) {
+    if (completePrefixes.length > 0) {
       db.exec("BEGIN IMMEDIATE");
       try {
-        // The source was readable and traversal completed, so any indexed file
-        // that was not seen is confirmed missing. Forgotten by design: remove
-        // its ledger rows explicitly; only the media row stays unavailable.
-        // Reconcile reads the seen set from a TEMP table so a 20k-file library
-        // never hits SQLite's bound-variable limit.
+        // Only rows inside a completely scanned directory are candidates: any
+        // indexed file that was not seen there is confirmed missing. Forgotten
+        // by design: remove its ledger rows explicitly; only the media row
+        // stays unavailable. Reconcile reads both sets from TEMP tables so a
+        // 20k-file library never hits SQLite's bound-variable limit.
         replaceSeenRelativePaths(counters.seenRelativePaths);
-        clearMissingViewingRecords(scanSource.sourceId);
-        profileSync("database", () => db.prepare(`UPDATE media_files SET available = 0, updated_at = ? WHERE source_id = ? AND available = 1 AND relative_path NOT IN (SELECT relative_path FROM ${SEEN_PATHS_TABLE})`).run(now(), scanSource.sourceId));
+        replaceScannedDirectoryPrefixes(completePrefixes);
+        clearMissingViewingRecords(scanOwner.sourceId);
+        const tombstoned = profileSync("database", () => db.prepare(`UPDATE media_files SET available = 0, updated_at = ? WHERE source_id = ? AND available = 1 AND relative_path NOT IN (SELECT relative_path FROM ${SEEN_PATHS_TABLE}) AND ${SCANNED_PREFIX_MATCH}`).run(now(), scanOwner.sourceId));
+        counters.removed += Number(tombstoned.changes ?? 0);
         db.exec("COMMIT");
       } catch (error) {
         db.exec("ROLLBACK");
         throw error;
       } finally {
         dropSeenRelativePaths();
+        dropScannedDirectoryPrefixes();
       }
-      profileSync("database", () => db.prepare("UPDATE sources SET available = 1, degraded = 0, updated_at = ? WHERE source_id = ?").run(now(), scanSource.sourceId));
+    }
+    if (traversalComplete) {
+      // A full traversal proves the index complete and clears `degraded`. A
+      // directory rescan only proves its own directories, so it never claims
+      // the rest of the source is complete.
+      profileSync("database", () => db.prepare(directories
+        ? "UPDATE sources SET available = 1, updated_at = ? WHERE source_id = ?"
+        : "UPDATE sources SET available = 1, degraded = 0, updated_at = ? WHERE source_id = ?").run(now(), scanOwner.sourceId));
       finishScan(scanId, true);
-      const result: LocalScanResult = { ...progressFor(scanId, scanSource.sourceId, "completed", counters), warnings: [...counters.warnings] };
+      const result = resultFor(scanId, scanOwner.sourceId, "completed", counters);
       emitProgress(result);
       profileStatus = "completed";
       return result;
@@ -2458,15 +2809,15 @@ async function scanRoot(rootPath: string): Promise<LocalScanResult> {
     // is only marked degraded; `WHERE sources.available = 1` keeps its cleanup
     // queue.
     const error = "部分目录无法读取，已保留此前索引和播放历史";
-    profileSync("database", () => db.prepare("UPDATE sources SET available = 1, degraded = 1, updated_at = ? WHERE source_id = ?").run(now(), scanSource.sourceId));
+    profileSync("database", () => db.prepare("UPDATE sources SET available = 1, degraded = 1, updated_at = ? WHERE source_id = ?").run(now(), scanOwner.sourceId));
     finishScan(scanId, false, error);
-    const result: LocalScanResult = { ...progressFor(scanId, scanSource.sourceId, "partial", counters), warnings: [...counters.warnings], error };
+    const result = resultFor(scanId, scanOwner.sourceId, "partial", counters, error);
     emitProgress(result);
     profileStatus = "partial";
     return result;
   } catch (error) {
     if (scanId && source && error instanceof LocalWorkerError && error.message === "scan-cancelled") {
-      const result: LocalScanResult = { ...progressFor(scanId, source.sourceId, "cancelled", counters), warnings: [...counters.warnings], error: "扫描已取消，已保留此前索引和播放历史" };
+      const result = resultFor(scanId, source.sourceId, "cancelled", counters, "扫描已取消，已保留此前索引和播放历史");
       finishScan(scanId, false, result.error);
       emitProgress(result);
       profileStatus = "cancelled";
@@ -2538,6 +2889,14 @@ async function handle(request: WorkerRequest): Promise<unknown> {
   if (request.command === "import-video") return { status: "imported", item: await importVideo(request.filePath, request.rootPath) };
   if (request.command === "scan") {
     activeScan = scanRoot(request.rootPath);
+    try {
+      return await activeScan;
+    } finally {
+      activeScan = undefined;
+    }
+  }
+  if (request.command === "scan-directories") {
+    activeScan = scanDirectories(request.sourceId, request.relativeDirectories);
     try {
       return await activeScan;
     } finally {

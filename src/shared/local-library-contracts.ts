@@ -285,9 +285,69 @@ export interface LocalScanProgress {
   warningCount: number;
 }
 
+/**
+ * Precise comparison of the rows a Scan run found in the library against what
+ * the run saw. It is derived from the stored rows and the traversed files, not
+ * from "how many files the traversal visited again" (Ticket 23a).
+ */
+export interface LocalScanCounts {
+  /** Rows this run created: a file with no stored identity, or a new identity for a changed video. */
+  imported: number;
+  /** Stored rows whose metadata changed while the video fingerprint stayed the same. */
+  updated: number;
+  /** Stored rows that matched what this run saw; nothing about them moved. */
+  unchanged: number;
+  /**
+   * Rows that left the visible library: a fully scanned directory proved the
+   * file missing, or a changed video fingerprint superseded the old identity.
+   */
+  removed: number;
+}
+
 export interface LocalScanResult extends LocalScanProgress {
   warnings: string[];
   error?: string;
+  /**
+   * Present on every worker-produced result (full scan and directory rescan).
+   * Optional on this shared shape only because the renderer composes several
+   * per-folder results from progress-shaped fields and may omit it.
+   */
+  counts?: LocalScanCounts;
+  /** Subset of `counts.updated`: NFO-derived metadata changed, the video fingerprint did not. */
+  nfoUpdatedFiles?: number;
+  /** Subset of `counts.imported`: a stored identity at the same path had a different video fingerprint. */
+  fingerprintReplacedFiles?: number;
+}
+
+/** Directory-scoped rescan result: the precise counts are part of the contract, not optional. */
+export interface LocalDirectoryScanResult extends LocalScanResult {
+  counts: LocalScanCounts;
+  nfoUpdatedFiles: number;
+  fingerprintReplacedFiles: number;
+}
+
+/**
+ * Normalize one source-relative directory for the directory-scoped rescan
+ * (Ticket 23a). A scan scope must stay inside its Source by construction, so an
+ * absolute path, a UNC path, a Windows drive, a URL or an escaping parent
+ * segment is rejected (`undefined`) rather than clamped into the root. `.` and
+ * repeated separators are elided, `/` and `\` are both accepted, and the result
+ * uses the library's POSIX-style separators; the source root itself
+ * normalizes to `""`.
+ */
+export function normalizeScanRelativeDirectory(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value || value.includes("\u0000")) return undefined;
+  // Another root: system-absolute, UNC, drive-qualified or a URL.
+  if (/^[\\/]/u.test(value) || /^[a-zA-Z]:/u.test(value) || /^[a-z][a-z0-9+.-]*:\/\//iu.test(value)) return undefined;
+  const segments: string[] = [];
+  for (const segment of value.split(/[\\/]+/u)) {
+    if (!segment || segment === ".") continue;
+    // A parent segment is rejected instead of resolved: the scope must be a
+    // child directory, never a computed position that happens to land inside.
+    if (segment === "..") return undefined;
+    segments.push(segment);
+  }
+  return segments.join("/");
 }
 
 export interface LocalLibraryState {
