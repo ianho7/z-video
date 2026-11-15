@@ -2,6 +2,7 @@
 
 ID: 21-appearance-parity
 Blocked by: 15
+Spec: docs/local-library/spec-s1-watch-experience.md
 Status: ready-for-agent
 
 ## What to build
