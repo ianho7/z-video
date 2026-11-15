@@ -5,6 +5,7 @@ import { registerLocalLibraryIpcHandlers } from "./local-library-ipc";
 import { registerLocalPlaybackIpcHandlers } from "./local-playback-ipc";
 import { registerAppPreferencesIpcHandlers } from "./app-preferences-ipc";
 import { LocalLibraryDatabase } from "./local-library-database";
+import { LOCAL_LIBRARY_REFRESH_BASELINE_FILE, LocalLibraryRefreshScheduler } from "./local-library-refresh";
 import { LocalArtworkCache } from "./local-artwork-cache";
 import { MainLocalPlaybackHost } from "./player-host";
 import type { LocalPlaybackStore } from "../shared/local-playback-contracts";
@@ -20,6 +21,12 @@ let unregisterLocalLibraryIpc: (() => void) | undefined;
 let localPlayback: MainLocalPlaybackHost | undefined;
 let unregisterLocalPlaybackIpc: (() => void) | undefined;
 let unregisterAppPreferencesIpc: (() => void) | undefined;
+/**
+ * Ticket 23b: the mtime coarse filter lives for one window and persists its
+ * directory baseline beside the SQLite file, so a change made while the app was
+ * closed is still detected on the first focus of the next run.
+ */
+let localRefresh: LocalLibraryRefreshScheduler | undefined;
 let playbackClosing: Promise<void> | undefined;
 let quitting = false;
 
@@ -37,7 +44,10 @@ function createLocalWindow(): void {
   if (!appPreferences) throw new Error("应用设置尚未启动");
   localPlayback = new MainLocalPlaybackHost(window, localLibrary as unknown as LocalPlaybackStore, undefined, appPreferences);
   if (!localArtworkCache) throw new Error("本地 artwork cache 尚未启动");
-  unregisterLocalLibraryIpc = registerLocalLibraryIpcHandlers(localLibrary, window, localArtworkCache, appPreferences);
+  if (!localRefresh) {
+    localRefresh = new LocalLibraryRefreshScheduler(localLibrary, join(app.getPath("userData"), "local-library", LOCAL_LIBRARY_REFRESH_BASELINE_FILE));
+  }
+  unregisterLocalLibraryIpc = registerLocalLibraryIpcHandlers(localLibrary, window, localArtworkCache, appPreferences, localRefresh);
   unregisterLocalPlaybackIpc = registerLocalPlaybackIpcHandlers(localPlayback);
   unregisterAppPreferencesIpc = registerAppPreferencesIpcHandlers(appPreferences);
   attachWindowLifecycle(window);
@@ -51,6 +61,10 @@ function closePlayback(): Promise<void> {
   unregisterLocalLibraryIpc = undefined;
   unregisterAppPreferencesIpc?.();
   unregisterAppPreferencesIpc = undefined;
+  // Ticket 23b: drop queued checks with the window; a scan already in flight
+  // still finishes and its result has no listener left to disturb.
+  localRefresh?.dispose();
+  localRefresh = undefined;
   const host = localPlayback;
   localPlayback = undefined;
   const close = Promise.all([previousClose ?? Promise.resolve(), host?.close() ?? Promise.resolve()]).then(() => undefined);

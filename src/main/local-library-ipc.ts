@@ -2,6 +2,7 @@ import { dialog, ipcMain, shell, type BrowserWindow } from "electron";
 import { dirname } from "node:path";
 
 import {
+  isLocalRefreshTrigger,
   isMarkerDurationSec,
   isMarkerPositionSec,
   isOpaqueMediaId,
@@ -21,15 +22,49 @@ import { recordUiOperation } from "./diagnostics";
 import { localLibraryErrorCode, localLibraryErrorMessage } from "./local-library-errors";
 import { LocalLibraryDatabase } from "./local-library-database";
 import { LocalArtworkCache } from "./local-artwork-cache";
+import type { LocalLibraryRefreshScheduler } from "./local-library-refresh";
 import type { AppPreferencesStore } from "./app-preferences";
 
-export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, window: BrowserWindow, artworkCache: LocalArtworkCache, preferences: AppPreferencesStore): () => void {
+/**
+ * Ticket 23b: `refresh` owns the mtime coarse filter behind window focus/return.
+ * Every manual scan, import and source removal runs through its single-flight
+ * gate so an automatic check waits instead of starting a second scan; after the
+ * operation finishes, the directory baseline is recorded while the gate is
+ * still held, so the next automatic check compares against what this run wrote.
+ */
+export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, window: BrowserWindow, artworkCache: LocalArtworkCache, preferences: AppPreferencesStore, refresh?: LocalLibraryRefreshScheduler): () => void {
+  const sendToWindow = (channel: string, payload: unknown): void => {
+    if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(channel, payload);
+  };
   const unsubscribe = database.onState((state) => {
     if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(IPC_CHANNELS.localLibraryState, state);
   });
   const unsubscribeScan = database.onScanProgress((progress) => {
+    // Ticket 23b: an automatic refresh is silent. Its directory rescan must not
+    // flash the scan pill or raise a completion notice; only the pushed result
+    // reaches the renderer.
+    if (refresh?.isAutomaticScanActive()) return;
     if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(IPC_CHANNELS.localLibraryScanProgress, progress);
   });
+  const unsubscribeRefresh = refresh?.onResult((result) => sendToWindow(IPC_CHANNELS.localLibraryRefreshResult, result));
+  /** Wrap one owner operation so its post-run baseline is recorded while the gate is held. */
+  const withBaseline = <T>(task: () => Promise<T>, sourceIds: (result: T) => readonly string[]): (() => Promise<T>) => async () => {
+    const result = await task();
+    const ids = sourceIds(result);
+    if (refresh && ids.length > 0) await refresh.recordBaselineForSources(ids);
+    return result;
+  };
+  /** A scanning operation: it enters the shared scan queue and records its baseline. */
+  const scanAndRecord = <T>(task: () => Promise<T>, sourceIds: (result: T) => readonly string[]): Promise<T> => {
+    const work = withBaseline(task, sourceIds);
+    return refresh ? refresh.runScan(work) : work();
+  };
+  /** A single-file import: it never overlaps an automatic check, but keeps the worker's import-during-scan rejection. */
+  const importAndRecord = <T>(task: () => Promise<T>, sourceIds: (result: T) => readonly string[]): Promise<T> => {
+    const work = withBaseline(task, sourceIds);
+    return refresh ? refresh.runExclusiveOperation(work) : work();
+  };
+  const exclusive = <T>(task: () => Promise<T>): Promise<T> => refresh ? refresh.runExclusiveOperation(task) : task();
   ipcMain.handle(IPC_CHANNELS.localLibraryState, () => database.getState());
   ipcMain.handle(IPC_CHANNELS.localLibraryChooseFolder, () => withUiOperation("local-library.choose-folder", async () => {
     const selection = await dialog.showOpenDialog(window, { properties: ["openDirectory", "createDirectory"] });
@@ -44,7 +79,7 @@ export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, 
       warnings: [],
       error: "已取消选择片库目录",
     } as const;
-    return database.scanFolder(selection.filePaths[0]);
+    return scanAndRecord(() => database.scanFolder(selection.filePaths[0]), (result) => result.status === "cancelled" ? [] : [result.sourceId]);
   }));
   ipcMain.handle(IPC_CHANNELS.localLibraryOpenVideo, () => withUiOperation("local-library.open-video", async () => {
     const selection = await dialog.showOpenDialog(window, {
@@ -53,7 +88,7 @@ export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, 
     });
     if (selection.canceled || !selection.filePaths[0]) return { status: "cancelled", state: database.getState() } as const;
     const filePath = selection.filePaths[0];
-    return database.importVideo(filePath, dirname(filePath));
+    return importAndRecord(() => database.importVideo(filePath, dirname(filePath)), (outcome) => outcome.status === "imported" ? [outcome.item.sourceId] : []);
   }));
   ipcMain.handle(IPC_CHANNELS.localLibraryList, (_event, value: unknown) => withUiOperation("local-library.list", async () => {
     const page = await database.list(parseLocalLibraryQuery(value));
@@ -95,19 +130,30 @@ export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, 
   }));
   ipcMain.handle(IPC_CHANNELS.localLibraryRemoveSource, (_event, value: unknown) => withUiOperation("local-library.source-remove", async () => {
     const sourceId = parseSourceId(value);
-    return database.removeSource(sourceId);
+    return exclusive(() => database.removeSource(sourceId));
   }));
   ipcMain.handle(IPC_CHANNELS.localLibraryRefreshSource, (_event, value: unknown) => withUiOperation("local-library.source-refresh", async () => {
     const sourceId = parseSourceId(value);
     const rootPath = await database.sourceRoot(sourceId);
     if (!rootPath) throw new Error("本地片库来源不存在");
-    return database.scanFolder(rootPath);
+    return scanAndRecord(() => database.scanFolder(rootPath), (result) => result.status === "cancelled" ? [] : [result.sourceId]);
   }));
-  ipcMain.handle(IPC_CHANNELS.localLibraryRescanAll, () => withUiOperation("local-library.rescan-all", () => database.rescanAll()));
+  ipcMain.handle(IPC_CHANNELS.localLibraryRescanAll, () => withUiOperation("local-library.rescan-all", () => scanAndRecord(
+    () => database.rescanAll(),
+    (results) => results.filter((result) => result.sourceId).map((result) => result.sourceId),
+  )));
   ipcMain.handle(IPC_CHANNELS.localLibraryScan, () => withUiOperation("local-library.scan", async () => {
     const selection = await dialog.showOpenDialog(window, { properties: ["openDirectory"] });
     if (selection.canceled || !selection.filePaths[0]) return { status: "cancelled", scanId: "scan_00000000-0000-4000-8000-000000000000", sourceId: "", scannedFiles: 0, importedFiles: 0, updatedFiles: 0, warningCount: 0, warnings: [], error: "已取消选择片库目录" } as const;
-    return database.scanFolder(selection.filePaths[0]);
+    return scanAndRecord(() => database.scanFolder(selection.filePaths[0]), (result) => result.status === "cancelled" ? [] : [result.sourceId]);
+  }));
+  ipcMain.handle(IPC_CHANNELS.localLibraryRefreshCheck, (_event, value: unknown) => withUiOperation("local-library.refresh-check", async () => {
+    if (!isLocalRefreshTrigger(value)) throw new Error("刷新触发类型无效");
+    if (!refresh) return { status: "unchanged" } as const;
+    // A window focus is throttled so flicking between windows does not restat
+    // the library; a return from detail/player is a deliberate surface change
+    // and runs one check immediately.
+    return refresh.request(value, { force: value === "return" });
   }));
   ipcMain.handle(IPC_CHANNELS.localLibraryCancelScan, (_event, value: unknown) => withUiOperation("local-library.scan-cancel", async () => {
     if (!isScanId(value)) throw new Error("scanId 格式无效");
@@ -137,6 +183,7 @@ export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, 
   return () => {
     unsubscribe();
     unsubscribeScan();
+    unsubscribeRefresh?.();
     for (const channel of [
       IPC_CHANNELS.localLibraryState,
       IPC_CHANNELS.localLibraryChooseFolder,
@@ -154,6 +201,7 @@ export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, 
       IPC_CHANNELS.localLibraryRescanAll,
       IPC_CHANNELS.localLibraryScan,
       IPC_CHANNELS.localLibraryCancelScan,
+      IPC_CHANNELS.localLibraryRefreshCheck,
       IPC_CHANNELS.localLibraryCleanupQueue,
       IPC_CHANNELS.localLibraryCleanupSetState,
       IPC_CHANNELS.localLibraryCleanupReveal,

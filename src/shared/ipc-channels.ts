@@ -18,6 +18,8 @@ export const IPC_CHANNELS = {
   localLibraryScan: "local-library:scan",
   localLibraryCancelScan: "local-library:scan-cancel",
   localLibraryScanProgress: "local-library:scan-progress",
+  localLibraryRefreshCheck: "local-library:refresh-check",
+  localLibraryRefreshResult: "local-library:refresh-result",
   localLibraryCleanupQueue: "local-library:cleanup-queue",
   localLibraryCleanupSetState: "local-library:cleanup-set-state",
   localLibraryCleanupReveal: "local-library:cleanup-reveal",

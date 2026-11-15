@@ -74,6 +74,12 @@ async function createFixture(profile: string): Promise<string> {
     await copyFile(join(process.cwd(), "assets", "test_video.mp4"), join(showRoot, stem + ".mp4"));
     await writeFile(join(showRoot, stem + ".nfo"), `<episodedetails><title>Next Episode ${number}</title><season>1</season><episode>${number}</episode></episodedetails>`);
   }
+  // Ticket 23b: a stable work whose NFO is edited mid-session. It lives in its
+  // own directory so the automatic refresh demonstrably rescans only that one.
+  const refreshRoot = join(root, "auto-refresh-fixture");
+  await mkdir(refreshRoot);
+  await copyFile(join(process.cwd(), "assets", "test_video.mp4"), join(refreshRoot, "Auto Refresh Movie.mp4"));
+  await writeFile(join(refreshRoot, "Auto Refresh Movie.nfo"), "<movie><title>Auto Refresh Before</title><year>2026</year></movie>");
   // Ticket 18: one real local poster so the reused-card artwork path is
   // exercised through the worker → main artwork cache → renderer queue.
   await writeFile(join(showRoot, "poster.png"), Buffer.from(
@@ -468,6 +474,57 @@ async function run(): Promise<void> {
     assertInside("1040 scan summary notice", wideNotice.noticeRect, wideNotice.viewport);
     await evaluate(window, "document.querySelector('#app-notice-close')?.click()");
     await waitFor("completed notice dismissed", readScanUi, (value) => value.noticeVisible === false);
+
+    // Ticket 23b: edit an NFO, refocus the app, and the library updates silently
+    // — no manual scan, no notification, no scroll jump. The change is then made
+    // while a detail is open and must wait for the return to the list.
+    const refreshNfoPath = join(fixtureRoot, "auto-refresh-fixture", "Auto Refresh Movie.nfo");
+    const readAutoRefreshUi = () => evaluate(window, `(() => ({
+      message: document.querySelector('#library-message')?.textContent || '',
+      noticeHidden: document.querySelector('#app-notice')?.hidden !== false,
+      pillHidden: document.querySelector('#scan-status')?.hidden !== false,
+      detailHidden: document.querySelector('#media-detail')?.hidden !== false,
+      titles: [...document.querySelectorAll('#library-grid .media-card-title')].map((element) => element.textContent || ''),
+      scrollTop: document.scrollingElement ? document.scrollingElement.scrollTop : window.scrollY,
+    }))()`);
+    await evaluate(window, "document.querySelector('[data-nav=all]')?.click()");
+    // The index fixture alone fills many pages, so sort by title to bring the
+    // one small work under test onto page one without scanning 8000 directories.
+    await evaluate(window, "document.querySelector('#library-sort-trigger')?.click()");
+    await evaluate(window, "document.querySelector('#library-sort-options [data-value=title]')?.click()");
+    await waitFor("auto refresh fixture card", readAutoRefreshUi, (value) => value.titles.includes("Auto Refresh Before"));
+    const autoRefreshScroll = await evaluate(window, "(() => { const scroller = document.scrollingElement; if (scroller) scroller.scrollTop = 140; else window.scrollTo(0, 140); return scroller ? scroller.scrollTop : window.scrollY; })()") as number;
+    await writeFile(refreshNfoPath, "<movie><title>Auto Refresh After</title><year>2026</year><rating>9.1</rating></movie>");
+    window.blur();
+    window.focus();
+    const afterFocusRefresh = await waitFor("NFO edit applied after refocus", readAutoRefreshUi, (value) => value.titles.includes("Auto Refresh After"), 30_000);
+    assert.match(afterFocusRefresh.message, /已自动刷新：新增 0 · 更新 1 · 未变 0 · 移除 0/u, `the automatic refresh status line shows the four counts: ${afterFocusRefresh.message}`);
+    assert.doesNotMatch(afterFocusRefresh.message, /全部条目|全部更新/u, "the automatic refresh never claims the whole library updated");
+    assert.equal(afterFocusRefresh.noticeHidden, true, "an automatic refresh never raises a notification");
+    assert.equal(afterFocusRefresh.pillHidden, true, "an automatic refresh never flashes the scan pill");
+    assert.equal(afterFocusRefresh.scrollTop, autoRefreshScroll, "an automatic refresh keeps the list scroll position");
+
+    // The detail opens, the NFO changes again, and the update is deferred until
+    // the list is visible again (focus events behind the detail are queued).
+    const detailScroll = afterFocusRefresh.scrollTop;
+    await evaluate(window, `(() => { const card = [...document.querySelectorAll('#library-grid .media-card')].find((candidate) => candidate.querySelector('.media-card-title')?.textContent === 'Auto Refresh After'); card?.querySelector('[data-media-id]')?.click(); return Boolean(card); })()`);
+    await waitFor("auto refresh detail open", readAutoRefreshUi, (value) => value.detailHidden === false);
+    await writeFile(refreshNfoPath, "<movie><title>Auto Refresh Deferred</title><year>2026</year><rating>8.4</rating><plot>Deferred plot.</plot></movie>");
+    window.blur();
+    window.focus();
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    const whileDetailOpen = await readAutoRefreshUi();
+    assert.equal(whileDetailOpen.detailHidden, false, "an automatic refresh never closes the open detail");
+    assert.equal(whileDetailOpen.titles.includes("Auto Refresh Deferred"), false, "a change found while the detail is open is not applied behind it");
+    assert.equal(whileDetailOpen.noticeHidden, true, "the deferred change stays silent");
+    await evaluate(window, "document.querySelector('#media-detail-back')?.click()");
+    const afterDetailRefresh = await waitFor("deferred NFO change applied after detail", readAutoRefreshUi, (value) => value.titles.includes("Auto Refresh Deferred") && /已自动刷新/u.test(value.message), 30_000);
+    assert.match(afterDetailRefresh.message, /新增 0 · 更新 1 · 未变 0 · 移除 0/u, `the return refresh keeps the four counts: ${afterDetailRefresh.message}`);
+    assert.equal(afterDetailRefresh.scrollTop, detailScroll, "returning from the detail restores the list scroll position");
+    assert.equal(afterDetailRefresh.noticeHidden, true, "the return refresh never raises a notification");
+    await evaluate(window, "document.querySelector('#library-sort-trigger')?.click()");
+    await evaluate(window, "document.querySelector('#library-sort-options [data-value=recent]')?.click()");
+    await waitFor("sort restored after auto refresh", () => evaluate(window, "document.querySelector('#library-sort-trigger')?.dataset.value"), (value) => value === "recent");
 
     await evaluate(window, "document.querySelector('[data-nav=home]')?.click()");
     const homeShelves = await waitFor(
