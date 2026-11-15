@@ -2,7 +2,7 @@
 
 ID: 22b-marker-interactions
 Blocked by: 22a
-Status: ready-for-agent
+Status: done (2026-11-15, merged in e6645b2)
 Spec: docs/local-library/spec-s1-watch-experience.md
 
 ## What to build
