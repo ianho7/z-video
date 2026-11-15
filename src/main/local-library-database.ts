@@ -165,7 +165,19 @@ export class LocalLibraryDatabase {
       this.emitState();
       return this.getState();
     } catch (error) {
-      this.workerCrashed = this.worker === undefined;
+      // Ticket 20 / F-04: a worker that failed to initialize must not be reused.
+      // It is discarded here so the next owner call performs one fresh
+      // initialization instead of answering every request with "database not
+      // initialized" while the renderer's retry appears to do nothing.
+      this.workerCrashed = true;
+      const worker = this.worker;
+      this.worker = undefined;
+      this.failPending(new LocalLibraryDatabaseError("storage", localLibraryErrorMessage("storage")));
+      if (worker) {
+        this.closing = true;
+        worker.kill();
+        this.closing = false;
+      }
       this.state = {
         status: "error",
         schemaVersion: LOCAL_LIBRARY_SCHEMA_VERSION,
@@ -407,9 +419,12 @@ export class LocalLibraryDatabase {
   }
 
   /**
-   * After an unexpected worker exit the next owner operation performs exactly one
-   * controlled restart. A successful start restores `ready`; a failed one keeps
-   * the error state visible and reports it through `onState`.
+   * After an unexpected worker exit — or a failed initialization, which discards
+   * the half-started worker — the next owner operation performs exactly one
+   * controlled restart. This is also the retry path behind the renderer's error
+   * card: an owner call re-runs initialization instead of reusing a process that
+   * never opened the database. A successful start restores `ready`; a failed one
+   * keeps the error state visible and reports it through `onState`.
    */
   private async ensureWorker(): Promise<UtilityProcess | undefined> {
     if (this.worker) return this.worker;

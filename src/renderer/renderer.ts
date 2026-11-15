@@ -76,6 +76,8 @@ const libraryEmptyTitle = document.querySelector<HTMLElement>("#library-empty-ti
 const libraryEmptyMessage = document.querySelector<HTMLElement>("#library-empty-message");
 const searchAllTypesButton = document.querySelector<HTMLButtonElement>("#search-all-types-button");
 const libraryErrorTitle = document.querySelector<HTMLElement>("#library-error-title");
+const libraryErrorRetry = document.querySelector<HTMLButtonElement>("#library-error-retry");
+const libraryErrorRetryNote = document.querySelector<HTMLElement>("#library-error-retry-note");
 const libraryErrorCopy = document.querySelector<HTMLButtonElement>("#library-error-copy");
 const libraryErrorFolders = document.querySelector<HTMLButtonElement>("#library-error-folders");
 const libraryPageError = document.querySelector<HTMLElement>("#library-page-error");
@@ -110,6 +112,7 @@ const searchPagination = document.querySelector<HTMLElement>("#search-pagination
 const searchEmpty = document.querySelector<HTMLElement>("#search-empty");
 const searchEmptyTitle = document.querySelector<HTMLElement>("#search-empty-title");
 const searchEmptyMessage = document.querySelector<HTMLElement>("#search-empty-message");
+const searchEmptyRetry = document.querySelector<HTMLButtonElement>("#search-empty-retry");
 const searchFilterButtons = document.querySelector<HTMLElement>("#search-filter-buttons");
 const searchEmptyClear = document.querySelector<HTMLButtonElement>("#search-empty-clear");
 const scanStatus = document.querySelector<HTMLElement>("#scan-status");
@@ -168,6 +171,8 @@ const playerSubtitleFileButton = document.querySelector<HTMLButtonElement>("#pla
 const playerVolume = document.querySelector<HTMLInputElement>("#player-volume");
 const playerMuteButton = document.querySelector<HTMLButtonElement>("#player-mute-button");
 const playerStatus = document.querySelector<HTMLElement>("#player-status");
+const playerControlNotice = document.querySelector<HTMLElement>("#player-control-notice");
+const playerControlNoticeText = document.querySelector<HTMLElement>("#player-control-notice-text");
 const playerError = document.querySelector<HTMLElement>("#player-error");
 const playerErrorMessage = document.querySelector<HTMLElement>("#player-error-message");
 const playerErrorRetry = document.querySelector<HTMLButtonElement>("#player-error-retry");
@@ -238,6 +243,9 @@ type LibraryPageView =
   | { mode: "media"; items: LocalMediaItem[]; totalCount: number; page: number; pageSize: number };
 let activePage: LibraryPageView | undefined;
 let libraryLoadedOnce = false;
+/** Ticket 20 / F-04: one in-flight initialization retry and its failed attempts. */
+let libraryRetryBusy = false;
+let libraryRetryAttempts = 0;
 let activeDetail: LocalMediaDetail | undefined;
 let selectedMediaId: string | undefined;
 type DetailOriginKind = "home" | "library" | "episodes" | "search";
@@ -326,6 +334,12 @@ let playerClosing = false;
 let playerCloseFallback: number | undefined;
 let playerState: "playing" | "paused" | "buffering" | "ended" = "paused";
 let playerDurationSec = 0;
+/**
+ * Ticket 20 / P-07: the last position main reported. A failed seek rolls the
+ * slider back to this value instead of leaving an optimistic position on screen.
+ */
+let playerPositionSec = 0;
+let playerControlNoticeTimer: number | undefined;
 let playerFullscreen = false;
 let playerMuted = false;
 let playerMuteCommandValue: boolean | undefined;
@@ -719,9 +733,13 @@ function showSearchFailure(message: string): void {
   searchPageView = undefined;
   if (searchEmpty) searchEmpty.hidden = false;
   if (searchEmptyTitle) searchEmptyTitle.textContent = "搜索暂时不可用";
-  if (searchEmptyMessage) searchEmptyMessage.textContent = message;
+  if (searchEmptyMessage) searchEmptyMessage.textContent = `${message} 结果已清空；这是读取失败，不代表没有匹配作品。`;
   if (searchAllTypesButton) searchAllTypesButton.hidden = true;
-  if (searchCount) searchCount.textContent = `${searchFilter === "episode" ? "共 0 集" : "共 0 部作品"} · ${filterLabel(searchFilter)}`;
+  // Ticket 20 / F-05: a read failure is not a result count. Saying "共 0 部作品"
+  // next to "暂时不可用" reads as "the search really found nothing", and the
+  // only retry was pressing Enter again with no hint.
+  if (searchEmptyRetry) searchEmptyRetry.hidden = false;
+  if (searchCount) searchCount.textContent = `读取失败，未得到结果数 · ${filterLabel(searchFilter)}`;
   setMessage(message, true);
 }
 
@@ -750,6 +768,7 @@ function renderSearchPage(page: { mode: "collection"; items: LocalCollectionSumm
     }
   }
   if (searchAllTypesButton) searchAllTypesButton.hidden = !(empty && searchFilter !== "all");
+  if (searchEmptyRetry) searchEmptyRetry.hidden = true;
   observeArtworkGrid(searchGrid);
 }
 
@@ -1010,7 +1029,7 @@ function restorePlayerOriginScroll(): void {
   else window.scrollTo(0, playerOriginScroll);
 }
 
-const overlayIds = ["player-current-title", "player-close-button", "player-close-label", "player-elapsed", "player-time", "player-seek", "player-toggle-button", "player-next-button", "player-back-10", "player-forward-10", "player-volume", "player-mute-button", "player-settings-button", "player-fullscreen-button", "player-settings", "player-settings-close", "player-speed-trigger", "player-audio-trigger", "player-subtitle-trigger", "player-speed-value", "player-audio-value", "player-subtitle-value", "player-subtitle-file-button", "player-status", "player-ended", "player-ended-title", "player-next-title", "player-next-meta", "player-countdown", "player-countdown-ring", "player-countdown-announcement", "player-play-next", "player-cancel-next", "player-replay", "player-return-list", "player-error", "player-error-message", "player-error-retry", "player-error-back"];
+const overlayIds = ["player-current-title", "player-close-button", "player-close-label", "player-elapsed", "player-time", "player-seek", "player-toggle-button", "player-next-button", "player-back-10", "player-forward-10", "player-volume", "player-mute-button", "player-settings-button", "player-fullscreen-button", "player-settings", "player-settings-close", "player-speed-trigger", "player-audio-trigger", "player-subtitle-trigger", "player-speed-value", "player-audio-value", "player-subtitle-value", "player-subtitle-file-button", "player-status", "player-control-notice", "player-control-notice-text", "player-ended", "player-ended-title", "player-next-title", "player-next-meta", "player-countdown", "player-countdown-ring", "player-countdown-announcement", "player-play-next", "player-cancel-next", "player-replay", "player-return-list", "player-error", "player-error-message", "player-error-retry", "player-error-back"];
 const overlayActions = new Set(overlayIds);
 let overlayActivity = 0;
 function sendOverlayState(): void {
@@ -1023,7 +1042,7 @@ function sendOverlayState(): void {
     if (element instanceof HTMLButtonElement || element instanceof HTMLInputElement || element instanceof HTMLSelectElement) value.disabled = element.disabled;
     if (element instanceof HTMLInputElement || element instanceof HTMLSelectElement) value.value = element.value;
     if (element instanceof HTMLInputElement) { value.max = element.max; value.min = element.min; }
-    if (["player-current-title", "player-elapsed", "player-time", "player-toggle-button", "player-mute-button", "player-fullscreen-button", "player-status", "player-countdown", "player-speed-value", "player-audio-value", "player-subtitle-value", "player-close-label", "player-ended-title", "player-next-title", "player-next-meta", "player-replay", "player-return-list"].includes(id)) value.html = element.innerHTML;
+    if (["player-current-title", "player-elapsed", "player-time", "player-toggle-button", "player-mute-button", "player-fullscreen-button", "player-status", "player-control-notice", "player-control-notice-text", "player-countdown", "player-speed-value", "player-audio-value", "player-subtitle-value", "player-close-label", "player-ended-title", "player-next-title", "player-next-meta", "player-replay", "player-return-list"].includes(id)) value.html = element.innerHTML;
     for (const attribute of ["expanded", "pressed", "label"]) if (element.hasAttribute(`aria-${attribute}`)) value[attribute] = element.getAttribute(`aria-${attribute}`);
     elements[id] = value;
   }
@@ -1057,6 +1076,45 @@ function setPlayerStatus(message: string, error = false): void {
   playerStatus.textContent = message;
   playerStatus.title = message;
   playerStatus.dataset.state = error ? "error" : "normal";
+}
+
+/**
+ * Ticket 20 / P-07: `#player-status` is sr-only, so a failed play/pause/seek was
+ * invisible on screen. This strip lives in the mirrored player heading, which
+ * means the fullscreen overlay window gets it too, and it never blocks playback.
+ */
+function showPlayerControlNotice(message: string): void {
+  if (playerControlNoticeTimer !== undefined) window.clearTimeout(playerControlNoticeTimer);
+  if (playerControlNoticeText) playerControlNoticeText.textContent = message;
+  if (playerControlNotice) playerControlNotice.hidden = false;
+  markPlayerUiStructureChanged();
+  sendOverlayState();
+  playerControlNoticeTimer = window.setTimeout(() => clearPlayerControlNotice(), 6_000);
+}
+
+function clearPlayerControlNotice(): void {
+  if (playerControlNoticeTimer !== undefined) {
+    window.clearTimeout(playerControlNoticeTimer);
+    playerControlNoticeTimer = undefined;
+  }
+  if (!playerControlNotice || playerControlNotice.hidden) return;
+  playerControlNotice.hidden = true;
+  if (playerControlNoticeText) playerControlNoticeText.textContent = "";
+  markPlayerUiStructureChanged();
+  sendOverlayState();
+}
+
+/** One render path for the seek slider, its progress fill and the elapsed label. */
+function renderPlayerPosition(positionSec: number, force = false): void {
+  // A duration the player only learned after `ready` still makes the slider usable.
+  if (playerSeek && playerDurationSec > 0) playerSeek.max = String(playerDurationSec);
+  // Position events never fight a drag (the slider keeps focus while dragged);
+  // a rollback after a rejected seek must move the thumb even then.
+  if (playerSeek && (force || document.activeElement !== playerSeek)) playerSeek.value = String(positionSec);
+  playerSeek?.parentElement?.style.setProperty("--progress", `${playerDurationSec > 0 ? Math.min(100, positionSec / playerDurationSec * 100) : 0}%`);
+  const elapsed = document.querySelector<HTMLElement>("#player-elapsed");
+  if (elapsed) elapsed.textContent = formatTime(positionSec);
+  if (playerTime) playerTime.textContent = formatTime(playerDurationSec);
 }
 
 function setPlayerControlsEnabled(enabled: boolean): void {
@@ -1358,7 +1416,7 @@ function handlePlayerShortcut(event: KeyboardEvent): void {
       const direction = shortcut === "ArrowRight" ? 1 : -1;
       const next = Math.max(0, current + direction * 5);
       const positionSec = playerDurationSec > 0 ? Math.min(playerDurationSec, next) : next;
-      void sendLocalPlaybackCommand({ type: "seek", positionSec });
+      void sendLocalPlaybackCommand({ type: "seek", positionSec }, { rollback: () => renderPlayerPosition(playerPositionSec, true) });
       return;
     }
     case "ArrowUp":
@@ -1538,6 +1596,7 @@ function resetPlayerSessionMirror(): void {
   // the previous session's state until its first event arrives.
   playerState = "paused";
   playerDurationSec = 0;
+  playerPositionSec = 0;
   playerVolumeLevel = 100;
   playerMuted = false;
   playerMuteCommandValue = undefined;
@@ -1563,6 +1622,7 @@ function handlePlayerClosed(): void {
   if (playerFullscreenButton) playerFullscreenButton.textContent = "全屏";
   showPlayer(false);
   hidePlayerError();
+  clearPlayerControlNotice();
   setPlayerControlsEnabled(false);
   setPlayerStatus("");
   if (playerSurfaceMessage) playerSurfaceMessage.textContent = "正在准备原生播放器…";
@@ -1614,6 +1674,7 @@ function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
   switch (event.type) {
     case "loading":
       clearNextTimer();
+      clearPlayerControlNotice();
       if (playerEnded) playerEnded.hidden = true;
       if (playerCountdownAnnouncement) playerCountdownAnnouncement.textContent = "";
       hidePlayerError();
@@ -1624,10 +1685,15 @@ function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
       break;
     case "ready":
       hidePlayerError();
+      clearPlayerControlNotice();
       playerDurationSec = event.durationSec ?? 0;
+      playerPositionSec = 0;
       setPlayerControlsEnabled(true);
       setPlayerStatus("视频区域快捷键：Space 暂停 · ←/→ ±5秒 · ↑/↓ 音量±5 · M 静音 · F 全屏 · Esc 退出");
       if (playerSurfaceMessage) playerSurfaceMessage.textContent = "";
+      // Ticket 20 / P-07: the first frame may not know the duration yet. The
+      // slider is reset here so no previous session's range leaks in, and the
+      // `position` handler updates max as soon as the duration is known.
       if (playerSeek) {
         playerSeek.max = String(playerDurationSec);
         playerSeek.value = "0";
@@ -1650,14 +1716,13 @@ function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
       else if (event.state === "buffering") setPlayerStatus("缓冲中…");
       else setPlayerStatus("播放结束。");
       break;
-    case "position":
-      playerDurationSec = event.durationSec ?? playerDurationSec;
-      if (playerSeek && document.activeElement !== playerSeek) playerSeek.value = String(event.positionSec);
-      if (playerSeek) playerSeek.parentElement?.style.setProperty("--progress", `${playerDurationSec > 0 ? Math.min(100, event.positionSec / playerDurationSec * 100) : 0}%`);
-      const elapsed = document.querySelector<HTMLElement>("#player-elapsed");
-      if (elapsed) elapsed.textContent = formatTime(event.positionSec);
-      if (playerTime) playerTime.textContent = formatTime(playerDurationSec);
+    case "position": {
+      const reportedDuration = Number(event.durationSec);
+      if (Number.isFinite(reportedDuration) && reportedDuration > 0) playerDurationSec = reportedDuration;
+      playerPositionSec = event.positionSec;
+      renderPlayerPosition(event.positionSec);
       break;
+    }
     case "tracks":
       playerAudioTracks = event.audio;
       playerSubtitleTracks = event.subtitles;
@@ -1680,6 +1745,7 @@ function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
     case "control-error":
       playerMuteCommandValue = undefined;
       restorePlayerSettingsAfterFailure();
+      showPlayerControlNotice(event.message);
       setPlayerStatus(event.message, true);
       break;
     case "error":
@@ -1690,11 +1756,35 @@ function renderLocalPlaybackEvent(event: LocalPlaybackEvent): void {
   }
 }
 
-async function sendLocalPlaybackCommand(command: Parameters<typeof window.zVideo.localPlayback.command>[0]): Promise<boolean> {
+const playerCommandLabels: Record<Parameters<typeof window.zVideo.localPlayback.command>[0]["type"], string> = {
+  play: "播放",
+  pause: "暂停",
+  seek: "调整进度",
+  "set-volume": "调整音量",
+  "set-muted": "切换静音",
+  "set-speed": "调整播放速度",
+  "set-audio-track": "切换音轨",
+  "set-subtitle-track": "切换字幕",
+  fullscreen: "切换全屏",
+  close: "关闭播放器",
+};
+
+/**
+ * Ticket 20 / P-07: a rejected control command used to write only to the
+ * sr-only status line, so nothing on screen changed and the user believed the
+ * command worked. Every failure now shows the visible heading strip and lets the
+ * caller roll back optimistic UI (the seek slider).
+ */
+async function sendLocalPlaybackCommand(
+  command: Parameters<typeof window.zVideo.localPlayback.command>[0],
+  options: { rollback?: () => void } = {},
+): Promise<boolean> {
   try {
     await window.zVideo.localPlayback.command(command);
     return true;
   } catch {
+    options.rollback?.();
+    showPlayerControlNotice(`${playerCommandLabels[command.type]}没有生效，界面已恢复到上一次状态。`);
     setPlayerStatus("播放控制失败，请重试。", true);
     return false;
   }
@@ -1702,6 +1792,11 @@ async function sendLocalPlaybackCommand(command: Parameters<typeof window.zVideo
 
 function renderState(next: LocalLibraryState): void {
   state = next;
+  if (next.status !== "error" && libraryErrorRetryNote && !libraryErrorRetryNote.hidden) {
+    libraryErrorRetryNote.hidden = true;
+    libraryErrorRetryNote.textContent = "";
+    libraryRetryAttempts = 0;
+  }
   const errorCard = document.querySelector<HTMLElement>("#library-error");
   if (errorCard) errorCard.hidden = next.status !== "error";
   if (next.status === "error") {
@@ -2196,6 +2291,61 @@ async function loadLibrary(): Promise<boolean> {
   }
 }
 
+/**
+ * Ticket 20 / F-04: the error card's retry used to call loadLibrary(), which
+ * returned silently while the owner was in `error` — nothing initialized and
+ * the card never changed. This retries the owner itself (the next owner call
+ * re-runs initialization), reports progress, and counts failed attempts so a
+ * click can never look like it did nothing.
+ */
+async function retryLocalLibrary(): Promise<void> {
+  if (libraryRetryBusy) return;
+  libraryRetryBusy = true;
+  setLibraryRetryBusy(true);
+  if (libraryErrorRetryNote) {
+    libraryErrorRetryNote.hidden = true;
+    libraryErrorRetryNote.textContent = "";
+  }
+  setMessage("正在重新初始化本地片库服务…");
+  try {
+    const result = await window.zVideo.localLibrary.list({ page: 1, pageSize: PAGE_SIZE });
+    renderState(result.state);
+    if (result.state.status === "ready") {
+      libraryRetryAttempts = 0;
+      await loadLibrary();
+      await loadContinueWatching();
+      await loadHomeShelves();
+      setMessage("本地片库服务已恢复。");
+    } else {
+      reportLibraryRetryFailure();
+    }
+  } catch (error) {
+    reportLibraryRetryFailure(error);
+  } finally {
+    libraryRetryBusy = false;
+    setLibraryRetryBusy(false);
+  }
+}
+
+function setLibraryRetryBusy(busy: boolean): void {
+  if (libraryErrorRetry) {
+    libraryErrorRetry.disabled = busy;
+    libraryErrorRetry.textContent = busy ? "正在重试…" : "重试";
+  }
+  document.querySelector("#library-error")?.setAttribute("aria-busy", busy ? "true" : "false");
+}
+
+function reportLibraryRetryFailure(error?: unknown): void {
+  libraryRetryAttempts += 1;
+  const stamp = new Date();
+  const clock = [stamp.getHours(), stamp.getMinutes(), stamp.getSeconds()].map((part) => String(part).padStart(2, "0")).join(":");
+  if (libraryErrorRetryNote) {
+    libraryErrorRetryNote.textContent = `第 ${libraryRetryAttempts} 次重试仍失败（${clock}）。片库服务没有启动，错误码见下方技术详情。`;
+    libraryErrorRetryNote.hidden = false;
+  }
+  setMessage(error instanceof Error && error.message ? error.message : "重试仍失败：本地片库服务没有启动。", true);
+}
+
 async function loadContinueWatching(): Promise<void> {
   const epoch = ++continueEpoch;
   try {
@@ -2506,7 +2656,7 @@ async function markReviewDecision(state: ReviewDecision): Promise<void> {
 }
 
 /** Open the candidate through the only playback bridge; the review header uses A1 facts. */
-async function openReviewMedia(): Promise<void> {
+async function openReviewMedia(restart = false): Promise<void> {
   const target = reviewTarget;
   if (!target) return;
   recordPlayerOrigin();
@@ -2515,7 +2665,8 @@ async function openReviewMedia(): Promise<void> {
   updateReviewBar();
   setPlayerStatus("正在打开检查播放…");
   try {
-    await window.zVideo.localPlayback.open(target.mediaId);
+    const result = await window.zVideo.localPlayback.open(target.mediaId, restart ? { restart: true } : undefined);
+    if (!result?.opened) throw new Error("播放器没有接受这次打开请求，已退出加载状态，请重试。");
   } catch (error) {
     discardPlayerSession();
     showPlayer(false);
@@ -3266,13 +3417,23 @@ function closeDetail(): void {
 }
 
 async function openSelectedLocalMedia(restart = false): Promise<void> {
-  if (!selectedMediaId) return;
+  if (!selectedMediaId) {
+    // Ticket 20 / CL-08: this entry is reachable from visible actions, so an
+    // empty target must say why instead of returning silently.
+    setMessage("没有选中的播放目标；请从详情页或整理队列重新打开。", true);
+    setPlayerStatus("没有选中的播放目标。", true);
+    return;
+  }
   if (!isPlayerLayerOpen()) recordPlayerOrigin();
   activePlaybackTitle = activeDetail?.item.title ?? "本地媒体";
   showPlayer(true);
   setPlayerStatus(restart ? "正在从头打开本地媒体…" : "正在打开本地媒体…");
   try {
-    await window.zVideo.localPlayback.open(selectedMediaId, restart ? { restart: true } : undefined);
+    const result = await window.zVideo.localPlayback.open(selectedMediaId, restart ? { restart: true } : undefined);
+    // Ticket 20 / P-12: main answers `{opened:false}` when the player host or its
+    // window is gone. Ignoring it left the view on "正在加载" forever with no
+    // event coming; leaving the loading state and reporting is the only exit.
+    if (!result?.opened) throw new Error("播放器没有接受这次打开请求，已退出加载状态，请重试。");
   } catch (error: unknown) {
     discardPlayerSession();
     showPlayer(false);
@@ -3404,6 +3565,15 @@ function setSourceDialogBusy(busy: boolean): void {
   }
 }
 
+/**
+ * Ticket 20 / B-06: an already-issued removal keeps running, so Esc must not
+ * dismiss the dialog that is going to report its result. The refusal is written
+ * into the dialog that stays open.
+ */
+function refuseBusyDialogClose(errorElement: HTMLElement | null, action: string): void {
+  setDialogError(errorElement, `正在${action}，请稍候；操作完成前不能关闭这个对话框。`);
+}
+
 async function refreshAfterSourceChange(): Promise<void> {
   setQuery({ sourceId: undefined, page: 1 });
   scrollResultsToTop();
@@ -3438,7 +3608,11 @@ async function confirmRemoveSource(): Promise<void> {
     showAppNotice("已移除文件夹", `已移除「${source?.label ?? "所选文件夹"}」的作品和观看进度，源文件没有被删除。`, "info");
     setMessage(`已移除「${source?.label ?? "所选文件夹"}」。`);
   } catch (error) {
-    setDialogError(removeDialogError, error instanceof Error ? error.message : "移除失败，请重试。文件夹、作品和观看进度均未改变。");
+    const message = error instanceof Error ? error.message : "移除失败，请重试。文件夹、作品和观看进度均未改变。";
+    setDialogError(removeDialogError, message);
+    // B-06: if the dialog is somehow gone, the failure still has to land on a
+    // surface the user can see instead of dying inside a closed dialog.
+    if (!removeDialog?.open) showAppNotice("移除失败", message, "error");
     if (removeConfirmButton) removeConfirmButton.textContent = "重试移除";
     removeConfirmButton?.focus();
   } finally {
@@ -3487,7 +3661,9 @@ async function deleteOfflineSource(): Promise<void> {
     showAppNotice("已清理文件夹记录", `已确认「${source?.label ?? "所选文件夹"}」被删除，相关作品、集数和观看进度已从片库清理；源文件未被改动。`, "info");
     setMessage(`已清理「${source?.label ?? "所选文件夹"}」的记录。`);
   } catch (error) {
-    setDialogError(offlineDialogError, error instanceof Error ? error.message : "清理失败，请重试。记录和观看进度均未改变。");
+    const message = error instanceof Error ? error.message : "清理失败，请重试。记录和观看进度均未改变。";
+    setDialogError(offlineDialogError, message);
+    if (!offlineDialog?.open) showAppNotice("清理失败", message, "error");
     if (offlineDeleteButton) offlineDeleteButton.textContent = "重试清理";
     offlineDeleteButton?.focus();
   } finally {
@@ -3789,7 +3965,7 @@ libraryErrorFolders?.addEventListener("click", () => showSources());
 libraryOfflineFolders?.addEventListener("click", () => showSources());
 libraryPageErrorRetry?.addEventListener("click", () => void loadLibrary());
 libraryPageErrorBack?.addEventListener("click", () => navigateHomeOrLibrary("home"));
-document.querySelector<HTMLButtonElement>("#library-error-retry")?.addEventListener("click", () => void loadLibrary());
+libraryErrorRetry?.addEventListener("click", () => void retryLocalLibrary());
 for (const row of [document.querySelector<HTMLElement>("#recent-row"), document.querySelector<HTMLElement>("#shows-row")]) row?.addEventListener("click", (event) => { const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-media-id]"); if (button?.dataset.mediaId) void openDetail(button.dataset.mediaId, button); });
 document.querySelector<HTMLButtonElement>("#hero-detail")?.addEventListener("click", (event) => { const item = homeItems[0]?.item ?? recentItems[0]; if (item) void openDetail(item.mediaId, event.currentTarget as HTMLElement); });
 for (const [id, restart] of [["#hero-play", false], ["#hero-restart", true]] as const) document.querySelector<HTMLButtonElement>(id)?.addEventListener("click", () => { const item = homeItems[0]?.item ?? recentItems[0]; if (!item || !item.available) return; selectedMediaId = item.mediaId; activeDetail = { item, episodes: [item] }; void openSelectedLocalMedia(restart); });
@@ -3817,11 +3993,19 @@ sourceList?.addEventListener("click", (event) => {
 });
 removeCancelButton?.addEventListener("click", () => removeDialog?.close());
 removeConfirmButton?.addEventListener("click", () => void confirmRemoveSource());
+removeDialog?.addEventListener("cancel", (event) => {
+  if (!sourceDialogBusy) return;
+  event.preventDefault();
+  refuseBusyDialogClose(removeDialogError, "移除");
+});
 removeDialog?.addEventListener("close", () => {
   // Native dialog close events are queued asynchronously. If the dialog was
   // reopened before this event arrives, it belongs to the previous dialog
   // instance and must not reset the state of the one that is open now.
   if (removeDialog?.open) return;
+  // Ticket 20 / B-06: while the write is still in flight the dialog state (busy
+  // markers, captured source id, error text) belongs to that operation.
+  if (sourceDialogBusy) return;
   removingSourceId = undefined;
   setDialogError(removeDialogError, undefined);
   if (removeConfirmButton) removeConfirmButton.textContent = "移除并删除进度";
@@ -3829,10 +4013,16 @@ removeDialog?.addEventListener("close", () => {
 });
 offlineKeepButton?.addEventListener("click", keepOfflineSource);
 offlineDeleteButton?.addEventListener("click", () => void deleteOfflineSource());
+offlineDialog?.addEventListener("cancel", (event) => {
+  if (!sourceDialogBusy) return;
+  event.preventDefault();
+  refuseBusyDialogClose(offlineDialogError, "清理");
+});
 offlineDialog?.addEventListener("close", () => {
   // Same async close race as the remove dialog: a queued close from a previous
   // offline prompt must not clear a dialog that has already been reopened.
   if (offlineDialog?.open) return;
+  if (sourceDialogBusy) return;
   offlineSourceId = undefined;
   setDialogError(offlineDialogError, undefined);
   if (offlineDeleteButton) offlineDeleteButton.textContent = "已删除（清理记录）";
@@ -3840,8 +4030,16 @@ offlineDialog?.addEventListener("close", () => {
 });
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
-  if (removeDialog?.open) { event.preventDefault(); removeDialog.close(); }
-  else if (offlineDialog?.open) { event.preventDefault(); offlineDialog.close(); }
+  if (removeDialog?.open) {
+    event.preventDefault();
+    if (sourceDialogBusy) { refuseBusyDialogClose(removeDialogError, "移除"); return; }
+    removeDialog.close();
+  }
+  else if (offlineDialog?.open) {
+    event.preventDefault();
+    if (sourceDialogBusy) { refuseBusyDialogClose(offlineDialogError, "清理"); return; }
+    offlineDialog.close();
+  }
   else if (reviewDecisionDialog?.open) { event.preventDefault(); returnToReviewQueue(); }
   else if (cleanupSettingsDialog?.open || cleanupDeleteDialog?.open) { /* the native dialog consumes Escape */ }
   else if (isCleanupLayerOpen() && !isPlayerLayerOpen()) { event.preventDefault(); hideCleanup(); }
@@ -3883,7 +4081,11 @@ playerToggleButton?.addEventListener("click", () => {
   void sendLocalPlaybackCommand({ type: playerState === "playing" ? "pause" : "play" });
 });
 playerSeek?.addEventListener("change", () => {
-  void sendLocalPlaybackCommand({ type: "seek", positionSec: Number(playerSeek.value) });
+  const requested = Number(playerSeek.value);
+  void sendLocalPlaybackCommand({ type: "seek", positionSec: requested }, {
+    // P-07: a rejected seek must snap the slider back to the last reported position.
+    rollback: () => renderPlayerPosition(playerPositionSec, true),
+  });
 });
 playerFullscreenButton?.addEventListener("click", () => {
   togglePlayerFullscreen();
@@ -3914,7 +4116,14 @@ playerCancelNext?.addEventListener("click", () => {
   setPlayerStatus("已取消自动播放下一集。");
   sendOverlayState();
 });
-playerReplay?.addEventListener("click", () => { resetPlaybackEndedPanel(); void openSelectedLocalMedia(true); });
+playerReplay?.addEventListener("click", () => {
+  resetPlaybackEndedPanel();
+  // Ticket 20 / CL-08: review playback never sets `selectedMediaId`, so the
+  // generic replay entry returned silently. An inspection replay restarts the
+  // inspected candidate from the beginning.
+  if (reviewTarget) void openReviewMedia(true);
+  else void openSelectedLocalMedia(true);
+});
 playerReturnList?.addEventListener("click", () => {
   requestPlayerClose(!reviewTarget && !currentItemIsMovie());
 });
@@ -3927,7 +4136,7 @@ playerErrorBack?.addEventListener("click", () => requestPlayerClose());
 for (const [selector, offset] of [["#player-back-10", -10], ["#player-forward-10", 10]] as const) {
   document.querySelector<HTMLButtonElement>(selector)?.addEventListener("click", () => {
     const positionSec = Math.max(0, Math.min(playerDurationSec, Number(playerSeek?.value ?? 0) + offset));
-    void sendLocalPlaybackCommand({ type: "seek", positionSec });
+    void sendLocalPlaybackCommand({ type: "seek", positionSec }, { rollback: () => renderPlayerPosition(playerPositionSec, true) });
   });
 }
 playerSubtitleFileButton?.addEventListener("click", () => {
@@ -3990,6 +4199,7 @@ searchFilterButtons?.addEventListener("click", (event) => {
 });
 searchBackButton?.addEventListener("click", () => { void clearSearch(); });
 searchEmptyClear?.addEventListener("click", () => { void clearSearch(); });
+searchEmptyRetry?.addEventListener("click", () => { if (isSearchBase() && searchQuery) void loadSearch(); });
 searchAllTypesButton?.addEventListener("click", () => {
   if (!isSearchBase()) return;
   searchFilter = "all";

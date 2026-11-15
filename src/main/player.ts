@@ -140,6 +140,10 @@ export class LocalPlaybackCoordinator {
       active.durationSec = finiteNonNegative(state?.durationSec);
       active.audioTrackId = state?.audioTrackId;
       active.subtitleTrackId = state?.subtitleTrackId;
+      // Ticket 20 / P-05: the attempt only carries the previous verdict forward
+      // (a restart clears it). The completion verdict itself is owned by the
+      // viewing ledger, which writes `playback_state.watched` when the session
+      // completes — the player never invents a second 90% rule.
       active.watched = options.restart ? false : state?.watched === true;
       this.ledger?.begin(mediaId, active.positionSec);
       await this.engine.start(path, options.restart ? 0 : finiteNonNegative(state?.positionSec), (event) => {
@@ -380,6 +384,8 @@ export class LocalPlaybackCoordinator {
         this.ledger?.setPlaying(event.state === "playing");
         if (event.state === "ended") {
           active.endedObserved = true;
+          // An explicit end is completion evidence the ledger also accepts; the
+          // ledger remains the only writer of the completion verdict (P-05).
           active.watched = true;
           void this.flushProgress(active, generation);
         } else if (event.state === "paused") {

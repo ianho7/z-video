@@ -1015,6 +1015,89 @@ async function run(): Promise<void> {
       recoveredDb.close();
     }
 
+    // Ticket 20 / P-05: completion has exactly one judge — the viewing ledger.
+    // A close at 90%+ without an engine `ended` must flip the playback projection
+    // in the same write, otherwise detail/continue-watching keep saying
+    // "继续播放" while the record says "完整看完 1 次".
+    const completionDbPath = join(profile, "completion.sqlite");
+    const completionRoot = join(profile, "completion-fixture");
+    await mkdir(completionRoot, { recursive: true });
+    await writeFile(join(completionRoot, "Completion Movie.mkv"), Buffer.from("completion fixture"));
+    await writeFile(join(completionRoot, "Half Watched Movie.mkv"), Buffer.from("half watched fixture"));
+    const completionDb = new LocalLibraryDatabase({ dbPath: completionDbPath, workerPath });
+    await completionDb.start();
+    try {
+      const completionScan = await completionDb.scanFolder(completionRoot);
+      const completionItems = (await completionDb.list({ page: 1, pageSize: 10, sourceId: completionScan.sourceId })).items;
+      const completionItem = completionItems.find((item) => item.title === "Completion Movie");
+      const halfWatchedItem = completionItems.find((item) => item.title === "Half Watched Movie");
+      assert.ok(completionItem && halfWatchedItem, "completion fixtures were indexed");
+      // The player flushes 95% with watched=false right before the ledger closes.
+      await completionDb.savePlayback(completionItem!.mediaId, { positionSec: 950, durationSec: 1000, watched: false, updatedAtMs: 1_000 });
+      await completionDb.savePlayback(halfWatchedItem!.mediaId, { positionSec: 500, durationSec: 1000, watched: false, updatedAtMs: 1_000 });
+      assert.equal((await completionDb.getDetail(completionItem!.mediaId))?.playback?.watched, false);
+      assert.equal((await completionDb.listContinueWatching()).some((entry) => entry.item.mediaId === completionItem!.mediaId), true, "an in-progress 95% work is listed before the ledger settles");
+
+      await recordViewingSession(completionDb, completionItem!.mediaId, { startedAtMs: 2_000, playedSec: 900, wallSec: 1_000, endPositionSec: 950, durationSec: 1_000, completed: false, closeReason: "user-close" });
+      await recordViewingSession(completionDb, halfWatchedItem!.mediaId, { startedAtMs: 4_000, playedSec: 500, wallSec: 600, endPositionSec: 500, durationSec: 1_000, completed: false, closeReason: "user-close" });
+
+      const completedDetail = await completionDb.getDetail(completionItem!.mediaId);
+      assert.equal(completedDetail?.playback?.watched, true, "a 95% close writes the ledger's completion into playback_state");
+      assert.equal(completedDetail?.viewing?.completedCount, 1, "the record counts the same close as one completed watch");
+      assert.equal((await completionDb.listContinueWatching()).some((entry) => entry.item.mediaId === completionItem!.mediaId), false, "a completed work leaves continue watching");
+
+      const halfDetail = await completionDb.getDetail(halfWatchedItem!.mediaId);
+      assert.equal(halfDetail?.playback?.watched, false, "a 50% close never becomes a completed watch");
+      assert.equal(halfDetail?.viewing?.completedCount, 0);
+      assert.equal((await completionDb.listContinueWatching()).some((entry) => entry.item.mediaId === halfWatchedItem!.mediaId), true, "a 50% close stays in continue watching");
+      await completionDb.close();
+
+      // The interrupted-session recovery writes through the same completion
+      // conclusion, so a crash after 95% cannot leave the projection behind either.
+      const recoveredCompletionDb = new LocalLibraryDatabase({ dbPath: completionDbPath, workerPath });
+      await recoveredCompletionDb.start();
+      try {
+        await recoveredCompletionDb.savePlayback(completionItem!.mediaId, { positionSec: 970, durationSec: 1_000, watched: false, updatedAtMs: 10_000 });
+      } finally {
+        await recoveredCompletionDb.close();
+      }
+      const interruptedCompletion = openSqlite(completionDbPath);
+      try {
+        interruptedCompletion.prepare(`
+          INSERT INTO viewing_sessions (session_id, media_id, started_at, ended_at, played_sec, wall_sec, end_position_sec, duration_sec, pause_count, seek_count, speed, close_reason, completed, last_heartbeat_at)
+          VALUES (?, ?, 20000, NULL, 960, 1000, 970, 1000, 0, 0, 1, NULL, 0, 30000)
+        `).run("session_22222222-2222-4222-8222-222222222222", completionItem!.mediaId);
+      } finally {
+        interruptedCompletion.close();
+      }
+      const recoveredCompletion = new LocalLibraryDatabase({ dbPath: completionDbPath, workerPath });
+      await recoveredCompletion.start();
+      try {
+        const recoveredDetail = await recoveredCompletion.getDetail(completionItem!.mediaId);
+        assert.equal(recoveredDetail?.playback?.watched, true, "recovery applies the same completion verdict to playback_state");
+        assert.equal(recoveredDetail?.viewing?.completedCount, 2, "the recovered session is the second completed watch");
+      } finally {
+        await recoveredCompletion.close();
+      }
+    } finally {
+      await completionDb.close().catch(() => undefined);
+    }
+
+    // Ticket 20 / F-04 (owner side): a failed start discards the unusable worker
+    // and the next owner call — the one behind the renderer's retry button —
+    // re-runs initialization instead of reusing a process that never opened the
+    // database (which made the button appear to do nothing).
+    const retryDbPath = join(profile, "retry-initialization.sqlite");
+    await mkdir(retryDbPath, { recursive: true });
+    const retryDb = new LocalLibraryDatabase({ dbPath: retryDbPath, workerPath });
+    await assert.rejects(() => withDeadline(retryDb.start(), 30_000, "failed start"), /存储不可用|无法读取|重试/);
+    assert.equal(retryDb.getState().status, "error");
+    await rm(retryDbPath, { recursive: true, force: true });
+    const retriedPage = await withDeadline(retryDb.list({ page: 1, pageSize: 5 }), 30_000, "list after a failed start");
+    assert.equal(retriedPage.totalCount, 0);
+    assert.equal(retryDb.getState().status, "ready", "an owner call after a failed start re-initializes the library");
+    await retryDb.close();
+
     // Ticket 09: the subtitle three-state choice survives a worker restart.
     const subtitleDbPath = join(profile, "subtitle-sentinel.sqlite");
     const subtitleRoot = join(profile, "subtitle-fixture");
