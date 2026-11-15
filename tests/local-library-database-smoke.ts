@@ -1353,6 +1353,220 @@ async function run(): Promise<void> {
     }
     await resilientDb.close();
 
+    // Ticket 23a: a directory-scoped rescan traverses only the requested
+    // directories and reports imported/updated/unchanged/removed derived from
+    // the stored rows, not from "files seen again".
+    const scopeDbPath = join(profile, "scan-scope.sqlite");
+    const scopeRoot = join(profile, "scan-scope-fixture");
+    const scopeDirectoryA = join(scopeRoot, "A-dir");
+    const scopeDirectoryB = join(scopeRoot, "B-dir");
+    await mkdir(scopeDirectoryA, { recursive: true });
+    await mkdir(scopeDirectoryB, { recursive: true });
+    const scopeKeepA = join(scopeDirectoryA, "A Keep.mkv");
+    const scopeEditA = join(scopeDirectoryA, "A Edit.mkv");
+    const scopeDeleteA = join(scopeDirectoryA, "A Delete.mkv");
+    const scopeKeepB = join(scopeDirectoryB, "B Keep.mkv");
+    for (const filePath of [scopeKeepA, scopeEditA, scopeDeleteA, scopeKeepB]) {
+      await writeFile(filePath, Buffer.from("scan scope fixture"));
+    }
+    await writeFile(join(scopeDirectoryA, "A Edit.nfo"), "<movie><title>A Edit Before</title><year>2020</year></movie>");
+    await writeFile(join(scopeDirectoryB, "B Keep.nfo"), "<movie><title>B Keep Before</title><year>2021</year></movie>");
+    const scopeDb = new LocalLibraryDatabase({ dbPath: scopeDbPath, workerPath });
+    await scopeDb.start();
+    const scopeBaseline = await scopeDb.scanFolder(scopeRoot);
+    assert.equal(scopeBaseline.status, "completed");
+    assert.deepEqual(scopeBaseline.counts, { imported: 4, updated: 0, unchanged: 0, removed: 0 }, "a first scan imports every file and reports no phantom updates");
+    assert.equal(scopeBaseline.nfoUpdatedFiles, 0);
+    assert.equal(scopeBaseline.fingerprintReplacedFiles, 0);
+    const scopeBaselineItems = (await scopeDb.list({ page: 1, pageSize: 20, sourceId: scopeBaseline.sourceId })).items;
+    const scopeItem = (title: string) => {
+      const item = scopeBaselineItems.find((candidate) => candidate.title === title);
+      if (!item) throw new Error(`scan scope fixture item ${title} was not indexed`);
+      return item;
+    };
+    const scopeKeepAItem = scopeItem("A Keep");
+    const scopeEditAItem = scopeItem("A Edit Before");
+    const scopeDeleteAItem = scopeItem("A Delete");
+    const scopeKeepBItem = scopeItem("B Keep Before");
+    await scopeDb.savePlayback(scopeEditAItem.mediaId, { positionSec: 300, durationSec: 1_200, watched: false, updatedAtMs: Date.now() });
+    await recordViewingSession(scopeDb, scopeEditAItem.mediaId, {
+      startedAtMs: 50_000,
+      playedSec: 120,
+      wallSec: 130,
+      endPositionSec: 300,
+      durationSec: 1_200,
+      completed: false,
+      closeReason: "user-close",
+    });
+    await scopeDb.savePlayback(scopeKeepBItem.mediaId, { positionSec: 77, durationSec: 900, watched: false, updatedAtMs: Date.now() });
+    const scopeFactsBefore = openSqlite(scopeDbPath);
+    let scopeKeepBUpdatedAt = 0;
+    let scopeKeepBCollectionUpdatedAt = 0;
+    try {
+      scopeKeepBUpdatedAt = Number((scopeFactsBefore.prepare("SELECT updated_at AS updatedAt FROM media_files WHERE media_id = ?").get(scopeKeepBItem.mediaId) as { updatedAt?: number } | undefined)?.updatedAt);
+      scopeKeepBCollectionUpdatedAt = Number((scopeFactsBefore.prepare("SELECT updated_at AS updatedAt FROM collections WHERE collection_id = ?").get(scopeKeepBItem.collectionId) as { updatedAt?: number } | undefined)?.updatedAt);
+    } finally {
+      scopeFactsBefore.close();
+    }
+    await writeFile(join(scopeDirectoryA, "A Edit.nfo"), "<movie><title>A Edit After</title><year>2025</year><plot>Edited plot.</plot><rating>9.1</rating></movie>");
+    await writeFile(join(scopeDirectoryA, "A New.mkv"), Buffer.from("scan scope new fixture"));
+    await rm(scopeDeleteA);
+    // A change in the directory that is not rescanned must stay unapplied.
+    await writeFile(join(scopeDirectoryB, "B Keep.nfo"), "<movie><title>B Keep After</title><year>2026</year></movie>");
+    const scopeProgressStatuses: string[] = [];
+    const unsubscribeScopeProgress = scopeDb.onScanProgress((progress) => scopeProgressStatuses.push(progress.status));
+    const scopeRescan = await scopeDb.scanDirectories(scopeBaseline.sourceId, ["A-dir"]);
+    unsubscribeScopeProgress();
+    assert.equal(scopeRescan.status, "completed");
+    assert.equal(scopeRescan.scannedFiles, 3, "only the requested directory's current files are traversed");
+    assert.equal(scopeProgressStatuses.includes("running"), true, "a directory rescan streams the same progress events");
+    assert.equal(scopeProgressStatuses.at(-1), "completed");
+    assert.deepEqual(scopeRescan.counts, { imported: 1, updated: 1, unchanged: 1, removed: 1 }, "the four counts compare stored rows with what this run saw");
+    assert.equal(scopeRescan.nfoUpdatedFiles, 1, "the NFO edit is reported as an NFO-only change");
+    assert.equal(scopeRescan.fingerprintReplacedFiles, 0);
+    assert.equal(scopeRescan.importedFiles, 1, "the existing per-file counter keeps counting created rows");
+    assert.equal(scopeRescan.updatedFiles, 2, "the existing streaming counter keeps counting re-seen rows");
+    const scopeItemsAfterRescan = (await scopeDb.list({ page: 1, pageSize: 20, sourceId: scopeBaseline.sourceId })).items;
+    const scopeAfter = (title: string) => {
+      const item = scopeItemsAfterRescan.find((candidate) => candidate.title === title);
+      if (!item) throw new Error(`scan scope fixture item ${title} was not indexed after the rescan`);
+      return item;
+    };
+    const scopeEditAfter = scopeAfter("A Edit After");
+    assert.equal(scopeEditAfter.mediaId, scopeEditAItem.mediaId, "an NFO-only change keeps the stored identity");
+    assert.equal((await scopeDb.getPlayback(scopeEditAfter.mediaId))?.positionSec, 300, "an NFO-only change keeps playback progress");
+    assert.equal((await scopeDb.getViewingHistory(scopeEditAfter.mediaId))?.openCount, 1, "an NFO-only change keeps the viewing history");
+    assert.equal(scopeAfter("A New").available, true, "the added file is listed");
+    assert.equal((await scopeDb.get(scopeDeleteAItem.mediaId))?.available, false, "the deleted file's row becomes unavailable");
+    assert.equal((await scopeDb.get(scopeKeepAItem.mediaId))?.title, "A Keep", "an unchanged row keeps its identity and data");
+    const scopeKeepBAfter = await scopeDb.get(scopeKeepBItem.mediaId);
+    assert.equal(scopeKeepBAfter?.title, "B Keep Before", "a directory outside the scan scope is never re-parsed");
+    assert.equal(scopeKeepBAfter?.year, 2021);
+    assert.equal(scopeKeepBAfter?.available, true);
+    assert.equal((await scopeDb.getPlayback(scopeKeepBItem.mediaId))?.positionSec, 77, "the unscanned directory keeps its progress");
+    const scopeFactsAfter = openSqlite(scopeDbPath);
+    try {
+      assert.equal(
+        Number((scopeFactsAfter.prepare("SELECT updated_at AS updatedAt FROM media_files WHERE media_id = ?").get(scopeKeepBItem.mediaId) as { updatedAt?: number } | undefined)?.updatedAt),
+        scopeKeepBUpdatedAt,
+        "the unscanned directory's rows are never written",
+      );
+      assert.equal(
+        Number((scopeFactsAfter.prepare("SELECT updated_at AS updatedAt FROM collections WHERE collection_id = ?").get(scopeKeepBItem.collectionId) as { updatedAt?: number } | undefined)?.updatedAt),
+        scopeKeepBCollectionUpdatedAt,
+        "the unscanned directory's work is never written",
+      );
+      const scopeRun = scopeFactsAfter.prepare("SELECT completed, error FROM scan_runs WHERE scan_id = ?").get(scopeRescan.scanId) as { completed?: number; error?: string | null } | undefined;
+      assert.equal(Number(scopeRun?.completed), 1, "the directory rescan reuses the existing Scan run record");
+      assert.equal(scopeRun?.error, null);
+    } finally {
+      scopeFactsAfter.close();
+    }
+
+    // Ticket 23a: a changed video fingerprint keeps the existing semantics —
+    // the old row becomes a tombstone, a new identity is created and progress is
+    // not inherited — and is reported separately from an NFO-only edit.
+    await scopeDb.savePlayback(scopeKeepAItem.mediaId, { positionSec: 123, durationSec: 900, watched: false, updatedAtMs: Date.now() });
+    await writeFile(scopeKeepA, Buffer.from("scan scope fixture replaced with new bytes"));
+    await utimes(scopeKeepA, new Date(Date.now() + 10_000), new Date(Date.now() + 10_000));
+    const scopeReplaced = await scopeDb.scanDirectories(scopeBaseline.sourceId, ["A-dir"]);
+    assert.equal(scopeReplaced.status, "completed");
+    assert.deepEqual(scopeReplaced.counts, { imported: 1, updated: 0, unchanged: 2, removed: 1 });
+    assert.equal(scopeReplaced.fingerprintReplacedFiles, 1, "a changed fingerprint is reported as a replacement, not an update");
+    assert.equal(scopeReplaced.nfoUpdatedFiles, 0);
+    const scopeReplacedItems = (await scopeDb.list({ page: 1, pageSize: 20, sourceId: scopeBaseline.sourceId })).items;
+    const scopeReplacedKeepA = scopeReplacedItems.find((item) => item.title === "A Keep");
+    assert.ok(scopeReplacedKeepA, "the replacement is listed as one current card");
+    assert.notEqual(scopeReplacedKeepA.mediaId, scopeKeepAItem.mediaId, "a changed fingerprint is a new opaque identity");
+    assert.equal((await scopeDb.get(scopeKeepAItem.mediaId))?.available, false, "the superseded identity becomes unavailable");
+    assert.equal(await scopeDb.getPlayback(scopeReplacedKeepA.mediaId), undefined, "a replaced identity never inherits progress");
+    assert.equal((await scopeDb.getPlayback(scopeKeepAItem.mediaId))?.positionSec, 123, "the superseded identity keeps its own progress row");
+
+    // Ticket 23a: an illegal, escaping, absolute or missing relative directory
+    // is rejected without an unhandled exception and without touching the
+    // library; the worker still answers a valid scope afterwards.
+    const scopeRowsBeforeRejects = (await scopeDb.list({ page: 1, pageSize: 50, sourceId: scopeBaseline.sourceId })).totalCount;
+    for (const invalidScope of ["../outside", "A-dir/../../escape", "Missing Directory", scopeDirectoryA]) {
+      await assert.rejects(
+        () => scopeDb.scanDirectories(scopeBaseline.sourceId, [invalidScope]),
+        (error: unknown) => error instanceof Error && !error.message.includes(scopeRoot) && !error.message.includes(profile),
+        `the invalid scope ${JSON.stringify(invalidScope)} is rejected without leaking the source root`,
+      );
+    }
+    await assert.rejects(
+      () => scopeDb.scanDirectories(scopeBaseline.sourceId, ["A-dir", "../escape"]),
+      /相对目录/u,
+      "one illegal directory rejects the whole scope",
+    );
+    await assert.rejects(
+      () => scopeDb.scanDirectories(scopeBaseline.sourceId, []),
+      /至少需要一个相对目录/u,
+      "an empty scope is rejected instead of silently rescanning nothing",
+    );
+    await assert.rejects(
+      () => scopeDb.scanDirectories("source_11111111-2222-4333-8444-555555555555", ["A-dir"]),
+      /来源不存在/u,
+      "an unknown source is rejected instead of creating one",
+    );
+    assert.equal(
+      (await scopeDb.list({ page: 1, pageSize: 50, sourceId: scopeBaseline.sourceId })).totalCount,
+      scopeRowsBeforeRejects,
+      "a rejected scope never changes library rows",
+    );
+    const scopeAfterRejects = await scopeDb.scanDirectories(scopeBaseline.sourceId, ["A-dir"]);
+    assert.equal(scopeAfterRejects.status, "completed", "the worker still answers a valid scope after rejections");
+    assert.deepEqual(scopeAfterRejects.counts, { imported: 0, updated: 0, unchanged: 3, removed: 0 });
+    await scopeDb.close();
+
+    // Ticket 23a: an incomplete directory never confirms deletion inside it,
+    // while a fully scanned sibling directory still reconciles.
+    const partialScopeRoot = join(profile, "scan-scope-partial-fixture");
+    const partialScopeA = join(partialScopeRoot, "A-dir");
+    const partialScopeB = join(partialScopeRoot, "B-dir");
+    const partialScopeNested = join(partialScopeA, "z-nested");
+    await mkdir(partialScopeNested, { recursive: true });
+    await mkdir(partialScopeB, { recursive: true });
+    await writeFile(join(partialScopeA, "00-visible.mkv"), Buffer.from("partial scope visible"));
+    await writeFile(join(partialScopeNested, "01-nested.mkv"), Buffer.from("partial scope nested"));
+    await writeFile(join(partialScopeB, "B-old.mkv"), Buffer.from("partial scope deleted sibling"));
+    const partialScopeDb = new LocalLibraryDatabase({ dbPath: join(profile, "scan-scope-partial.sqlite"), workerPath });
+    await partialScopeDb.start();
+    const partialScopeBaseline = await partialScopeDb.scanFolder(partialScopeRoot);
+    assert.equal(partialScopeBaseline.status, "completed");
+    assert.deepEqual(partialScopeBaseline.counts, { imported: 3, updated: 0, unchanged: 0, removed: 0 });
+    const partialScopeItems = (await partialScopeDb.list({ page: 1, pageSize: 20, sourceId: partialScopeBaseline.sourceId })).items;
+    const partialNestedItem = partialScopeItems.find((item) => item.title === "01-nested");
+    const partialSiblingItem = partialScopeItems.find((item) => item.title === "B-old");
+    assert.ok(partialNestedItem && partialSiblingItem, "the partial scope fixture was indexed");
+    await rm(join(partialScopeB, "B-old.mkv"));
+    let partialScopeNestedRemoved = false;
+    const unsubscribePartialScope = partialScopeDb.onScanProgress((progress) => {
+      if (!partialScopeNestedRemoved && progress.status === "running" && progress.scannedFiles === 1) {
+        partialScopeNestedRemoved = true;
+        rmSync(partialScopeNested, { recursive: true, force: true });
+      }
+    });
+    const partialScopeScan = await partialScopeDb.scanDirectories(partialScopeBaseline.sourceId, ["A-dir", "B-dir"]);
+    unsubscribePartialScope();
+    assert.equal(partialScopeScan.status, "partial", "an unreadable directory makes the rescan partial");
+    assert.equal(partialScopeScan.counts.removed, 1, "only the fully scanned directory confirms a deletion");
+    assert.equal(
+      (await partialScopeDb.get(partialNestedItem.mediaId))?.available,
+      true,
+      "an unseen file in an incomplete directory is never tombstoned",
+    );
+    assert.equal(
+      (await partialScopeDb.get(partialSiblingItem.mediaId))?.available,
+      false,
+      "a fully scanned sibling directory still reconciles",
+    );
+    assert.equal(
+      (await partialScopeDb.getState()).sources.find((source) => source.sourceId === partialScopeBaseline.sourceId)?.degraded,
+      true,
+      "an incomplete directory rescan never claims the source is proven complete",
+    );
+    await partialScopeDb.close();
+
     // Ticket 07: an import never runs concurrently with a scan.
     const guardRoot = join(profile, "import-guard-fixture");
     await mkdir(guardRoot, { recursive: true });

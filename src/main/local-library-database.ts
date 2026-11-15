@@ -6,6 +6,8 @@ import { utilityProcess, type UtilityProcess } from "electron";
 import {
   LOCAL_LIBRARY_SCHEMA_VERSION,
   isOpaqueMediaId,
+  normalizeScanRelativeDirectory,
+  type LocalDirectoryScanResult,
   type LocalImportOutcome,
   type LocalLibraryPage,
   type LocalLibraryQuery,
@@ -41,6 +43,7 @@ type WorkerCommand =
   | { command: "import-first-movie"; rootPath: string }
   | { command: "import-video"; filePath: string; rootPath: string }
   | { command: "scan"; rootPath: string }
+  | { command: "scan-directories"; sourceId: string; relativeDirectories: string[] }
   | { command: "cancel-scan"; scanId: string }
   | { command: "list"; query: LocalLibraryQuery }
   | { command: "list-collections"; query: LocalCollectionQuery }
@@ -244,6 +247,36 @@ export class LocalLibraryDatabase {
     return result;
   }
 
+  /**
+   * Rescan only the given source-relative directories of one registered source
+   * (Ticket 23a). The traversal, NFO parsing and upsert are the ones the full
+   * scan uses; missing-file detection only reaches the directories this run
+   * proved complete, so rows elsewhere in the source are never touched. The
+   * result carries the precise imported/updated/unchanged/removed comparison
+   * and the NFO-only / fingerprint-change breakdown.
+   *
+   * An empty scope, a non-relative value, a value that escapes the source or a
+   * directory that does not exist is rejected with `invalid-input` before any
+   * library row or Scan run is written.
+   */
+  async scanDirectories(sourceId: string, relativeDirectories: readonly string[]): Promise<LocalDirectoryScanResult> {
+    assertSourceId(sourceId);
+    if (!Array.isArray(relativeDirectories) || relativeDirectories.length === 0) {
+      throw new LocalLibraryDatabaseError("invalid-input", "至少需要一个相对目录");
+    }
+    for (const value of relativeDirectories) {
+      if (normalizeScanRelativeDirectory(value) === undefined) {
+        throw new LocalLibraryDatabaseError("invalid-input", "扫描目录必须是片库来源内的相对目录");
+      }
+    }
+    const result = await this.call<LocalDirectoryScanResult>(
+      { command: "scan-directories", sourceId, relativeDirectories: [...relativeDirectories] },
+      LocalLibraryDatabase.SCAN_CALL_TIMEOUT_MS,
+    );
+    await this.refreshState();
+    return result;
+  }
+
   /** Rescan every registered folder in source order; one unreadable source never aborts the rest. */
   async rescanAll(): Promise<LocalScanResult[]> {
     const state = await this.refreshState();
@@ -264,6 +297,9 @@ export class LocalLibraryDatabase {
           updatedFiles: 0,
           warningCount: 0,
           warnings: [],
+          counts: { imported: 0, updated: 0, unchanged: 0, removed: 0 },
+          nfoUpdatedFiles: 0,
+          fingerprintReplacedFiles: 0,
           error: localLibraryErrorMessage("storage", error instanceof Error ? error.message : undefined),
         });
       }
