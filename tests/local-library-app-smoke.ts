@@ -131,6 +131,28 @@ async function waitForProductionWindow(): Promise<BrowserWindow> {  const deadli
   throw new Error("production main did not create a renderer window");
 }
 
+/**
+ * Ticket 18: the library poster is filled in by an IntersectionObserver, so the
+ * first artwork image depends on the renderer producing frames. A window that is
+ * occluded (another window on top, display asleep, session locked) stops
+ * producing frames while DOM and timer waits keep working; the observation then
+ * never arrives and `data-artwork-generation` stays empty for the whole wait.
+ * Raise the window and prove the frame pipeline is live before asserting a
+ * frame-driven lazy load.
+ */
+async function ensureWindowComposited(window: BrowserWindow): Promise<void> {
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+  window.moveTop();
+  await waitFor(
+    "app window producing animation frames for the lazy artwork queue",
+    () => evaluate(window, "new Promise((resolve) => { const timer = setTimeout(() => resolve(0), 1200); requestAnimationFrame(() => { clearTimeout(timer); resolve(1); }); })"),
+    (frames) => frames === 1,
+    6_000,
+  );
+}
+
 async function quitProductionApp(): Promise<void> {
   if (!app.isReady()) return;
   await new Promise<void>((resolve) => {
@@ -1282,17 +1304,30 @@ async function run(): Promise<void> {
     );
     const worksBeforeTicket18 = Number(libraryBeforeGenerations.scope.match(/共 (\d+) 部作品/)?.[1] ?? 0);
     assert.ok(worksBeforeTicket18 > 0, `the work list has a countable total before the ticket 18 checks: ${libraryBeforeGenerations.scope}`);
+    // The show filter is the first assertion that needs real artwork in the lazy
+    // queue, and that queue is only armed by a frame-driven observer: settle the
+    // window and the scroll position the queue depends on first.
+    await ensureWindowComposited(window);
     await evaluate(window, "document.querySelector('#library-filter-buttons [data-filter=show]')?.click()");
     const artworkCard = await waitFor(
       "show card with loaded artwork",
       () => evaluate(window, `(() => {
+        const card = document.querySelector('#library-grid .media-card');
+        // Lazy artwork only starts once the poster is inside the viewport; make
+        // that precondition explicit instead of trusting an earlier scroll.
+        if (card) card.scrollIntoView({ block: 'center', inline: 'nearest' });
         const poster = document.querySelector('#library-grid .media-poster');
+        const cardRect = card ? card.getBoundingClientRect() : undefined;
         return {
           titles: [...document.querySelectorAll('#library-grid .media-card-title')].map((title) => title.textContent || ''),
           images: document.querySelectorAll('#library-grid .media-poster img').length,
           mediaId: poster?.dataset.artworkMediaId || '',
           loaded: poster?.dataset.artworkLoaded || '',
           generation: poster?.dataset.artworkGeneration || '',
+          // Diagnostics for a future miss: is the poster laid out on screen at
+          // all, and is its page section actually visible?
+          cardRect: cardRect ? { top: Math.round(cardRect.top), bottom: Math.round(cardRect.bottom), width: Math.round(cardRect.width) } : null,
+          sectionHidden: document.querySelector('.library-content')?.hidden ?? null,
         };
       })()`),
       (value) => value.titles.length === 1 && value.titles[0] === "Owned Next Show" && value.images === 1,
