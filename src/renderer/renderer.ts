@@ -284,7 +284,22 @@ let searchPage = 1;
 /** Ticket 12: the last rendered search page, so the pager knows its total. */
 let searchPageView: { totalCount: number; page: number; pageSize: number } | undefined;
 let searchOrigin: SearchOrigin | undefined;
-let requestEpoch = 0;
+/**
+ * Ticket 18: one request generation per semantic domain. Opening a detail must
+ * not discard an in-flight list load, closing one must not discard a search, and
+ * a scan refresh may only replace the list it was queued for. `requestEpoch`
+ * guarded all three domains at once and made them invalidate each other.
+ */
+let libraryEpoch = 0;
+let searchEpoch = 0;
+let detailEpoch = 0;
+/** In-flight requests per domain, so a discarded request cannot latch `aria-busy`. */
+type RequestDomain = "library" | "search" | "detail";
+const inFlightRequests: Record<RequestDomain, number> = { library: 0, search: 0, detail: 0 };
+function finishRequest(domain: RequestDomain): number {
+  inFlightRequests[domain] = Math.max(0, inFlightRequests[domain] - 1);
+  return inFlightRequests[domain];
+}
 let continueEpoch = 0;
 let scanId: string | undefined;
 let scanProgress: LocalScanProgress | undefined;
@@ -774,7 +789,8 @@ function renderSearchPage(page: { mode: "collection"; items: LocalCollectionSumm
 
 async function loadSearch(): Promise<void> {
   if (!isSearchBase() || !searchQuery) return;
-  const epoch = ++requestEpoch;
+  const epoch = ++searchEpoch;
+  inFlightRequests.search += 1;
   const filter = searchFilter;
   if (searchGrid) {
     searchGrid.replaceChildren();
@@ -791,7 +807,7 @@ async function loadSearch(): Promise<void> {
   try {
     if (filter === "episode") {
       const result = await window.zVideo.localLibrary.list({ page: searchPage, pageSize: PAGE_SIZE, query: searchQuery, filter, sort: currentQuery.sort ?? "recent" });
-      if (epoch !== requestEpoch) return;
+      if (epoch !== searchEpoch) return;
       renderState(result.state);
       if (!result.page) {
         showSearchFailure("搜索暂时不可用，请稍后重试。");
@@ -801,7 +817,7 @@ async function loadSearch(): Promise<void> {
       return;
     }
     const result = await window.zVideo.localLibrary.listCollections({ page: searchPage, pageSize: PAGE_SIZE, query: searchQuery, ...(filter !== "all" ? { filter } : {}), sort: currentQuery.sort ?? "recent" });
-    if (epoch !== requestEpoch) return;
+    if (epoch !== searchEpoch) return;
     renderState(result.state);
     if (!result.page) {
       showSearchFailure("搜索暂时不可用，请稍后重试。");
@@ -809,9 +825,10 @@ async function loadSearch(): Promise<void> {
     }
     renderSearchPage({ mode: "collection", ...result.page });
   } catch (error) {
-    if (epoch === requestEpoch) showSearchFailure(error instanceof Error ? error.message : "搜索暂时不可用，请稍后重试。");
+    if (epoch === searchEpoch) showSearchFailure(error instanceof Error ? error.message : "搜索暂时不可用，请稍后重试。");
   } finally {
-    if (epoch === requestEpoch) searchGrid?.removeAttribute("aria-busy");
+    // Ticket 18: a discarded search still clears its own busy carrier.
+    if (finishRequest("search") === 0) searchGrid?.removeAttribute("aria-busy");
   }
 }
 
@@ -838,13 +855,19 @@ async function enterSearch(query: string): Promise<void> {
 }
 
 function exitSearchState(): void {
+  // Ticket 18: leaving search invalidates only the search domain, and the
+  // busy carrier is cleared here instead of being left for a discarded request.
+  searchEpoch += 1;
   // Leaving search restores the base surface it was entered from.
   setView({ baseView: searchOrigin?.base ?? "library" });
   searchQuery = undefined;
   searchOrigin = undefined;
   searchPage = 1;
   searchPageView = undefined;
-  if (searchGrid) searchGrid.replaceChildren();
+  if (searchGrid) {
+    searchGrid.replaceChildren();
+    searchGrid.removeAttribute("aria-busy");
+  }
   if (searchPagination) {
     searchPagination.replaceChildren();
     searchPagination.hidden = true;
@@ -958,6 +981,9 @@ function showPlayer(visible: boolean): void {
       sendOverlayState();
     }
   }
+  // Ticket 18: the player is the overlay that can hide the list from a finished
+  // scan; closing it consumes the refresh that scan queued.
+  if (wasVisible && !visible) consumeScanRefresh();
   updateScanUi();
 }
 
@@ -1824,8 +1850,48 @@ function renderState(next: LocalLibraryState): void {
   if (next.status === "error") setMessage(next.error?.message ?? "本地片库不可用。", true);
 }
 
+/**
+ * Ticket 18 / F-10: the content signature decides whether a card may be reused.
+ * File-level cards used to reuse on `mediaId` alone, so a rescan that changed
+ * the title, size or availability left stale DOM (including artwork state) on
+ * screen forever. Artwork identity is part of the signature because the poster
+ * element carries its own `dataset.artwork*` contract.
+ */
+function artworkSignature(artwork: LocalArtworkReference[] | undefined): string {
+  return artwork?.map((entry) => `${entry.kind}:${entry.cacheKey}`).join(",") ?? "";
+}
+
+function mediaCardSignature(item: LocalMediaItem): string {
+  return [item.title, item.kind, item.year ?? "", item.rating ?? "", item.premieredDate ?? "", item.sizeBytes, item.modifiedAtMs, item.available ? 1 : 0, artworkSignature(item.artwork)].join(":");
+}
+
 function collectionCardSignature(item: LocalCollectionSummary): string {
-  return [item.title, item.kind, item.year ?? "", item.rating ?? "", item.premieredDate ?? "", item.episodeCount, item.watchedEpisodeCount, item.availableEpisodeCount, item.available ? 1 : 0, item.resume?.mediaId ?? "", item.resume?.updatedAtMs ?? 0].join(":");
+  return [item.title, item.kind, item.year ?? "", item.rating ?? "", item.premieredDate ?? "", item.episodeCount, item.watchedEpisodeCount, item.availableEpisodeCount, item.available ? 1 : 0, item.resume?.mediaId ?? "", item.resume?.updatedAtMs ?? 0, item.coverMediaId, artworkSignature(item.artwork)].join(":");
+}
+
+/**
+ * Ticket 18: a reused card keeps its poster element, so its artwork contract is
+ * re-derived from the item on screen now. A `artworkLoading` flag left behind by
+ * a request discarded with an earlier render would otherwise latch the frame
+ * forever, because the queue skips cards that already look busy.
+ */
+function reconcileCardArtwork(card: HTMLElement, mediaId: string | undefined, kind: LocalArtworkReference["kind"] | undefined): void {
+  const poster = card.querySelector<HTMLElement>(".media-poster");
+  if (!poster) return;
+  const sameReference = Boolean(mediaId && kind) && poster.dataset.artworkMediaId === mediaId && poster.dataset.artworkKind === kind;
+  // An unchanged frame that is already loaded is done, and one the observer has
+  // not reached yet must stay lazy. Only a frame whose previous attempt was
+  // discarded mid-flight (`artworkLoading` latched true) is re-armed here.
+  if (sameReference && (poster.dataset.artworkLoaded === "true" || poster.dataset.artworkLoading !== "true")) return;
+  delete poster.dataset.artworkMediaId;
+  delete poster.dataset.artworkKind;
+  delete poster.dataset.artworkLoaded;
+  delete poster.dataset.artworkLoading;
+  if (!mediaId || !kind) return;
+  poster.dataset.artworkMediaId = mediaId;
+  poster.dataset.artworkKind = kind;
+  poster.dataset.artworkGeneration = String(Number(poster.dataset.artworkGeneration ?? 0) + 1);
+  enqueueArtwork(poster, 1);
 }
 
 function renderPage(page: LibraryPageView): void {
@@ -1857,28 +1923,33 @@ function renderPage(page: LibraryPageView): void {
     for (const item of page.items) {
       const cached = existingCards.get(item.representativeMediaId);
       const signature = collectionCardSignature(item);
-      const node = cached
+      const reused = Boolean(cached
         && cached.dataset.cardMode === "collection"
         && cached.dataset.releaseDate === String(includeReleaseDate)
-        && cached.dataset.collectionSignature === signature
-        ? cached
-        : collectionCard(item, includeReleaseDate);
+        && cached.dataset.collectionSignature === signature);
+      const node = reused ? cached! : collectionCard(item, includeReleaseDate);
       node.dataset.cardMode = "collection";
       node.dataset.releaseDate = String(includeReleaseDate);
       node.dataset.collectionSignature = signature;
       libraryGrid.append(node);
       keptCards.add(node);
+      if (reused) reconcileCardArtwork(node, item.coverMediaId, item.artwork?.find((entry) => entry.kind === "poster")?.kind);
     }
   } else {
     for (const item of page.items) {
       const cached = existingCards.get(item.mediaId);
-      const node = cached && cached.dataset.cardMode === "media" && cached.dataset.releaseDate === String(includeReleaseDate)
-        ? cached
-        : card(item, includeReleaseDate);
+      const signature = mediaCardSignature(item);
+      const reused = Boolean(cached
+        && cached.dataset.cardMode === "media"
+        && cached.dataset.releaseDate === String(includeReleaseDate)
+        && cached.dataset.cardSignature === signature);
+      const node = reused ? cached! : card(item, includeReleaseDate);
       node.dataset.cardMode = "media";
       node.dataset.releaseDate = String(includeReleaseDate);
+      node.dataset.cardSignature = signature;
       libraryGrid.append(node);
       keptCards.add(node);
+      if (reused) reconcileCardArtwork(node, item.mediaId, artworkKind(item));
     }
   }
   libraryGrid.querySelectorAll<HTMLElement>(":scope > *").forEach((child) => {
@@ -1892,7 +1963,9 @@ function renderPage(page: LibraryPageView): void {
   }
   renderPager("library", page);
   observeArtworkGrid(libraryGrid);
-  restoreGridFocus(focusedMediaId);
+  // Ticket 18: an in-flight list load now finishes behind an open detail or
+  // player layer; it must not pull focus out of the visible overlay.
+  if (!isDetailOrPlayerVisible() && !isCleanupLayerOpen() && !isSearchBase()) restoreGridFocus(focusedMediaId);
   playFirstContentMotion(libraryGrid.querySelector<HTMLElement>(".media-card"));
   updateScanUi();
 }
@@ -2217,12 +2290,27 @@ function scheduleScanRefresh(): void {
   }, 350);
 }
 
+/**
+ * Ticket 18: a scan refresh queued while the detail or player covered the list
+ * must be consumed by the teardown that uncovers it, otherwise the finished
+ * scan never reaches the list until the next navigation.
+ */
+function consumeScanRefresh(): void {
+  if (!scanRefreshQueued) return;
+  scanRefreshQueued = false;
+  const renderedCommit = scanCommit;
+  void loadLibrary().then((applied) => {
+    if (applied) scanRenderedCommit = Math.max(scanRenderedCommit, renderedCommit);
+  });
+}
+
 async function loadLibrary(): Promise<boolean> {
   if (isDetailOrPlayerVisible() || isSearchBase() || isCleanupLayerOpen()) {
     scanRefreshQueued = true;
     return false;
   }
-  const epoch = ++requestEpoch;
+  const epoch = ++libraryEpoch;
+  inFlightRequests.library += 1;
   const query = { ...currentQuery };
   if (libraryGrid && libraryEmpty) {
     if (!libraryLoadedOnce) {
@@ -2240,7 +2328,7 @@ async function loadLibrary(): Promise<boolean> {
   try {
     if (usesCollectionList()) {
       const result = await window.zVideo.localLibrary.listCollections(currentCollectionQuery());
-      if (epoch !== requestEpoch || !result.page) return false;
+      if (epoch !== libraryEpoch || !result.page) return false;
       libraryLoadedOnce = true;
       renderState(result.state);
       renderPage({ mode: "collection", ...result.page });
@@ -2255,7 +2343,7 @@ async function loadLibrary(): Promise<boolean> {
       return true;
     }
     const result = await window.zVideo.localLibrary.list(query);
-    if (epoch !== requestEpoch || !result.page) return false;
+    if (epoch !== libraryEpoch || !result.page) return false;
     libraryLoadedOnce = true;
     renderState(result.state);
     renderPage({ mode: "media", ...result.page });
@@ -2269,7 +2357,7 @@ async function loadLibrary(): Promise<boolean> {
     }
     return true;
   } catch (error) {
-    if (epoch === requestEpoch) {
+    if (epoch === libraryEpoch) {
       if (state?.status === "error") {
         libraryGrid?.removeAttribute("aria-busy");
         libraryGrid?.replaceChildren();
@@ -2288,6 +2376,10 @@ async function loadLibrary(): Promise<boolean> {
       libraryPageErrorTitle?.focus({ preventScroll: true });
     }
     return false;
+  } finally {
+    // Ticket 18: the list's busy carrier belongs to the domain, not to one
+    // request, so a discarded load still clears it.
+    if (finishRequest("library") === 0) libraryGrid?.removeAttribute("aria-busy");
   }
 }
 
@@ -2494,7 +2586,10 @@ async function loadCleanupQueue(): Promise<void> {
 async function showCleanup(): Promise<void> {
   if (isSearchBase()) exitSearchState();
   setView({ layers: { cleanup: true, detail: false } });
-  requestEpoch += 1;
+  // Ticket 18: the cleanup layer only drops the list and detail requests it
+  // covers; an in-flight search or a queued refresh is not its business.
+  libraryEpoch += 1;
+  detailEpoch += 1;
   applyView();
   if (libraryEmpty) libraryEmpty.hidden = true;
   if (libraryPagination) libraryPagination.hidden = true;
@@ -3082,13 +3177,21 @@ function clearDetailContent(): void {
   }
 }
 
-function setDetailViewState(viewState: "loading" | "ready" | "error" | "unavailable"): void {
+/**
+ * Ticket 18: `re-opening` is a real detail state, not a silent re-render. An
+ * episode switch shows the same loading carrier as the first open while the
+ * previous episode's content is already gone.
+ */
+type DetailViewState = "loading" | "re-opening" | "ready" | "error" | "unavailable";
+
+function setDetailViewState(viewState: DetailViewState): void {
+  const loading = viewState === "loading" || viewState === "re-opening";
   if (detail) {
     detail.dataset.state = viewState;
-    if (viewState === "loading") detail.setAttribute("aria-busy", "true");
+    if (loading) detail.setAttribute("aria-busy", "true");
     else detail.removeAttribute("aria-busy");
   }
-  if (detailSkeleton) detailSkeleton.hidden = viewState !== "loading";
+  if (detailSkeleton) detailSkeleton.hidden = !loading;
   if (detailError) detailError.hidden = viewState !== "error" && viewState !== "unavailable";
   if (detailContent) detailContent.hidden = viewState !== "ready";
 }
@@ -3119,6 +3222,12 @@ function showDetailUnavailable(): void {
 async function openDetail(mediaId: string, returnFocusTarget?: HTMLElement, restoringOrigin?: DetailOrigin): Promise<void> {
   const entering = !isDetailLayerOpen();
   const retrying = detail?.dataset.state === "error";
+  // Ticket 18 / P-03: an episode switch re-opens the same detail surface for a
+  // different media. It is neither the first open nor a retry, so it used to
+  // leave the previous episode's title, cover and play action on screen while
+  // the new request was in flight.
+  const displayedMediaId = activeDetail?.item.mediaId ?? detailRequestMediaId;
+  const switching = !entering && !retrying && mediaId !== displayedMediaId;
   if (entering) {
     skipFlight();
     detailFlightStarted = false;
@@ -3132,14 +3241,21 @@ async function openDetail(mediaId: string, returnFocusTarget?: HTMLElement, rest
     detailOrigin = restoringOrigin ?? captureDetailOrigin(returnFocusTarget);
     applyDetailOriginChrome(detailOrigin);
     setDetailScroll(0);
-  } else if (retrying && detailOrigin) {
+  } else if ((retrying || switching) && detailOrigin) {
     applyDetailOriginChrome(detailOrigin);
   }
   if (entering || retrying) {
     clearDetailContent();
     setDetailViewState("loading");
+  } else if (switching) {
+    clearDetailContent();
+    setDetailViewState("re-opening");
+    setMessage("正在切换剧集…");
   }
-  const epoch = ++requestEpoch;
+  // Ticket 18: the detail domain owns this generation; opening or closing a
+  // detail no longer cancels an in-flight list load or search.
+  const epoch = ++detailEpoch;
+  inFlightRequests.detail += 1;
   activeDetail = undefined;
   activeDetailPlayback = undefined;
   selectedMediaId = mediaId;
@@ -3149,10 +3265,10 @@ async function openDetail(mediaId: string, returnFocusTarget?: HTMLElement, rest
   applyView();
   updateHeaderSearch();
   updateScanUi();
-  setMessage("正在打开详情…");
+  if (!switching) setMessage("正在打开详情…");
   try {
     const result = await window.zVideo.localLibrary.get(mediaId);
-    if (epoch !== requestEpoch) return;
+    if (epoch !== detailEpoch) return;
     const loaded = result.detail ?? (result.item ? { item: result.item, episodes: [result.item] } : undefined);
     if (!loaded) {
       // Ticket 11 owner contract: a tombstoned media id resolves to nothing.
@@ -3175,13 +3291,20 @@ async function openDetail(mediaId: string, returnFocusTarget?: HTMLElement, rest
     if (entering || retrying) detailTitle?.focus({ preventScroll: true });
     setMessage(loaded.item.available ? "" : "来源离线；播放和从头播放已禁用。", !loaded.item.available);
   } catch (error) {
-    if (epoch === requestEpoch) {
+    if (epoch === detailEpoch) {
       const message = error instanceof Error ? error.message : "详情加载失败。";
       activeDetail = undefined;
       activeDetailPlayback = undefined;
       detailFlightStarted = false;
       showDetailError(message);
       setMessage(message, true);
+    }
+  } finally {
+    // Ticket 18: a detail request discarded by closing the layer or leaving the
+    // page must not leave the (hidden) detail region busy forever.
+    if (finishRequest("detail") === 0 && epoch !== detailEpoch && detail) {
+      delete detail.dataset.state;
+      detail.removeAttribute("aria-busy");
     }
   }
 }
@@ -3355,7 +3478,9 @@ function renderDetail(detailValue: LocalMediaDetail): void {
 }
 
 function closeDetail(): void {
-  requestEpoch += 1;
+  // Ticket 18: closing the detail drops only the detail domain. An in-flight
+  // search or list load keeps running and reports its own result.
+  detailEpoch += 1;
   const origin = detailOrigin;
   detailOrigin = undefined;
   detailRequestMediaId = undefined;
@@ -3397,9 +3522,11 @@ function closeDetail(): void {
     searchPageView = undefined;
   }
   if (origin) applyDetailNav(origin.nav);
+  // Ticket 18: this list load is what consumes a refresh queued while the
+  // detail covered the list; a successful load settles the scan commit.
   void Promise.all([loadLibrary(), isHomeBase() ? loadHomeShelves() : Promise.resolve()]).then(([applied]) => {
     if (applied) {
-      scanRenderedCommit = scanCommit;
+      scanRenderedCommit = Math.max(scanRenderedCommit, scanCommit);
       scanRefreshQueued = false;
     }
     if (!origin) return;
@@ -3502,7 +3629,7 @@ async function runScan(operation: () => Promise<LocalScanResult | LocalScanResul
     if (unavailable) offerOfflineSource(unavailable);
   } catch (error) {
     scanProgress = undefined;
-    if (!isDetailOrPlayerVisible()) requestEpoch += 1;
+    if (!isDetailOrPlayerVisible()) libraryEpoch += 1;
     scanCommit = scanRenderedCommit;
     scanRefreshQueued = false;
     stopScanElapsedTimer();
@@ -3814,7 +3941,7 @@ function renderScanProgress(progress: LocalScanProgress): void {
     }
     scanRefreshQueued = false;
     stopScanElapsedTimer();
-    if (!isDetailOrPlayerVisible()) requestEpoch += 1;
+    if (!isDetailOrPlayerVisible()) libraryEpoch += 1;
     const notice = scanNotice(progress);
     if (notice) showAppNotice(notice.title, notice.body, notice.tone, progress.status === "completed");
     // Ticket 08: a terminal scan hands its status and counts to the home result
@@ -3864,7 +3991,10 @@ function renderScanResult(result: LocalScanResult): void {
 function navigateHomeOrLibrary(target: string): void {
   if (isSearchBase()) exitSearchState();
   setView({ baseView: target === "home" ? "home" : "library", layers: { detail: false, cleanup: false } });
-  requestEpoch += 1;
+  // Ticket 18: top navigation drops the list and detail requests it navigates
+  // away from; an unrelated search was already dropped by exitSearchState.
+  libraryEpoch += 1;
+  detailEpoch += 1;
   detailSearchFormOpen = false;
   applyView();
   updateHeaderSearch();
@@ -3883,7 +4013,8 @@ document.querySelectorAll<HTMLButtonElement>("[data-shelf]").forEach((button) =>
 function showSources(): void {
   if (isSearchBase()) exitSearchState();
   setView({ baseView: "sources", layers: { detail: false, cleanup: false } });
-  requestEpoch += 1;
+  libraryEpoch += 1;
+  detailEpoch += 1;
   detailSearchFormOpen = false;
   applyView();
   updateHeaderSearch();
