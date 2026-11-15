@@ -1,13 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { app, BrowserWindow } from "electron";
 
-import { createMainWindow } from "../src/main/window";
-import { MainLocalPlaybackHost } from "../src/main/player-host";
-import { registerLocalPlaybackIpcHandlers } from "../src/main/local-playback-ipc";
-import type { LocalPlaybackStore } from "../src/shared/local-playback-contracts";
+import { MISSING_MEDIA_ID, MISSING_TITLE, SAMPLE_MEDIA_ID, SAMPLE_TITLE, startPlayerWindowFixture } from "./player-window-fixture";
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 async function waitFor(label: string, predicate: () => Promise<boolean>): Promise<void> {
@@ -26,24 +20,16 @@ async function waitForValue<T>(label: string, read: () => Promise<T>, predicate:
 }
 
 async function run(): Promise<void> {
-  app.setPath("userData", await mkdtemp(join(tmpdir(), "z-video-overlay-test-")));
-  await app.whenReady();
-  const window = createMainWindow();
-  const store: LocalPlaybackStore = {
-    resolveMediaPath: async () => join(process.cwd(), "assets", "test_video.mp4"),
-    getPlayback: async () => undefined,
-    savePlayback: async (value) => value,
-  };
-  const host = new MainLocalPlaybackHost(window, store);
-  const unregister = registerLocalPlaybackIpcHandlers(host);
+  const fixture = await startPlayerWindowFixture();
+  const { window, read: readMain, waitFor: waitMain, openFromLibrary } = fixture;
+  const findOverlay = () => BrowserWindow.getAllWindows().find((candidate) => candidate !== window);
   try {
-    await new Promise<void>((resolve) => window.webContents.once("did-finish-load", () => resolve()));
-    await host.open("media_123e4567-e89b-42d3-a456-426614174000");
+    await openFromLibrary(SAMPLE_MEDIA_ID);
     await waitFor("overlay controls", async () => {
-      const overlay = BrowserWindow.getAllWindows().find((candidate) => candidate !== window);
+      const overlay = findOverlay();
       return !!overlay && await overlay.webContents.executeJavaScript("document.querySelector('#player-toggle-button')?.textContent === '暂停'");
     });
-    const overlay = BrowserWindow.getAllWindows().find((candidate) => candidate !== window)!;
+    const overlay = findOverlay()!;
     const read = (expression: string) => overlay.webContents.executeJavaScript(expression);
     assert.equal(await read("document.querySelector('#player-next-button').hidden"), true, "no next episode hides the entire button");
     assert.equal(await read("document.querySelector('#player-toggle-button').getAttribute('aria-label')"), "暂停");
@@ -181,6 +167,11 @@ async function run(): Promise<void> {
     await read("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', code: 'KeyX' }))");
     assert.equal(await read("document.body.classList.contains('overlay-hidden')"), false, "keyboard activity reveals controls");
     await waitFor("idle controls hidden again", () => read("document.body.classList.contains('overlay-hidden')"));
+    // Ticket 06: an `error` edge alone counts as an overlay change and reveals
+    // the idle-hidden controls (the mirror pushes exactly this shape).
+    overlay.webContents.send("overlay:state", { fullscreen: true, playing: true, error: true });
+    await waitFor("error edge reveals hidden controls", () => read("document.body.classList.contains('overlay-hidden') === false"));
+    overlay.webContents.send("overlay:state", { fullscreen: true, playing: true, error: false });
     await read("window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientY: 100 }))");
     assert.equal(await read("document.body.classList.contains('overlay-hidden')"), false, "mouse activity reveals controls");
     await read("document.querySelector('#player-toggle-button').click()");
@@ -199,13 +190,26 @@ async function run(): Promise<void> {
     await delay(3300);
     assert.equal(await read("document.body.classList.contains('overlay-hidden')"), false, "dragging keeps controls visible");
     await read("window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))");
-    await host.handle({ type: "close" });
+    await readMain(`document.querySelector('#player-close-button')?.click()`);
     await waitFor("overlay closed", async () => !overlay.isVisible());
+    await waitMain("detail after the overlay closed", `document.querySelector('#media-detail')?.hidden === false && document.querySelector('#media-detail-title')?.textContent === ${JSON.stringify(SAMPLE_TITLE)}`);
     await delay(3300);
     assert.equal(await read("document.body.classList.contains('overlay-hidden')"), false, "closing cancels the pending hide timer");
-    await host.open("media_123e4567-e89b-42d3-a456-426614174001");
+    // Ticket 06: hiding empties the mirrored overlay; the second show must repaint
+    // the full state instead of waiting for the 250ms mirror tick.
+    await readMain(`document.querySelector('#media-detail-open')?.click()`);
     await waitFor("overlay reopened for another media item", async () => overlay.isVisible());
     await waitFor("new media controls", () => read("document.querySelector('#player-toggle-button').textContent === '暂停' && !document.body.classList.contains('overlay-hidden')"));
+    const reopenedOverlay = await read(`(() => ({
+      title: document.querySelector('#player-current-title')?.textContent || '',
+      toggle: document.querySelector('#player-toggle-button')?.textContent || '',
+      chips: document.querySelectorAll('#player-speed-chips .player-chip').length,
+      groups: [...document.querySelectorAll('#player-settings .player-setting-group h3')].map((heading) => heading.textContent || ''),
+    }))()`);
+    assert.equal(reopenedOverlay.title, SAMPLE_TITLE, "the second show repaints the whole mirrored heading");
+    assert.equal(reopenedOverlay.toggle, "暂停", "the second show repaints the playback control");
+    assert.equal(reopenedOverlay.chips, 8, "the second show repaints the mirrored settings chips");
+    assert.deepEqual(reopenedOverlay.groups, ["播放速度", "音轨", "字幕", "外挂字幕"], "the second show repaints the whole settings structure");
     window.setSize(900, 640);
     await waitFor("overlay 900x640 layout", async () => (await read("document.documentElement.clientWidth")) <= 905);
     const overlayCompact = await read(`(() => {
@@ -251,9 +255,31 @@ async function run(): Promise<void> {
     await waitFor("overlay default size restored", async () => (await read("document.documentElement.clientWidth")) > 1000);
     await read("document.activeElement?.blur()");
 
+    // A real failed open reaches the overlay as an error stage; while the error
+    // is up the overlay must keep its controls visible instead of auto-hiding.
+    await readMain(`document.querySelector('#player-close-button')?.click()`);
+    await waitMain("detail after the overlay closed for the error case", `document.querySelector('#media-detail')?.hidden === false && document.querySelector('#media-detail-title')?.textContent === ${JSON.stringify(SAMPLE_TITLE)}`);
+    await readMain(`document.querySelector('#media-detail-back')?.click()`);
+    await waitMain("home before the failed open", `document.querySelectorAll('#recent-row [data-media-id]').length >= 2`);
+    await readMain(`document.querySelector('#recent-row [data-media-id="${MISSING_MEDIA_ID}"]')?.click()`);
+    await waitMain("missing media detail", `document.querySelector('#media-detail')?.hidden === false && document.querySelector('#media-detail-title')?.textContent === ${JSON.stringify(MISSING_TITLE)}`);
+    await readMain(`document.querySelector('#media-detail-open')?.click()`);
+    await waitFor("overlay error stage", () => read("document.querySelector('#player-error')?.hidden === false"));
+    const overlayError = await read(`(() => ({
+      message: document.querySelector('#player-error-message')?.textContent || '',
+      status: document.querySelector('#player-status')?.textContent || '',
+      hidden: document.body.classList.contains('overlay-hidden'),
+    }))()`);
+    assert.equal(overlayError.message, "本地媒体加载失败。", "the overlay mirrors the main-owned playback error");
+    assert.equal(overlayError.status, "本地媒体加载失败。", "the overlay mirrors the player status line");
+    assert.equal(overlayError.hidden, false, "an error state keeps the overlay controls visible");
+    await delay(3300);
+    assert.equal(await read("document.body.classList.contains('overlay-hidden')"), false, "an open error never auto-hides the overlay controls");
+
     console.log("PASS: player overlay state, commands, idle and visibility lifecycle (synthetic DOM events)");
   } finally {
-    unregister(); await host.close(); if (!window.isDestroyed()) window.destroy(); app.quit();
+    await fixture.cleanup();
+    await app.quit();
   }
 }
 
