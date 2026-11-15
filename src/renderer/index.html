@@ -54,14 +54,14 @@
           </ul>
           <p id="remove-source-error" class="dialog-error" role="alert" hidden></p>
           <div class="dialog-actions"><button type="button" class="secondary-button" id="remove-source-cancel" autofocus>取消</button><button type="button" class="destructive-button" id="remove-source-confirm">移除并删除进度</button></div>
-          <p class="dialog-foot"><span class="key">Esc</span> 取消并关闭；默认焦点在“取消”。</p>
+          <p class="dialog-foot"><span class="key">Esc</span> 取消并关闭；默认焦点在“取消”。移除进行中时 Esc 不会关闭对话框。</p>
         </dialog>
         <dialog id="offline-source-dialog" aria-labelledby="offline-source-title" aria-describedby="offline-source-copy">
           <h2 id="offline-source-title">文件夹不可用</h2>
           <p id="offline-source-copy" class="dialog-lead"></p>
           <p id="offline-source-error" class="dialog-error" role="alert" hidden></p>
           <div class="dialog-actions"><button type="button" class="secondary-button" id="offline-source-keep" autofocus>暂时断开（保留记录）</button><button type="button" class="destructive-button" id="offline-source-delete">已删除（清理记录）</button></div>
-          <p class="dialog-foot"><span class="key">Esc</span> 暂时保留记录并关闭。</p>
+          <p class="dialog-foot"><span class="key">Esc</span> 暂时保留记录并关闭。清理进行中时 Esc 不会关闭对话框。</p>
         </dialog>
         <dialog id="cleanup-settings-dialog" class="cleanup-settings-dialog" aria-labelledby="cleanup-settings-title">
           <div class="cleanup-settings-head"><div><p class="eyebrow">RULES</p><h2 id="cleanup-settings-title">整理规则</h2></div><button id="cleanup-settings-close" class="secondary-button" type="button">关闭</button></div>
@@ -116,6 +116,8 @@
           <section id="library-error" class="library-error" role="alert" hidden>
             <h2 id="library-error-title">片库加载失败</h2>
             <p id="library-error-message"></p>
+            <p id="library-error-retry-hint" class="muted">“重试”会重新初始化本地片库服务，不需要重启应用。</p>
+            <p id="library-error-retry-note" class="dialog-error" role="status" aria-live="polite" hidden></p>
             <div class="state-actions">
               <button id="library-error-retry" class="primary-button" type="button">重试</button>
               <button id="library-error-copy" class="secondary-button" type="button">复制诊断信息</button>
@@ -163,6 +165,7 @@
               <h2 id="search-empty-title">没有找到作品</h2>
               <p id="search-empty-message"></p>
               <button id="search-all-types-button" class="primary-button" type="button" hidden>在全部类型中搜索</button>
+              <button id="search-empty-retry" class="primary-button" type="button" hidden>重试搜索</button>
               <button id="search-empty-clear" class="secondary-button" type="button">清空搜索</button>
             </section>
           </section>
@@ -330,7 +333,7 @@
     </div>
     <section class="player-view" data-view="player" hidden aria-label="播放器">
       <main class="player-shell">
-        <header class="player-heading"><button id="player-close-button" class="secondary-button" type="button" aria-label="返回详情"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5m0 0 7-7m-7 7 7 7"/></svg><span id="player-close-label">返回详情</span></button><span class="player-now-playing" aria-live="polite"><strong id="player-current-title"></strong><span>正在播放</span></span><div id="player-review-bar" class="player-review-bar" hidden role="status" aria-live="polite"><span class="player-review-kicker">检查模式</span><span id="player-review-facts" class="player-review-facts"></span><span class="player-review-scope">关闭后可标记：保留 / 稍后 / 待删 · 只改整理状态，不会删除文件</span></div></header>
+        <header class="player-heading"><button id="player-close-button" class="secondary-button" type="button" aria-label="返回详情"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5m0 0 7-7m-7 7 7 7"/></svg><span id="player-close-label">返回详情</span></button><span class="player-now-playing" aria-live="polite"><strong id="player-current-title"></strong><span>正在播放</span></span><div id="player-review-bar" class="player-review-bar" hidden role="status" aria-live="polite"><span class="player-review-kicker">检查模式</span><span id="player-review-facts" class="player-review-facts"></span><span class="player-review-scope">关闭后可标记：保留 / 稍后 / 待删 · 只改整理状态，不会删除文件</span></div><p id="player-control-notice" class="player-review-bar" role="alert" aria-live="assertive" hidden><span class="player-review-kicker">播放控制</span><span id="player-control-notice-text" class="player-review-facts"></span></p></header>
         <div class="player-surface" aria-label="原生视频区域" aria-keyshortcuts="Space ArrowLeft ArrowRight ArrowUp ArrowDown M F Escape" title="视频区域快捷键：Space 暂停 · ←/→ 前后 5 秒 · ↑/↓ 音量 ±5 · M 静音 · F 全屏 · Esc 退出全屏" tabindex="-1">
           <p id="player-surface-message" class="player-surface-message">正在准备原生播放器…</p>
           <div id="player-error" class="player-error" role="alert" aria-labelledby="player-error-title" hidden>

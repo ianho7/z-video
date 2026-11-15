@@ -1937,6 +1937,27 @@ function aggregateViewingSession(session: AggregatedViewingSession): void {
     durationSec,
     session.endedAtMs,
   );
+  // Ticket 20 / P-05: `playback_state.watched` is a projection of this one
+  // completion conclusion, never a second judge. A close at 90%+ (or an explicit
+  // `ended`) therefore flips the detail/continue-watching projection in the same
+  // transaction, so "完整看完 1 次" and "继续播放" can no longer contradict.
+  if (completed === 1) mirrorCompletionToPlaybackState(session.mediaId, finiteNonNegative(session.endPositionSec), durationSec, session.endedAtMs);
+}
+
+/**
+ * Write the ledger's completion verdict into the playback projection. The
+ * existing position/duration/track columns are kept when a row already exists:
+ * the player reports position, the ledger alone decides `watched`.
+ */
+function mirrorCompletionToPlaybackState(mediaId: string, endPositionSec: number, durationSec: number | null, updatedAtMs: number): void {
+  const db = requireDatabase();
+  db.prepare(`
+    INSERT INTO playback_state (media_id, position_sec, duration_sec, audio_track_id, subtitle_track_id, watched, updated_at)
+    VALUES (?, ?, ?, NULL, NULL, 1, ?)
+    ON CONFLICT(media_id) DO UPDATE SET
+      watched = 1,
+      updated_at = MAX(playback_state.updated_at, excluded.updated_at)
+  `).run(mediaId, endPositionSec, durationSec, updatedAtMs);
 }
 
 function finishViewingSession(session: LocalViewingSessionFinishInput): LocalViewingHistory | undefined {

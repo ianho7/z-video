@@ -10,6 +10,7 @@ import { MainLocalPlaybackHost } from "./player-host";
 import type { LocalPlaybackStore } from "../shared/local-playback-contracts";
 import { createMainWindow } from "./window";
 import { AppPreferencesStore } from "./app-preferences";
+import { recordUiOperation } from "./diagnostics";
 
 let mainWindow: ReturnType<typeof createMainWindow> | undefined;
 let localLibrary: LocalLibraryDatabase | undefined;
@@ -60,13 +61,32 @@ function closePlayback(): Promise<void> {
   return tracked;
 }
 
+/**
+ * Ticket 20 / F-01: a local-library start failure must never be a windowless
+ * exit. The window is created first so the renderer can show the global error
+ * card (error code, retry, diagnostics); the database owner keeps its `error`
+ * state and re-initializes on the next owner call (F-04). Only a failure to
+ * create the window itself is unrecoverable.
+ */
 async function bootstrap(): Promise<void> {
   await app.whenReady();
+  const startedAt = Date.now();
   localLibrary = new LocalLibraryDatabase({ dbPath: join(app.getPath("userData"), "local-library", "library.sqlite") });
   localArtworkCache = new LocalArtworkCache(join(app.getPath("userData"), "local-library", "artwork-cache"));
   appPreferences = new AppPreferencesStore(join(app.getPath("userData"), "app-preferences.json"));
   await appPreferences.load();
-  await localLibrary.start();
+  try {
+    await localLibrary.start();
+    void recordUiOperation("local-library.start", "success", startedAt);
+  } catch (error) {
+    // The renderer's error card is the user-facing report; this trace is for
+    // diagnostics after the fact.
+    console.error("z-video failed to start local library", error instanceof Error ? error.message : "unknown error");
+    void recordUiOperation("local-library.start", "error", startedAt, {
+      errorKind: error instanceof Error ? error.name : "unknown",
+      ...(error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string" ? { errorCode: (error as { code: string }).code } : {}),
+    });
+  }
   createLocalWindow();
   app.on("activate", () => {
     if (!mainWindow || mainWindow.isDestroyed()) {
@@ -76,7 +96,10 @@ async function bootstrap(): Promise<void> {
 }
 
 void bootstrap().catch((error: unknown) => {
-  console.error("z-video failed to start local library", error instanceof Error ? error.message : "unknown error");
+  // Reaching here means even the window could not be created: there is no
+  // surface left to report on.
+  console.error("z-video failed to create its main window", error instanceof Error ? error.message : "unknown error");
+  void recordUiOperation("main.window", "error", Date.now(), { errorKind: error instanceof Error ? error.name : "unknown" });
   app.exit(1);
 });
 
