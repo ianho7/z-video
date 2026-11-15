@@ -2,7 +2,7 @@
 
 ID: 37-cancel-rescan
 Blocked by: None (can start immediately)
-Status: ready-for-agent
+Status: done (2026-11-15, merged in 84d81bc)
 Source: docs/local-library/ux-audit-findings.md（B-05，high）
 
 ## What to build

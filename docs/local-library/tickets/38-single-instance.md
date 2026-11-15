@@ -2,7 +2,7 @@
 
 ID: 38-single-instance
 Blocked by: None (can start immediately)
-Status: ready-for-agent
+Status: done (2026-11-15, merged in d4e9e4b)
 Source: docs/local-library/ux-audit-findings.md（G-01，medium）
 
 ## What to build
