@@ -3,7 +3,7 @@
 ID: 24a-local-watcher
 Blocked by: 23a
 Spec: docs/local-library/spec-s2-change-detection.md
-Status: ready-for-agent
+Status: done (2026-11-15, merged in b4555da)
 
 ## What to build
 
