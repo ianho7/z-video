@@ -3,7 +3,7 @@
 ID: 23a-incremental-scan
 Blocked by: None (can start immediately)
 Spec: docs/local-library/spec-s2-change-detection.md
-Status: ready-for-agent
+Status: done (2026-11-15, merged in 7e62349; 20k scale smoke green)
 
 ## What to build
 
