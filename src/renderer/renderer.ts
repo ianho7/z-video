@@ -2,6 +2,7 @@ import { coverData, generatedCover } from "./cover.js";
 import { AppListbox, type AppListboxOption } from "./menu.js";
 import { paginationModel, parseJumpTarget, countLabel } from "./pagination.js";
 import { captureFlightSource, fadeIn, motionAllowsTransform, motionDuration, skipFlight, startFlight } from "./motion.js";
+import { initAppTooltips } from "./tooltip.js";
 document.querySelectorAll<HTMLButtonElement>("[data-window-action]").forEach((button) => {
   button.addEventListener("click", () => {
     const action = button.dataset.windowAction;
@@ -14,6 +15,7 @@ window.zVideo.onWindowMaximized((maximized) => {
   button.setAttribute("aria-label", maximized ? "还原窗口" : "最大化窗口");
   button.textContent = maximized ? "❐" : "□";
 });
+initAppTooltips();
 import { applyTone, posterTone } from "./tone.js";
 import { escapeHtml, formatTime, kindLabel, formatBytes, artworkKind } from "./views/shared.js";
 import { card, collectionAsMediaItem, collectionCard } from "./views/all.js";
@@ -1100,7 +1102,6 @@ window.zVideo.overlay.onAction((action) => {
 function setPlayerStatus(message: string, error = false): void {
   if (!playerStatus) return;
   playerStatus.textContent = message;
-  playerStatus.title = message;
   playerStatus.dataset.state = error ? "error" : "normal";
 }
 

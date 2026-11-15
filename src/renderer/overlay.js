@@ -8,6 +8,66 @@ let state = {};
 let timer;
 let dragging = false;
 
+// Ticket 21: mirrored player controls carry `data-tooltip`; the overlay window
+// draws the same app tooltip instead of a native `title` bubble. Kept in sync
+// with src/renderer/tooltip.ts (this window loads a classic script, not modules).
+function initAppTooltips() {
+  const host = document.getElementById("app-tooltip");
+  if (!host) return;
+  let active = null;
+  const hide = () => {
+    active = null;
+    host.hidden = true;
+    host.textContent = "";
+  };
+  const place = (trigger) => {
+    host.style.top = "0px";
+    host.style.left = "0px";
+    const size = host.getBoundingClientRect();
+    const anchor = trigger.getBoundingClientRect();
+    const maxLeft = Math.max(8, window.innerWidth - size.width - 8);
+    const centered = anchor.left + anchor.width / 2 - size.width / 2;
+    const above = anchor.top - size.height - 8;
+    const below = anchor.bottom + 8;
+    const top = above >= 8 ? above : Math.min(below, Math.max(8, window.innerHeight - size.height - 8));
+    host.style.left = `${Math.round(Math.max(8, Math.min(centered, maxLeft)))}px`;
+    host.style.top = `${Math.round(top)}px`;
+  };
+  const show = (trigger) => {
+    const text = trigger.dataset.tooltip?.trim();
+    if (!text) return;
+    active = trigger;
+    host.textContent = text;
+    host.hidden = false;
+    place(trigger);
+  };
+  const triggerFrom = (target) => {
+    if (!(target instanceof Element)) return null;
+    const found = target.closest("[data-tooltip]");
+    return found instanceof HTMLElement ? found : null;
+  };
+  document.addEventListener("pointerover", (event) => {
+    const trigger = triggerFrom(event.target);
+    if (trigger) show(trigger);
+  });
+  document.addEventListener("pointerout", (event) => {
+    if (!active) return;
+    const next = event.relatedTarget;
+    if (next instanceof Node && active.contains(next)) return;
+    hide();
+  });
+  document.addEventListener("focusin", (event) => {
+    const trigger = triggerFrom(event.target);
+    if (trigger) show(trigger);
+  });
+  document.addEventListener("focusout", () => hide());
+  document.addEventListener("pointerdown", () => hide());
+  window.addEventListener("scroll", hide, true);
+  window.addEventListener("blur", hide);
+  window.addEventListener("resize", hide);
+}
+initAppTooltips();
+
 function isTextEntry(target) {
   return target instanceof Element && Boolean(target.closest("input, textarea, [contenteditable='true']"));
 }

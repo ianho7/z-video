@@ -297,6 +297,129 @@ async function run(): Promise<void> {
   assert.match(focusFeel.search.shadow, /inset/, "search focus is expressed by the outer pill");
   assert.match(focusFeel.search.shadow, /rgb\(201, 184, 255\) 0px 0px 0px 2px/, "the outer pill inset ring uses the lavender token");
 
+  // Ticket 21 · native control chrome is replaced by app-drawn equivalents.
+  const appearance = await window.webContents.executeJavaScript(`(async () => {
+    const tooltip = document.querySelector('#app-tooltip');
+    const trigger = document.querySelector('#player-toggle-button');
+    let shown = null;
+    if (tooltip && trigger) {
+      trigger.dispatchEvent(new Event('pointerover', { bubbles: true }));
+      shown = { hidden: tooltip.hidden, text: tooltip.textContent };
+      trigger.dispatchEvent(new Event('pointerout', { bubbles: true }));
+    }
+    const ruleTexts = [];
+    const walk = (rules) => {
+      for (const rule of rules) {
+        ruleTexts.push(rule.cssText || '');
+        if (rule.cssRules) walk(rule.cssRules);
+      }
+    };
+    for (const sheet of document.styleSheets) {
+      try { walk(sheet.cssRules); } catch { /* cross-origin sheet */ }
+    }
+    const ruleCount = (needle) => ruleTexts.filter((text) => text.includes(needle)).length;
+    const scrollHost = document.querySelector('.library-content');
+    const summary = document.querySelector('#empty-formats summary');
+    const closedMarker = getComputedStyle(summary, '::before');
+    const markerContent = closedMarker.content;
+    const markerWidth = closedMarker.width;
+    const probe = document.createElement('details');
+    probe.className = 'tech-details';
+    probe.style.cssText = 'position: fixed; top: 0; left: -9999px;';
+    const probeSummary = document.createElement('summary');
+    probeSummary.textContent = 'marker probe';
+    probe.append(probeSummary);
+    document.body.append(probe);
+    const closedTransform = getComputedStyle(probeSummary, '::before').transform;
+    probe.open = true;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const openTransform = getComputedStyle(probeSummary, '::before').transform;
+    probe.remove();
+    const focusTarget = document.querySelector('.add-menu summary');
+    focusTarget.focus({ focusVisible: true });
+    const focusStyle = getComputedStyle(focusTarget);
+    const focus = { visible: focusTarget.matches(':focus-visible'), outlineStyle: focusStyle.outlineStyle, outlineWidth: Number.parseFloat(focusStyle.outlineWidth) };
+    focusTarget.blur();
+    return {
+      nativeTitles: document.querySelectorAll('[title]').length,
+      dataTooltips: document.querySelectorAll('[data-tooltip]').length,
+      tooltip: tooltip ? { role: tooltip.getAttribute('role'), hidden: tooltip.hidden } : null,
+      tooltipShown: shown,
+      scrollbarWidth: getComputedStyle(scrollHost, '::-webkit-scrollbar').width,
+      scrollbarThumb: getComputedStyle(scrollHost, '::-webkit-scrollbar-thumb').backgroundColor,
+      scrollbarRuleCounts: {
+        thumbHover: ruleCount('::-webkit-scrollbar-thumb:hover'),
+        track: ruleCount('::-webkit-scrollbar-track'),
+      },
+      standardFallback: ruleCount('scrollbar-color') > 0 && ruleCount('scrollbar-width') > 0,
+      nativeMarkerRule: ruleCount('::-webkit-details-marker') > 0,
+      summaryListStyle: getComputedStyle(summary).listStyleType,
+      markerContent: closedMarker.content,
+      markerWidth: closedMarker.width,
+      markerMoves: closedTransform !== 'none' && openTransform !== 'none' && closedTransform !== openTransform,
+      selectionBackground: getComputedStyle(document.documentElement, '::selection').backgroundColor,
+      focus,
+    };
+  })()`, true) as {
+    nativeTitles: number;
+    dataTooltips: number;
+    tooltip: { role: string | null; hidden: boolean } | null;
+    tooltipShown: { hidden: boolean; text: string } | null;
+    scrollbarWidth: string;
+    scrollbarThumb: string;
+    scrollbarRuleCounts: { thumbHover: number; track: number };
+    standardFallback: boolean;
+    nativeMarkerRule: boolean;
+    summaryListStyle: string;
+    markerContent: string;
+    markerWidth: string;
+    markerMoves: boolean;
+    selectionBackground: string;
+    focus: { visible: boolean; outlineStyle: string; outlineWidth: number };
+  };
+  assert.deepEqual(
+    {
+      nativeTitles: appearance.nativeTitles,
+      dataTooltips: appearance.dataTooltips,
+      tooltip: appearance.tooltip,
+      tooltipShown: appearance.tooltipShown,
+      scrollbarWidth: appearance.scrollbarWidth,
+      scrollbarThumb: appearance.scrollbarThumb,
+      thumbHoverRules: appearance.scrollbarRuleCounts.thumbHover,
+      trackRules: appearance.scrollbarRuleCounts.track,
+      standardFallback: appearance.standardFallback,
+      nativeMarkerRules: appearance.nativeMarkerRule,
+      summaryListStyle: appearance.summaryListStyle,
+      markerContent: appearance.markerContent,
+      markerWidth: appearance.markerWidth,
+      markerMoves: appearance.markerMoves,
+      selectionBackground: appearance.selectionBackground,
+      focusVisible: appearance.focus.visible,
+      focusOutline: appearance.focus.outlineStyle,
+      focusOutlineWidth: appearance.focus.outlineWidth > 0,
+    },
+    {
+      nativeTitles: 0,
+      dataTooltips: 4,
+      tooltip: { role: "tooltip", hidden: true },
+      tooltipShown: { hidden: false, text: "Space" },
+      scrollbarWidth: "10px",
+      scrollbarThumb: "rgb(58, 57, 68)",
+      thumbHoverRules: 1,
+      trackRules: 1,
+      standardFallback: true,
+      nativeMarkerRules: true,
+      summaryListStyle: "none",
+      markerContent: '""',
+      markerWidth: "7px",
+      markerMoves: true,
+      selectionBackground: "rgb(201, 184, 255)",
+      focusVisible: true,
+      focusOutline: "solid",
+      focusOutlineWidth: true,
+    },
+  );
+
   await window.webContents.executeJavaScript("document.querySelector('[data-nav=all]').click()", true);
   await waitFor(
     "all-media toolbar for the sort menu",
@@ -874,6 +997,11 @@ async function run(): Promise<void> {
   }))()`, true) as Promise<any>, (value) => value.hidden === false && /第二集/.test(value.next));
   assert.match(ended.countdown, /10 秒/);
   assert.match(ended.next, /第二集/);
+  assert.equal(
+    await window.webContents.executeJavaScript("document.querySelectorAll('[title]').length", true),
+    0,
+    "player status updates never reintroduce a native title hint",
+  );
   assert.equal(ended.segments, 10, "the ring is drawn as ten fixed arcs");
   assert.match(ended.segment.property, /opacity/);
   assert.equal(ended.segment.duration, "1s");
