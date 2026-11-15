@@ -24,12 +24,28 @@ Integration branch: `codex/experience-backlog`
 
 `npm run typecheck`、`npm test`（124/124）、`npm run test:local-library`，均在集成分支与各工作树通过；`git diff --check` 干净。
 
-## 延后验证（用户游戏期间禁止开窗）
+## 延后验证
 
-- `test:player-window`、`test:player-overlay-window`（Ticket 17 的最终证据）
-- `test:window`、`test:local-library-app`（Ticket 20 的 UI 级结论）
-- 手动清单：建目录模拟启动失败、错误卡重试、搜索失败、控制失败回弹、Esc 忙态、检查模式重播
-- `test:appearance-window`、`test:safe-storage-process`、`package`/`verify:package`
+用户游戏结束后已补跑，结果：
+
+| 命令 | 结果 |
+|---|---|
+| `npm run build` | PASS |
+| `node scripts/run-window-smoke.mjs`（等价 `test:window`） | PASS |
+| `electron dist/tests/player-window-smoke.js`（Ticket 17） | PASS：real native playback controls, failed open, close fallback and idempotent teardown |
+| `electron dist/tests/player-overlay-window-smoke.js`（Ticket 17） | PASS：overlay state, commands, idle and visibility lifecycle |
+| `node scripts/run-local-library-app-smoke.mjs`（等价 `test:local-library-app`） | PASS：production main local-library app smoke |
+
+仍未覆盖（需要新断言或人工点击）：
+
+- F-01：把 `<userData>/local-library/library.sqlite` 建成目录后启动，应出现窗口与错误卡
+- F-04：错误卡"重试"应真实重试并显示第 N 次失败
+- F-05：搜索失败不出现"共 0 部作品"，出现"重试搜索"
+- P-07：控制失败出现可见提示且滑块回弹
+- B-06：移除对话框忙时 Esc 不关闭
+- CL-08：检查模式结束后"重新播放"从头重开同一候选
+
+`test:appearance-window`、`test:safe-storage-process`、`package`/`verify:package` 与本批无关，未跑。
 
 ## 已知残余
 

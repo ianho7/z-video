@@ -2,7 +2,7 @@
 
 ID: 17-player-window-verification
 Blocked by: 15
-Status: fixtures done, GUI verification deferred (merged in 7d75fd8)
+Status: done (2026-11-15, both window smokes re-run green after merge)
 
 ## What to build
 
