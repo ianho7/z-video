@@ -156,7 +156,10 @@ export function registerLocalLibraryIpcHandlers(database: LocalLibraryDatabase, 
   }));
   ipcMain.handle(IPC_CHANNELS.localLibraryRescanAll, () => withUiOperation("local-library.rescan-all", () => scanAndRecord(
     () => database.rescanAll(),
-    (results) => results.filter((result) => result.sourceId).map((result) => result.sourceId),
+    // Ticket 37 / B-05: a cancelled folder was not read completely, so recording
+    // its directory baseline would hide changes made during the interrupted run
+    // from the next automatic check. Mirrors the single-folder scan's rule.
+    (results) => results.filter((result) => result.sourceId && result.status !== "cancelled").map((result) => result.sourceId),
   )));
   ipcMain.handle(IPC_CHANNELS.localLibraryScan, () => withUiOperation("local-library.scan", async () => {
     const selection = await dialog.showOpenDialog(window, { properties: ["openDirectory"] });

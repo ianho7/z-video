@@ -55,6 +55,9 @@ async function run(): Promise<void> {
   const artworkRequests: string[] = [];
   const delayedResponses: Array<(value: { dataUrl: string }) => void> = [];
   const cancelledScans: string[] = [];
+  let cancelScanResult = true;
+  let holdNextRescanAll = false;
+  let heldRescanAll: ((results: unknown[]) => void) | undefined;
   const removedSources: string[] = [];
   let refreshedSources: string[] = [];
   let rescanAllCalls = 0;
@@ -111,6 +114,10 @@ async function run(): Promise<void> {
   });
   ipcMain.handle("local-library:rescan-all", async () => {
     rescanAllCalls += 1;
+    if (holdNextRescanAll) {
+      holdNextRescanAll = false;
+      return new Promise<unknown[]>((resolve) => { heldRescanAll = resolve; });
+    }
     return [{
       status: "unavailable",
       scanId: "scan_123e4567-e89b-42d3-a456-426614174011",
@@ -158,7 +165,9 @@ async function run(): Promise<void> {
   });
   ipcMain.handle("local-library:scan-cancel", async (_event, scanId: string) => {
     cancelledScans.push(scanId);
-    return true;
+    const accepted = cancelScanResult;
+    cancelScanResult = true;
+    return accepted;
   });
   ipcMain.handle("local-library:get", async (_event, mediaId: string) => {
     if (mediaId === episodeOne.mediaId) {
@@ -602,11 +611,15 @@ async function run(): Promise<void> {
       pillText: pill?.textContent || '',
       pillRect: rect('#scan-status'),
       pillCancelVisible: Boolean(pillCancel && !pillCancel.hidden),
+      pillCancelDisabled: Boolean(pillCancel?.disabled),
       cardVisible: Boolean(card && !card.hidden && rect('#home-scan-card')?.right > 0),
       cardText: card?.textContent || '',
       cardRect: rect('#home-scan-card'),
       cardCancelRect: rect('#home-scan-cancel'),
       homeCancelVisible: Boolean(homeCancel && !homeCancel.hidden),
+      homeCancelDisabled: Boolean(homeCancel?.disabled),
+      sourcesMessage: document.querySelector('#sources-message')?.textContent || '',
+      libraryMessage: document.querySelector('#library-message')?.textContent || '',
       noticeVisible: Boolean(document.querySelector('#app-notice') && !document.querySelector('#app-notice').hidden),
       noticeTitle: document.querySelector('#app-notice-title')?.textContent || '',
       noticeText: document.querySelector('#app-notice')?.textContent || '',
@@ -674,6 +687,18 @@ async function run(): Promise<void> {
   assert.equal(cancelledScans[1], "scan_123e4567-e89b-42d3-a456-426614174001");
   window.webContents.send("local-library:scan-progress", scanProgress({ scanId: "scan_123e4567-e89b-42d3-a456-426614174001", status: "cancelled", error: "扫描已取消，已保留此前索引和播放历史" }));
   await waitFor("second cancelled notice", readScanState, (value) => value.noticeVisible && /扫描已取消/.test(value.noticeTitle));
+  await window.webContents.executeJavaScript("document.querySelector('#app-notice-close').click()", true);
+
+  // Ticket 37 / B-05: a cancel that loses the terminal race answers `false`. It
+  // must be visible and must not leave the cancel entry disabled forever.
+  cancelScanResult = false;
+  window.webContents.send("local-library:scan-progress", scanProgress({ scanId: "scan_123e4567-e89b-42d3-a456-426614174003" }));
+  await waitFor("third running scan", readScanState, (value) => value.pillVisible && value.cardVisible);
+  await window.webContents.executeJavaScript("document.querySelector('#scan-pill-cancel').click()", true);
+  await waitFor("rejected cancel recorded", async () => cancelledScans.length, (count) => count === 3);
+  const cancelRejected = await waitFor("rejected cancel stays visible", readScanState, (value) => value.noticeVisible && /无需取消/.test(value.noticeTitle));
+  assert.match(cancelRejected.noticeText, /已结束|无需取消/);
+  assert.equal(cancelRejected.pillCancelDisabled, false, "a rejected cancel keeps the cancel entry usable");
   await window.webContents.executeJavaScript("document.querySelector('#app-notice-close').click()", true);
 
   window.webContents.send("local-library:scan-progress", scanProgress({ scanId: "scan_123e4567-e89b-42d3-a456-426614174002" }));
@@ -817,6 +842,25 @@ async function run(): Promise<void> {
   const deletedOffline = await waitFor("confirmed deletion cleans the offline folder", readFolders, (value) => value.offlineOpen === false && value.cards.length === 1);
   assert.equal(removedSources.includes(otherSourceId), true, "only the confirmed-deleted folder is removed");
   assert.match(deletedOffline.cards[0].text, /D 盘/u);
+
+  // Ticket 37 / B-05: between the click and the first progress event there is no
+  // scanId yet. The cancel entry must stay usable and explain why it cannot
+  // cancel, instead of being an unexplained disabled button.
+  holdNextRescanAll = true;
+  const cancelsBeforePending = cancelledScans.length;
+  await window.webContents.executeJavaScript("document.querySelector('#rescan-all-button').click()", true);
+  const pendingScan = await waitFor("pending rescan-all first frame", readScanState, (value) => value.pillVisible && /准备中|暂不可取消/.test(value.pillText));
+  assert.equal(pendingScan.pillCancelVisible, true, "the cancel entry is visible on the first frame");
+  assert.equal(pendingScan.pillCancelDisabled, false, "the cancel entry is usable on the first frame");
+  await window.webContents.executeJavaScript("document.querySelector('#scan-pill-cancel').click()", true);
+  const pendingCancel = await waitFor("pending cancel explains itself", readScanState, (value) => value.noticeVisible && /准备/.test(value.noticeTitle));
+  assert.match(pendingCancel.noticeText, /暂不可取消|进度事件/);
+  assert.equal(cancelledScans.length, cancelsBeforePending, "the first frame never sends a scanId it does not have");
+  await waitFor("held rescan-all invocation", async () => Boolean(heldRescanAll), Boolean);
+  heldRescanAll?.([{ status: "completed", scanId: "scan_123e4567-e89b-42d3-a456-426614174030", sourceId: item.sourceId, sourceLabel: "窗口测试文件夹", scannedFiles: 1, importedFiles: 0, updatedFiles: 1, warningCount: 0, warnings: [], counts: { imported: 0, updated: 1, unchanged: 0, removed: 0 } }]);
+  heldRescanAll = undefined;
+  await waitFor("held rescan-all settled", () => window.webContents.executeJavaScript("document.querySelector('#rescan-all-button').disabled", true) as Promise<boolean>, (disabled) => disabled === false);
+  await window.webContents.executeJavaScript("document.querySelector('#app-notice-close').click()", true);
 
   await window.webContents.executeJavaScript("document.querySelector('[data-remove-source-id]').click()", true);
   const removeDialog = await waitFor("remove dialog", readFolders, (value) => value.removeOpen === true);

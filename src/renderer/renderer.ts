@@ -328,6 +328,12 @@ let scanRefreshInFlight = false;
 let scanRefreshQueued = false;
 let scanCommit = 0;
 let scanRenderedCommit = -1;
+/**
+ * Ticket 37 / B-05: one in-flight cancel request. While it is pending the entry
+ * stays disabled and the pill says so; a `false` answer (the scan already
+ * reached its terminal window) re-enables it and shows why nothing was cancelled.
+ */
+let scanCancelPending = false;
 let sourceBusy = false;
 /**
  * Ticket 23b: the renderer owns the "wait until the library is visible" half of
@@ -3949,6 +3955,7 @@ async function runScan(operation: () => Promise<LocalScanResult | LocalScanResul
   chooseFolderButton?.setAttribute("disabled", "true");
   openVideoButton?.setAttribute("disabled", "true");
   scanId = undefined;
+  scanCancelPending = false;
   scanStartedAtMs = undefined;
   scanStartedScanId = undefined;
   stopScanElapsedTimer();
@@ -3985,6 +3992,7 @@ async function runScan(operation: () => Promise<LocalScanResult | LocalScanResul
   } finally {
     sourceBusy = false;
     scanId = undefined;
+    scanCancelPending = false;
     if (scanProgress?.status === "running") {
       scanProgress = undefined;
       scanCommit = scanRenderedCommit;
@@ -4003,6 +4011,23 @@ async function runScan(operation: () => Promise<LocalScanResult | LocalScanResul
 }
 
 function aggregateScanResults(results: LocalScanResult[]): LocalScanResult {
+  // Ticket 37 / B-05: a cancel accepted before the first folder started leaves
+  // no per-folder result. Report that as cancelled instead of inventing a
+  // completed "0 folders" summary.
+  if (results.length === 0) {
+    return {
+      scanId: "scan_all",
+      sourceId: "",
+      sourceLabel: "全部 0 个文件夹",
+      status: "cancelled",
+      scannedFiles: 0,
+      importedFiles: 0,
+      updatedFiles: 0,
+      warningCount: 0,
+      warnings: [],
+      error: "扫描已取消，没有开始任何文件夹",
+    };
+  }
   const status: LocalScanResult["status"] = results.some((result) => result.status === "unavailable")
     ? "unavailable"
     : results.some((result) => result.status === "partial")
@@ -4231,7 +4256,14 @@ function updateScanUi(): void {
   if (scanStatus) {
     scanStatus.hidden = !running;
     if (running && scanStatusText) {
-      const text = `扫描中 · ${scanProgress?.scannedFiles ?? 0}`;
+      // Ticket 37 / B-05: while the first frame has no scanId yet, say that this
+      // is preparation and that cancelling is not possible yet, instead of
+      // leaving a disabled button with no reason. A request in flight says so.
+      const text = scanCancelPending
+        ? "正在取消…"
+        : scanId
+          ? `扫描中 · ${scanProgress?.scannedFiles ?? 0}`
+          : "扫描准备中 · 暂不可取消";
       if (scanStatusText.textContent !== text) scanStatusText.textContent = text;
     }
   }
@@ -4266,18 +4298,41 @@ function updateScanUi(): void {
     if (homeScanAdded) homeScanAdded.textContent = String(lastSummary.progress.importedFiles);
     if (homeScanElapsed) homeScanElapsed.textContent = lastSummary.elapsedMs === undefined ? "未知" : formatScanElapsed(lastSummary.elapsedMs);
   }
-  const canCancel = Boolean(running && scanId);
+  // Ticket 37 / B-05: before the first progress event there is no scanId yet,
+  // but the entry stays usable so a click can explain the preparation window;
+  // only a cancel that is actually in flight disables it.
   document.querySelectorAll<HTMLButtonElement>("[data-cancel-scan]").forEach((button) => {
     button.hidden = !running;
-    button.disabled = !canCancel;
+    button.disabled = !running || scanCancelPending;
   });
 }
 
 function requestScanCancel(): void {
-  if (!scanId || scanProgress?.status !== "running") return;
-  document.querySelectorAll<HTMLButtonElement>("[data-cancel-scan]").forEach((button) => { button.disabled = true; });
-  void window.zVideo.localLibrary.cancelScan(scanId).catch(() => {
-    document.querySelectorAll<HTMLButtonElement>("[data-cancel-scan]").forEach((button) => { button.disabled = false; });
+  if (scanProgress?.status !== "running" || scanCancelPending) return;
+  if (!scanId) {
+    // The first frame owns no scanId, so there is nothing the worker could stop.
+    // Say why, and keep the entry usable for the next progress event.
+    setMessage("扫描正在准备，暂时无法取消；第一个进度事件到达后即可取消。");
+    showAppNotice("扫描正在准备", "还没有可以取消的扫描。第一个进度事件到达后，取消按钮就会生效。", "info");
+    return;
+  }
+  const targetScanId = scanId;
+  scanCancelPending = true;
+  updateScanUi();
+  void window.zVideo.localLibrary.cancelScan(targetScanId).then((accepted) => {
+    if (accepted) return;
+    // Terminal window: the worker already finished, so `false` means nothing
+    // was cancelled. That must be visible rather than silently dropped.
+    scanCancelPending = false;
+    if (scanProgress?.status === "running") updateScanUi();
+    setMessage("扫描已经结束，无需取消。");
+    showAppNotice("无需取消", "这次扫描已经结束，没有可取消的任务；扫描结果已经保留。", "info");
+  }).catch((error: unknown) => {
+    scanCancelPending = false;
+    if (scanProgress?.status === "running") updateScanUi();
+    const message = error instanceof Error ? error.message : "取消请求没有成功，请重试。";
+    setMessage(message, true);
+    showAppNotice("取消失败", message, "error");
   });
 }
 
@@ -4321,6 +4376,7 @@ function renderScanProgress(progress: LocalScanProgress & { counts?: LocalScanCo
     pendingScanSummary = Boolean(notice);
     scanProgress = undefined;
     scanId = undefined;
+    scanCancelPending = false;
     scanStartedAtMs = undefined;
     scanStartedScanId = undefined;
     if (scanPanel) scanPanel.hidden = true;

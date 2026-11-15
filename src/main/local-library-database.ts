@@ -136,6 +136,13 @@ export class LocalLibraryDatabase {
   /** True after an unexpected worker exit; the next owner call may restart once. */
   private workerCrashed = false;
   private restartPromise: Promise<void> | undefined;
+  /**
+   * Ticket 37 / B-05: one "rescan all" run scans several Sources in sequence, so
+   * the worker token of the current Source alone cannot cancel it. This intent
+   * is set by `cancelScan` while a rescan-all is sequencing folders and checked
+   * before every next Source, so a cancelled run never starts the rest.
+   */
+  private rescanAllCancellation: { requested: boolean } | undefined;
 
   constructor(options: LocalLibraryDatabaseOptions = {}) {
     this.dbPath = options.dbPath ?? join(process.cwd(), "local-library", "library.sqlite");
@@ -289,39 +296,63 @@ export class LocalLibraryDatabase {
     return this.call<LocalSourceDirectories[]>({ command: "list-scan-directories" });
   }
 
-  /** Rescan every registered folder in source order; one unreadable source never aborts the rest. */
+  /**
+   * Rescan every registered folder in source order; one unreadable source never
+   * aborts the rest. Cancelling the whole run stops the folders that have not
+   * started: only folders that actually ran produce a result, and the one the
+   * cancel reached reports `cancelled`.
+   */
   async rescanAll(): Promise<LocalScanResult[]> {
-
     const state = await this.refreshState();
+    const cancellation = { requested: false };
+    this.rescanAllCancellation = cancellation;
     const results: LocalScanResult[] = [];
-    for (const source of state.sources) {
-      const rootPath = await this.sourceRoot(source.sourceId);
-      if (!rootPath) continue;
-      try {
-        results.push(await this.scanFolder(rootPath));
-      } catch (error) {
-        results.push({
-          scanId: "",
-          sourceId: source.sourceId,
-          sourceLabel: source.label,
-          status: "unavailable",
-          scannedFiles: 0,
-          importedFiles: 0,
-          updatedFiles: 0,
-          warningCount: 0,
-          warnings: [],
-          counts: { imported: 0, updated: 0, unchanged: 0, removed: 0 },
-          nfoUpdatedFiles: 0,
-          fingerprintReplacedFiles: 0,
-          error: localLibraryErrorMessage("storage", error instanceof Error ? error.message : undefined),
-        });
+    try {
+      for (const source of state.sources) {
+        if (cancellation.requested) break;
+        const rootPath = await this.sourceRoot(source.sourceId);
+        if (!rootPath) continue;
+        try {
+          results.push(await this.scanFolder(rootPath));
+        } catch (error) {
+          results.push({
+            scanId: "",
+            sourceId: source.sourceId,
+            sourceLabel: source.label,
+            status: "unavailable",
+            scannedFiles: 0,
+            importedFiles: 0,
+            updatedFiles: 0,
+            warningCount: 0,
+            warnings: [],
+            counts: { imported: 0, updated: 0, unchanged: 0, removed: 0 },
+            nfoUpdatedFiles: 0,
+            fingerprintReplacedFiles: 0,
+            error: localLibraryErrorMessage("storage", error instanceof Error ? error.message : undefined),
+          });
+        }
+        // A cancel that arrived during the scan above must not start the next one.
+        if (cancellation.requested) break;
       }
+    } finally {
+      if (this.rescanAllCancellation === cancellation) this.rescanAllCancellation = undefined;
     }
     return results;
   }
 
+  /**
+   * Cancel the running scan. While a "rescan all" is sequencing folders the
+   * answer also stops every Source that has not started yet, so it stays true
+   * even when the current Source already reached its terminal window; `false`
+   * means there is nothing left to cancel.
+   */
   async cancelScan(scanId: string): Promise<boolean> {
-    return this.call<boolean>({ command: "cancel-scan", scanId });
+    const rescanAll = this.rescanAllCancellation;
+    // Mark the intent before the worker round trip: the scan can cross a Source
+    // boundary while the request is in flight.
+    if (rescanAll) rescanAll.requested = true;
+    const cancelled = await this.call<boolean>({ command: "cancel-scan", scanId });
+    return rescanAll ? true : cancelled;
   }
 
   async list(query: LocalLibraryQuery): Promise<LocalLibraryPage> {
