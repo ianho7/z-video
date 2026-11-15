@@ -6,7 +6,7 @@ import { registerLocalPlaybackIpcHandlers } from "./local-playback-ipc";
 import { registerAppPreferencesIpcHandlers } from "./app-preferences-ipc";
 import { LocalLibraryDatabase } from "./local-library-database";
 import { LOCAL_LIBRARY_REFRESH_BASELINE_FILE, LocalLibraryRefreshScheduler } from "./local-library-refresh";
-import { LocalLibraryWatcher, type LocalWatchSource } from "./local-library-watch";
+import { LocalLibraryWatcher, LocalLibraryNetworkPoller, type LocalWatchSource } from "./local-library-watch";
 import { LocalArtworkCache } from "./local-artwork-cache";
 import { MainLocalPlaybackHost } from "./player-host";
 import type { LocalPlaybackStore } from "../shared/local-playback-contracts";
@@ -33,6 +33,12 @@ let localRefresh: LocalLibraryRefreshScheduler | undefined;
  * dirty directories to `localRefresh`; both are released with the window.
  */
 let localWatch: LocalLibraryWatcher | undefined;
+/**
+ * Ticket 24b: the network fallback. No watch is created for a share; this
+ * low-frequency known-directory mtime poll runs only while the window is
+ * focused and hands changed directories to the same `localRefresh` scheduler.
+ */
+let localNetworkPoll: LocalLibraryNetworkPoller | undefined;
 let playbackClosing: Promise<void> | undefined;
 let quitting = false;
 
@@ -86,6 +92,44 @@ function createLocalWindow(): void {
     });
   }
   void localWatch.sync();
+  if (!localNetworkPoll) {
+    const database = localLibrary;
+    localNetworkPoll = new LocalLibraryNetworkPoller({
+      // The inventory is the same known-directory list Ticket 23b uses, so a
+      // poll never walks the share's file tree; only these directories are stat'ed.
+      directories: {
+        listScanDirectories: () => database.listScanDirectories(),
+        sourceRoot: (sourceId) => database.sourceRoot(sourceId),
+      },
+      // Ticket 24b: a background app does not touch the share at all. The check
+      // is read at every tick, so minimize/restore needs no extra wiring.
+      isForeground: () => {
+        const current = mainWindow;
+        return current !== undefined && !current.isDestroyed() && current.isFocused();
+      },
+      onChange: (directories) => {
+        // Same destination as the local watcher: the 23b scheduler owns the
+        // single flight, the queue, the silent push and the main-only "watch" cause.
+        void localRefresh?.requestWatch(directories).catch(() => undefined);
+      },
+      onError: (error) => {
+        // An offline share must not look available and must not spam the user;
+        // this trace carries the error kind/code only, never a path.
+        void recordUiOperation("local-library.network-poll", "error", Date.now(), {
+          errorKind: error instanceof Error ? error.name : "unknown",
+          ...(error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string" ? { errorCode: (error as { code: string }).code } : {}),
+        });
+      },
+    });
+    void localNetworkPoll.start();
+    // The window is created hidden, so the first start happens before it can be
+    // focused. Taking the baseline at the first real focus keeps the first
+    // polling interval honest: a change made right after startup is detected on
+    // the next tick instead of being mistaken for the baseline.
+    window.once("focus", () => {
+      void localNetworkPoll?.start();
+    });
+  }
   unregisterLocalLibraryIpc = registerLocalLibraryIpcHandlers(localLibrary, window, localArtworkCache, appPreferences, localRefresh, localWatch);
   unregisterLocalPlaybackIpc = registerLocalPlaybackIpcHandlers(localPlayback);
   unregisterAppPreferencesIpc = registerAppPreferencesIpcHandlers(appPreferences);
@@ -104,6 +148,9 @@ function closePlayback(): Promise<void> {
   // scheduler goes away, so no callback can arrive after the window closed.
   localWatch?.dispose();
   localWatch = undefined;
+  // Ticket 24b: stop the network interval before the scheduler it feeds.
+  localNetworkPoll?.dispose();
+  localNetworkPoll = undefined;
   // Ticket 23b: drop queued checks with the window; a scan already in flight
   // still finishes and its result has no listener left to disturb.
   localRefresh?.dispose();
