@@ -248,6 +248,35 @@ async function run(): Promise<void> {
   assert.equal(initial.openButton, true);
   assert.match(initial.card, /窗口测试影片/);
 
+  // Header add button: keep the label inside its control. Regression guard for
+  // the text-to-glyph replacement that left a 28px font in a 44px circle.
+  const readHeaderFit = () => window.webContents.executeJavaScript(`(() => {
+    const summary = document.querySelector('.add-menu summary');
+    const header = document.querySelector('.app-header');
+    if (!summary || !header) return { missing: true };
+    const summaryBox = summary.getBoundingClientRect();
+    const headerBox = header.getBoundingClientRect();
+    const style = getComputedStyle(summary);
+    return {
+      missing: false,
+      overflowX: summary.scrollWidth > summary.clientWidth + 1,
+      overflowY: summary.scrollHeight > summary.clientHeight + 1,
+      insideHeader: summaryBox.left >= headerBox.left - 1 && summaryBox.right <= headerBox.right + 1
+        && summaryBox.top >= headerBox.top - 1 && summaryBox.bottom <= headerBox.bottom + 1,
+      nowrap: style.whiteSpace === 'nowrap',
+      height: Math.round(summaryBox.height)
+    };
+  })()`, true) as Promise<{ missing: boolean; overflowX?: boolean; overflowY?: boolean; insideHeader?: boolean; nowrap?: boolean; height?: number }>;
+  const assertHeaderFit = (fit: { missing: boolean; overflowX?: boolean; overflowY?: boolean; insideHeader?: boolean; nowrap?: boolean; height?: number }, label: string) => {
+    assert.equal(fit.missing, false, `${label}: the header exposes the add summary`);
+    assert.equal(fit.overflowX, false, `${label}: the add label does not overflow horizontally`);
+    assert.equal(fit.overflowY, false, `${label}: the add label does not wrap out of its control`);
+    assert.equal(fit.insideHeader, true, `${label}: the add control stays inside the header`);
+    assert.equal(fit.nowrap, true, `${label}: the add label does not wrap`);
+    assert.ok((fit.height ?? 0) >= 44, `${label}: the add control keeps a 44px target`);
+  };
+  assertHeaderFit(await readHeaderFit(), "default window");
+
   // B6a: app-native controls, font and desktop feel.
   const readFeel = () => window.webContents.executeJavaScript(`(async () => {
     await document.fonts.ready;
@@ -1240,6 +1269,11 @@ async function run(): Promise<void> {
   const afterPlayer = await waitFor("deferred refresh applied after player", readRefreshUi, (value) => value.playerHidden && value.titles.includes("窗口测试影片 · 播放后刷新") && /已自动刷新/u.test(value.message), 4_000);
   assert.match(afterPlayer.message, /已自动刷新/u);
   assert.equal(afterPlayer.noticeHidden, true, "the playback return refresh stays silent");
+
+  // The header must still fit at the 900x640 minimum window size.
+  window.setSize(900, 640);
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assertHeaderFit(await readHeaderFit(), "900x640");
 
   window.close();
   for (const channel of ["local-library:state", "local-library:source-remove", "local-library:source-refresh", "local-library:rescan-all", "local-library:choose-folder", "local-library:open-video", "local-library:list", "local-library:list-collections", "local-library:scan-cancel", "local-library:refresh-check", "local-library:get", "local-library:artwork", "local-library:continue-watching", "app-preferences:get", "app-preferences:set-sort", "local-playback:open", "local-playback:command"]) ipcMain.removeHandler(channel);

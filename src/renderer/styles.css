@@ -290,7 +290,7 @@ html[data-motion="off"] *, html[data-motion="off"] *::before, html[data-motion="
 .top-nav [aria-current] { color: var(--lavender-on); background: var(--lavender); }
 .app-header #scan-status { flex: 0 1 auto; min-width: 0; max-width: 220px; }
 .add-menu { position: relative; }
-.add-menu summary { display: grid; width: 44px; height: 44px; place-items: center; border-radius: 50%; background: var(--lavender); color: var(--lavender-on); font-size: 28px; cursor: pointer; list-style: none; }
+.add-menu summary { display: grid; min-width: 44px; height: 44px; padding: 0 16px; place-items: center; border-radius: 22px; background: var(--lavender); color: var(--lavender-on); font-size: 15px; font-weight: 700; white-space: nowrap; cursor: pointer; list-style: none; }
 .add-menu .header-actions { position: absolute; right: 0; z-index: 4; display: grid; width: 170px; padding: 8px; border-radius: 20px; background: var(--surface-2); }
 .content-heading, .library-toolbar { display: none; }
 .library-content:has(#collection-section:not([hidden])) .library-toolbar { display: flex; }
